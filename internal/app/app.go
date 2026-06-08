@@ -43,9 +43,10 @@ func (m SortMode) Next() SortMode {
 }
 
 type App struct {
-	GitHub github.Provider
-	AI     ai.Provider
-	Cache  cache.Store
+	GitHub         github.Provider
+	AI             ai.Provider
+	Cache          cache.Store
+	TrustedAuthors map[string]bool
 }
 
 func New(githubProvider github.Provider, aiProvider ai.Provider, store cache.Store) *App {
@@ -55,13 +56,22 @@ func New(githubProvider github.Provider, aiProvider ai.Provider, store cache.Sto
 	return &App{GitHub: githubProvider, AI: aiProvider, Cache: store}
 }
 
+// AIEnabled reports whether a real AI provider is configured.
+func (a *App) AIEnabled() bool {
+	if a.AI == nil {
+		return false
+	}
+	_, noop := a.AI.(ai.NoopProvider)
+	return !noop
+}
+
 func (a *App) Refresh(ctx context.Context, repo string) ([]model.PullRequest, error) {
 	prs, err := a.GitHub.ListOpenPRs(ctx, repo)
 	if err != nil {
 		return nil, err
 	}
 	for i := range prs {
-		prs[i].Triage = risk.Classify(prs[i])
+		prs[i].Triage = risk.ClassifyWithTrust(prs[i], a.TrustedAuthors)
 		if aiTriage, err := a.AI.Triage(ctx, prs[i]); err == nil && aiTriage != nil {
 			prs[i].Triage.AI = aiTriage
 		}
@@ -131,7 +141,7 @@ func (a *App) Analyze(ctx context.Context, repo string, number int) (model.PullR
 		return model.PullRequest{}, err
 	}
 	pr.Diff = diff
-	pr.Triage = risk.Classify(pr)
+	pr.Triage = risk.ClassifyWithTrust(pr, a.TrustedAuthors)
 	if aiTriage, err := a.AI.Triage(ctx, pr); err == nil && aiTriage != nil {
 		pr.Triage.AI = aiTriage
 	}

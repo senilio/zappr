@@ -110,12 +110,23 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleCommentKey(key)
 	case ModeConfirmApprove:
 		return m.handleApproveKey(key)
+	case ModeHelp:
+		if key == "esc" || key == "?" || key == "enter" {
+			m.mode = m.prevMode
+		}
+		return m, nil
 	case ModeDiff:
 		if key == "esc" || key == "enter" || key == "v" {
 			m.mode = ModeDetail
 			m.focus = FocusSummary
 			return m, nil
 		}
+	}
+
+	if key == "?" {
+		m.prevMode = m.mode
+		m.mode = ModeHelp
+		return m, nil
 	}
 
 	switch key {
@@ -152,6 +163,13 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mode = ModeInbox
 		m.focus = FocusInbox
 	case "r":
+		if m.mode == ModeDetail || m.mode == ModeDiff {
+			if pr, ok := m.current(); ok {
+				m.loading = true
+				m.message = "re-running analysis"
+				return m, analyzeCmd(m.app, pr)
+			}
+		}
 		m.loading = true
 		m.message = "refreshing"
 		return m, refreshCmd(m.app, m.repo)

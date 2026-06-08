@@ -43,3 +43,29 @@ func TestLoadDefaultsWhenMissing(t *testing.T) {
 		t.Fatal("cache path empty")
 	}
 }
+
+func TestLoadParsesTrustAuthors(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "config")
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(t.TempDir(), "cache"))
+
+	path, err := DefaultConfigPath()
+	if err != nil {
+		t.Fatalf("DefaultConfigPath: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	data := "trust:\n  authors:\n    - alice\n    - bob\n"
+	if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(cfg.Trust.Authors) != 2 || cfg.Trust.Authors[0] != "alice" || cfg.Trust.Authors[1] != "bob" {
+		t.Fatalf("trust authors = %v", cfg.Trust.Authors)
+	}
+}

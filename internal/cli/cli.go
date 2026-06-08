@@ -84,7 +84,23 @@ func newApp(cfg config.Config) (*app.App, error) {
 	if err != nil {
 		return nil, err
 	}
-	return app.New(gh, aiProvider, store), nil
+	zappr := app.New(gh, aiProvider, store)
+	zappr.TrustedAuthors = trustedSet(cfg.Trust.Authors)
+	return zappr, nil
+}
+
+func trustedSet(authors []string) map[string]bool {
+	if len(authors) == 0 {
+		return nil
+	}
+	set := make(map[string]bool, len(authors))
+	for _, a := range authors {
+		name := strings.ToLower(strings.TrimSpace(a))
+		if name != "" {
+			set[name] = true
+		}
+	}
+	return set
 }
 
 func runWatch(zappr *app.App, cfg config.Config, args []string) error {
@@ -126,11 +142,20 @@ func runReview(zappr *app.App, args []string) error {
 		return err
 	}
 	fmt.Printf("%s #%d %s\n%s\n", pr.Repo, pr.Number, strings.ToUpper(string(pr.Triage.Risk)), pr.Title)
-	fmt.Printf("Summary: %s\n", pr.Triage.Summary)
+	fmt.Printf("Rule-based summary: %s\n", pr.Triage.Summary)
 	printList("Reasons", pr.Triage.Reasons)
 	printList("Concerns", pr.Triage.Concerns)
 	printList("High-risk files", pr.Triage.HighRiskFiles)
 	printList("Review targets", pr.Triage.ReviewTargets)
+	if pr.Triage.AI != nil {
+		fmt.Println("AI (advisory - does not affect risk):")
+		if pr.Triage.AI.Error != "" {
+			fmt.Printf("- error: %s\n", pr.Triage.AI.Error)
+		} else {
+			fmt.Printf("- %s\n", pr.Triage.AI.Summary)
+			printList("AI focus", pr.Triage.AI.SuggestedFocus)
+		}
+	}
 	return nil
 }
 
@@ -302,6 +327,6 @@ Commands:
   zappr doctor                  check gh, auth, cache
 
 Keys:
-  j/k navigate  enter inspect  a approve, y confirm  c comment  s skip  r refresh  v diff  q quit
+  j/k navigate  enter inspect  a approve, y confirm  c comment  s skip  r refresh  v diff  ? help  q quit
 `
 }

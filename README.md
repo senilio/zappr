@@ -57,12 +57,16 @@ j/k        navigate
 enter      inspect selected PR
 a          start approval; y confirms
 c          comment on selected PR
-s          skip selected PR
-r          refresh/re-run analysis
+s          skip PR (inbox); toggle side-by-side (diff)
+r          refresh (inbox); re-run analysis (detail)
 v          view diff
+?          help (keys + risk legend)
 esc        back
 q          quit
 ```
+
+The header shows `AI: on|off`. Triage panels separate the deterministic
+`Rule-based verdict (authoritative)` from `AI (advisory - does not affect risk)`.
 
 ## Risk Model
 
@@ -73,6 +77,21 @@ Risk is conservative and deterministic:
 - `block`: failing CI, drafts, auth/security/billing/migrations/infra/API changes, lockfiles, or very large diffs.
 
 Blocked PRs cannot be quick-approved from zappr.
+
+### Trusted authors
+
+Configure authors whose PRs are biased toward `safe`:
+
+```yaml
+trust:
+  authors:
+    - alice
+    - bob
+```
+
+Trust only softens a `review` verdict to `safe` (and raises confidence on
+already-safe PRs). It never overrides `block`; failing CI, drafts, high-risk
+paths, and very large diffs still block quick approval.
 
 ## Config
 
@@ -98,6 +117,8 @@ ai:
   timeout: 1m0s
 cache:
   path: /Users/you/.cache/zappr/zappr.db
+trust:
+  authors: []
 ```
 
 `ZAPPR_AI_COMMAND` overrides `ai.command` for optional shell-command AI triage.

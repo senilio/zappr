@@ -23,6 +23,7 @@ const (
 	ModeDiff
 	ModeConfirmApprove
 	ModeComment
+	ModeHelp
 )
 
 type Model struct {
@@ -47,6 +48,8 @@ type Model struct {
 	width      int
 	height     int
 	theme      uitheme.Theme
+	aiEnabled  bool
+	prevMode   Mode
 	summaryVP  viewport.Model
 	diffVP     viewport.Model
 }
@@ -65,7 +68,7 @@ func New(zappr *app.App, repo string, pollEvery time.Duration) Model {
 	}
 	vp := viewport.New(0, 0)
 	dvp := viewport.New(0, 0)
-	return Model{app: zappr, repo: repo, loading: true, pollEvery: pollEvery, sortMode: app.SortUpdated, theme: uitheme.Default(), summaryVP: vp, diffVP: dvp}
+	return Model{app: zappr, repo: repo, loading: true, pollEvery: pollEvery, sortMode: app.SortUpdated, theme: uitheme.Default(), aiEnabled: zappr.AIEnabled(), summaryVP: vp, diffVP: dvp}
 }
 
 func (m Model) Init() tea.Cmd {
@@ -101,6 +104,18 @@ func refreshCmd(app *app.App, repo string) tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 		defer cancel()
 		prs, err := app.Refresh(ctx, repo)
+		return refreshMsg{prs: prs, err: err}
+	}
+}
+
+func analyzeCmd(app *app.App, pr model.PullRequest) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+		defer cancel()
+		if _, err := app.Analyze(ctx, pr.Repo, pr.Number); err != nil {
+			return refreshMsg{err: err}
+		}
+		prs, err := app.Refresh(ctx, pr.Repo)
 		return refreshMsg{prs: prs, err: err}
 	}
 }

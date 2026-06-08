@@ -22,6 +22,8 @@ func (m Model) View() string {
 		return m.approveView()
 	case ModeComment:
 		return m.commentView()
+	case ModeHelp:
+		return m.helpView()
 	default:
 		return m.inboxView()
 	}
@@ -63,7 +65,7 @@ func (m Model) inboxView() string {
 		}
 		fmt.Fprintf(&b, "%-3s #%-7d %-12s %-8s %s%s\n", cursor, pr.Number, riskLabel(pr.Triage.Risk), pr.CIStatus, pr.Title, skip)
 	}
-	b.WriteString("\nj/k navigate  enter inspect  a approve, y confirm  c comment  s skip  r refresh  v diff  q quit\n")
+	b.WriteString("\nj/k navigate  enter inspect  a approve, y confirm  c comment  s skip  r refresh  v diff  ? help  q quit\n")
 	return b.String()
 }
 
@@ -85,7 +87,7 @@ func (m Model) detailView() string {
 	for _, file := range pr.Files {
 		fmt.Fprintf(&b, "%-8s %s (+%d -%d)\n", file.Status, file.Path, file.Additions, file.Deletions)
 	}
-	b.WriteString("\na approve, y confirm  c comment  s skip  r re-run analysis  v view diff  esc inbox  q quit\n")
+	b.WriteString("\na approve, y confirm  c comment  s skip  r re-run analysis  v view diff  esc inbox  ? help  q quit\n")
 	return b.String()
 }
 
@@ -116,6 +118,43 @@ func (m Model) commentView() string {
 	return fmt.Sprintf("Comment on %s #%d\n\n%s\n\nenter submit  esc cancel\n", pr.Repo, pr.Number, m.comment)
 }
 
+func (m Model) helpView() string {
+	if m.width > 0 {
+		return m.layoutView()
+	}
+	return helpText() + "\nesc back  q quit\n"
+}
+
+func helpText() string {
+	return `zappr help
+
+Risk legend (deterministic, authoritative):
+  SAFE  ok   safe for quick approval
+  REVIEW !   human inspection recommended
+  BLOCK  x   quick approval refused
+
+AI triage is advisory only and never changes risk.
+
+Keys:
+  j/k        move / scroll
+  tab        cycle pane focus
+  o          cycle sort
+  enter      inspect PR
+  v          load/view diff
+  V          open full diff pager
+  n/p        next/prev file in diff
+  s          skip PR (inbox) / toggle side-by-side (diff)
+  r          refresh (inbox) / re-run analysis (detail)
+  a then y   approve (y confirms; refused for BLOCK)
+  c          comment
+  ? esc      toggle help / back
+  q          quit`
+}
+
+func (m Model) helpPanel() string {
+	return helpText()
+}
+
 func (m Model) layoutView() string {
 	header := m.headerView()
 	footer := m.footerView()
@@ -126,6 +165,9 @@ func (m Model) layoutView() string {
 	}
 	if m.mode == ModeComment {
 		return lipgloss.JoinVertical(lipgloss.Left, header, m.centerModal(m.commentPanel(), bodyHeight), footer)
+	}
+	if m.mode == ModeHelp {
+		return lipgloss.JoinVertical(lipgloss.Left, header, m.centerModal(m.helpPanel(), bodyHeight), footer)
 	}
 
 	var body string
@@ -146,6 +188,11 @@ func (m Model) headerView() string {
 	}
 	parts = append(parts, fmt.Sprintf("%d PRs", len(m.prs)))
 	parts = append(parts, "sort: "+m.sortMode.String())
+	if m.aiEnabled {
+		parts = append(parts, m.theme.Styles.Muted.Render("AI: on"))
+	} else {
+		parts = append(parts, m.theme.Styles.Muted.Render("AI: off"))
+	}
 	if m.loading {
 		parts = append(parts, m.theme.Styles.Pending.Render("loading"))
 	}
@@ -158,9 +205,17 @@ func (m Model) headerView() string {
 }
 
 func (m Model) footerView() string {
-	keys := "j/k move  tab focus  o sort  enter inspect  v diff  V pager  n/p file  s side-by-side  a approve, y confirm  c comment  r refresh  q quit"
 	if m.width < minMediumWidth {
-		keys = "j/k move  o sort  enter details  v diff  ? help  q quit"
+		return m.theme.Styles.Footer.Width(m.width).Render("j/k move  enter details  v diff  ? help  q quit")
+	}
+	var keys string
+	switch m.mode {
+	case ModeDiff:
+		keys = "j/k scroll  n/p file  s side-by-side  V pager  esc back  ? help  q quit"
+	case ModeDetail:
+		keys = "j/k scroll  tab focus  v diff  a approve, y confirm  c comment  s skip  r re-run analysis  esc inbox  ? help  q quit"
+	default:
+		keys = "j/k move  tab focus  o sort  enter inspect  v diff  a approve, y confirm  c comment  s skip  r refresh  ? help  q quit"
 	}
 	return m.theme.Styles.Footer.Width(m.width).Render(keys)
 }
@@ -343,57 +398,68 @@ func (m Model) commentPanel() string {
 }
 
 func writeTriage(b *strings.Builder, triage model.Triage) {
-	fmt.Fprintf(b, "Risk: %s  Confidence: %.2f\n", riskLabel(triage.Risk), triage.Confidence)
+	b.WriteString("Rule-based verdict (authoritative)\n")
+	fmt.Fprintf(b, "Risk: %s  Confidence: %s\n", riskLabel(triage.Risk), confidencePct(triage.Confidence))
 	fmt.Fprintf(b, "Summary: %s\n", triage.Summary)
 	writeList(b, "Reasons", triage.Reasons)
 	writeList(b, "Concerns", triage.Concerns)
 	writeList(b, "High-risk files", triage.HighRiskFiles)
 	writeList(b, "Review targets", triage.ReviewTargets)
-	if triage.AI != nil {
-		b.WriteString("AI notes, advisory only:\n")
-		if triage.AI.Error != "" {
-			fmt.Fprintf(b, "- %s\n", triage.AI.Error)
-		} else {
-			fmt.Fprintf(b, "- %s\n", triage.AI.Summary)
-			writeList(b, "AI focus", triage.AI.SuggestedFocus)
-		}
-	}
+	writeAINotes(b, triage)
 }
 
 func writeStyledTriage(b *strings.Builder, m Model, triage model.Triage) {
-	fmt.Fprintf(b, "Risk: %s  Confidence: %.2f\n", m.theme.RiskBadge(triage.Risk), triage.Confidence)
+	b.WriteString(m.theme.Styles.Title.Render("Rule-based verdict (authoritative)") + "\n")
+	fmt.Fprintf(b, "Risk: %s  Confidence: %s\n", m.theme.RiskBadge(triage.Risk), confidencePct(triage.Confidence))
 	fmt.Fprintf(b, "Summary: %s\n", triage.Summary)
 	writeList(b, "Reasons", triage.Reasons)
 	writeList(b, "Concerns", triage.Concerns)
 	writeList(b, "High-risk files", triage.HighRiskFiles)
 	writeList(b, "Review targets", triage.ReviewTargets)
-	if triage.AI != nil {
-		b.WriteString("AI notes, advisory only:\n")
-		if triage.AI.Error != "" {
-			fmt.Fprintf(b, "- %s\n", triage.AI.Error)
-		} else {
-			fmt.Fprintf(b, "- %s\n", triage.AI.Summary)
-			writeList(b, "AI focus", triage.AI.SuggestedFocus)
-		}
-	}
+	writeStyledAINotes(b, m, triage)
 }
 
 func writePlainTriage(b *strings.Builder, triage model.Triage) {
-	fmt.Fprintf(b, "Confidence: %.2f\n", triage.Confidence)
+	b.WriteString("Rule-based verdict (authoritative)\n")
+	fmt.Fprintf(b, "Confidence: %s\n", confidencePct(triage.Confidence))
 	fmt.Fprintf(b, "Summary: %s\n", triage.Summary)
 	writeList(b, "Reasons", triage.Reasons)
 	writeList(b, "Concerns", triage.Concerns)
 	writeList(b, "High-risk files", triage.HighRiskFiles)
 	writeList(b, "Review targets", triage.ReviewTargets)
-	if triage.AI != nil {
-		b.WriteString("AI notes, advisory only:\n")
-		if triage.AI.Error != "" {
-			fmt.Fprintf(b, "- %s\n", triage.AI.Error)
-		} else {
-			fmt.Fprintf(b, "- %s\n", triage.AI.Summary)
-			writeList(b, "AI focus", triage.AI.SuggestedFocus)
-		}
+	writeAINotes(b, triage)
+}
+
+func writeAINotes(b *strings.Builder, triage model.Triage) {
+	if triage.AI == nil {
+		b.WriteString("\nAI: not run (advisory only)\n")
+		return
 	}
+	b.WriteString("\nAI (advisory - does not affect risk)\n")
+	if triage.AI.Error != "" {
+		fmt.Fprintf(b, "AI error: %s\n", triage.AI.Error)
+		return
+	}
+	fmt.Fprintf(b, "- %s\n", triage.AI.Summary)
+	writeList(b, "AI focus", triage.AI.SuggestedFocus)
+}
+
+func writeStyledAINotes(b *strings.Builder, m Model, triage model.Triage) {
+	if triage.AI == nil {
+		b.WriteString("\n" + m.theme.Styles.Muted.Render("AI: not run (advisory only)") + "\n")
+		return
+	}
+	b.WriteString("\n" + m.theme.Styles.Subtitle.Render("AI (advisory - does not affect risk)") + "\n")
+	if triage.AI.Error != "" {
+		b.WriteString(m.theme.Styles.Error.Render("AI error: "+triage.AI.Error) + "\n")
+		return
+	}
+	fmt.Fprintf(b, "- %s\n", triage.AI.Summary)
+	writeList(b, "AI focus", triage.AI.SuggestedFocus)
+}
+
+func confidencePct(c float64) string {
+	return fmt.Sprintf("%d%%", int(c*100+0.5))
 }
 
 func plainRiskLabel(r model.Risk) string {

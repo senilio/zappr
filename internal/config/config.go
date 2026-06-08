@@ -14,6 +14,13 @@ type Config struct {
 	Refresh RefreshConfig `yaml:"refresh"`
 	AI      AIConfig      `yaml:"ai"`
 	Cache   CacheConfig   `yaml:"cache"`
+	Trust   TrustConfig   `yaml:"trust"`
+}
+
+type TrustConfig struct {
+	// Authors lists GitHub usernames whose PRs are biased toward safe.
+	// Trust never overrides a block verdict.
+	Authors []string `yaml:"authors"`
 }
 
 type RefreshConfig struct {
