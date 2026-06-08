@@ -59,6 +59,10 @@ on conflict(repo, number) do update set
 	return err
 }
 
+func (s *SQLiteStore) Get(repo string, number int) (model.PullRequest, error) {
+	return s.get(repo, number)
+}
+
 func (s *SQLiteStore) List() ([]model.PullRequest, error) {
 	rows, err := s.db.Query(`select data, skipped from pull_requests order by updated_at desc`)
 	if err != nil {
@@ -111,17 +115,17 @@ func (s *SQLiteStore) PruneRepo(repo string, openNumbers map[int]bool) error {
 	return nil
 }
 
-func (s *SQLiteStore) Skip(repo string, number int) error {
+func (s *SQLiteStore) SetSkip(repo string, number int, skipped bool) error {
 	pr, err := s.get(repo, number)
 	if err != nil {
 		return nil
 	}
-	pr.Skipped = true
+	pr.Skipped = skipped
 	data, err := json.Marshal(pr)
 	if err != nil {
 		return err
 	}
-	_, err = s.db.Exec(`update pull_requests set skipped = 1, data = ?, updated_at = ? where repo = ? and number = ?`, string(data), time.Now().UTC().Format(time.RFC3339), repo, number)
+	_, err = s.db.Exec(`update pull_requests set skipped = ?, data = ?, updated_at = ? where repo = ? and number = ?`, boolToInt(skipped), string(data), time.Now().UTC().Format(time.RFC3339), repo, number)
 	return err
 }
 

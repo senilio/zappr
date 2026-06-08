@@ -29,6 +29,7 @@ type RefreshConfig struct {
 
 type AIConfig struct {
 	Command string   `yaml:"command"`
+	Prompt  string   `yaml:"prompt"`
 	Timeout Duration `yaml:"timeout"`
 }
 

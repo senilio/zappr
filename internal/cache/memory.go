@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"fmt"
 	"strconv"
 
 	"github.com/senilio/zappr/internal/model"
@@ -23,6 +24,15 @@ func (s *MemoryStore) Put(pr model.PullRequest) error {
 	return nil
 }
 
+func (s *MemoryStore) Get(repo string, number int) (model.PullRequest, error) {
+	key := cacheKey(repo, number)
+	pr, ok := s.prs[key]
+	if !ok {
+		return model.PullRequest{}, fmt.Errorf("not found: %s#%d", repo, number)
+	}
+	return pr, nil
+}
+
 func (s *MemoryStore) List() ([]model.PullRequest, error) {
 	out := make([]model.PullRequest, 0, len(s.prs))
 	for _, pr := range s.prs {
@@ -40,13 +50,13 @@ func (s *MemoryStore) PruneRepo(repo string, openNumbers map[int]bool) error {
 	return nil
 }
 
-func (s *MemoryStore) Skip(repo string, number int) error {
+func (s *MemoryStore) SetSkip(repo string, number int, skipped bool) error {
 	key := cacheKey(repo, number)
 	pr, ok := s.prs[key]
 	if !ok {
 		return nil
 	}
-	pr.Skipped = true
+	pr.Skipped = skipped
 	s.prs[key] = pr
 	return nil
 }

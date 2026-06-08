@@ -31,25 +31,27 @@ type Theme struct {
 }
 
 type Styles struct {
-	App        lipgloss.Style
-	Header     lipgloss.Style
-	Footer     lipgloss.Style
-	Pane       lipgloss.Style
-	Focused    lipgloss.Style
-	Title      lipgloss.Style
-	Subtitle   lipgloss.Style
-	Muted      lipgloss.Style
-	Help       lipgloss.Style
-	Error      lipgloss.Style
-	Success    lipgloss.Style
-	RiskSafe   lipgloss.Style
-	RiskReview lipgloss.Style
-	RiskBlock  lipgloss.Style
-	Pending    lipgloss.Style
-	Add        lipgloss.Style
-	Delete     lipgloss.Style
-	Hunk       lipgloss.Style
-	File       lipgloss.Style
+	App         lipgloss.Style
+	Header      lipgloss.Style
+	Footer      lipgloss.Style
+	Pane        lipgloss.Style
+	Focused     lipgloss.Style
+	Title       lipgloss.Style
+	TitleStrong lipgloss.Style
+	Subtitle    lipgloss.Style
+	Muted       lipgloss.Style
+	Help        lipgloss.Style
+	Error       lipgloss.Style
+	Success     lipgloss.Style
+	SuccessCI   lipgloss.Style
+	RiskSafe    lipgloss.Style
+	RiskReview  lipgloss.Style
+	RiskBlock   lipgloss.Style
+	Pending     lipgloss.Style
+	Add         lipgloss.Style
+	Delete      lipgloss.Style
+	Hunk        lipgloss.Style
+	File        lipgloss.Style
 }
 
 func Default() Theme {
@@ -65,19 +67,22 @@ func Default() Theme {
 func New(p Palette, profile termenv.Profile, noColor bool) Theme {
 	base := lipgloss.NewStyle().Foreground(p.Text)
 	border := lipgloss.RoundedBorder()
+	focusBorder := lipgloss.ThickBorder()
 	styles := Styles{
-		App:      base,
-		Header:   base.Bold(true).Padding(0, 1).Foreground(p.Focus),
-		Footer:   base.Padding(0, 1).Foreground(p.Muted),
-		Pane:     base.Border(border).BorderForeground(p.Border).Padding(0, 1),
-		Focused:  base.Border(border).BorderForeground(p.Focus).Padding(0, 1),
-		Title:    base.Bold(true).Foreground(p.Focus),
-		Subtitle: base.Foreground(p.Subtle),
-		Muted:    base.Foreground(p.Muted),
-		Help:     base.Foreground(p.Muted),
-		Error:    base.Bold(true).Foreground(p.Error),
-		Success:  base.Bold(true).Foreground(p.Safe),
-		RiskSafe: base.Bold(true).Foreground(p.Safe),
+		App:         base,
+		Header:      base.Bold(true).Padding(0, 1).Foreground(p.Focus),
+		Footer:      base.Padding(0, 1).Foreground(p.Muted),
+		Pane:        base.Border(border).BorderForeground(p.Border).Padding(0, 1),
+		Focused:     base.Border(focusBorder).BorderForeground(p.Focus).Padding(0, 1),
+		Title:       base.Bold(true).Foreground(p.Focus),
+		TitleStrong: base.Bold(true).Foreground(p.Text),
+		Subtitle:    base.Foreground(p.Subtle),
+		Muted:       base.Foreground(p.Muted),
+		Help:        base.Foreground(p.Muted),
+		Error:       base.Bold(true).Foreground(p.Error),
+		Success:     base.Bold(true).Foreground(p.Safe),
+		SuccessCI:   base.Foreground(p.Safe),
+		RiskSafe:    base.Bold(true).Foreground(p.Safe),
 		RiskReview: base.Bold(true).
 			Foreground(p.Review),
 		RiskBlock: base.Bold(true).Foreground(p.Block),
@@ -89,25 +94,27 @@ func New(p Palette, profile termenv.Profile, noColor bool) Theme {
 	}
 	if noColor {
 		styles = Styles{
-			App:        lipgloss.NewStyle(),
-			Header:     lipgloss.NewStyle().Bold(true).Padding(0, 1),
-			Footer:     lipgloss.NewStyle().Padding(0, 1),
-			Pane:       lipgloss.NewStyle().Border(border).Padding(0, 1),
-			Focused:    lipgloss.NewStyle().Border(border).Padding(0, 1),
-			Title:      lipgloss.NewStyle().Bold(true),
-			Subtitle:   lipgloss.NewStyle(),
-			Muted:      lipgloss.NewStyle(),
-			Help:       lipgloss.NewStyle(),
-			Error:      lipgloss.NewStyle().Bold(true),
-			Success:    lipgloss.NewStyle().Bold(true),
-			RiskSafe:   lipgloss.NewStyle().Bold(true),
-			RiskReview: lipgloss.NewStyle().Bold(true),
-			RiskBlock:  lipgloss.NewStyle().Bold(true),
-			Pending:    lipgloss.NewStyle().Bold(true),
-			Add:        lipgloss.NewStyle(),
-			Delete:     lipgloss.NewStyle(),
-			Hunk:       lipgloss.NewStyle().Bold(true),
-			File:       lipgloss.NewStyle().Bold(true),
+			App:         lipgloss.NewStyle(),
+			Header:      lipgloss.NewStyle().Bold(true).Padding(0, 1),
+			Footer:      lipgloss.NewStyle().Padding(0, 1),
+			Pane:        lipgloss.NewStyle().Border(border).Padding(0, 1),
+			Focused:     lipgloss.NewStyle().Border(focusBorder).Padding(0, 1),
+			Title:       lipgloss.NewStyle().Bold(true),
+			TitleStrong: lipgloss.NewStyle().Bold(true),
+			Subtitle:    lipgloss.NewStyle(),
+			Muted:       lipgloss.NewStyle(),
+			Help:        lipgloss.NewStyle(),
+			Error:       lipgloss.NewStyle().Bold(true),
+			Success:     lipgloss.NewStyle().Bold(true),
+			SuccessCI:   lipgloss.NewStyle(),
+			RiskSafe:    lipgloss.NewStyle().Bold(true),
+			RiskReview:  lipgloss.NewStyle().Bold(true),
+			RiskBlock:   lipgloss.NewStyle().Bold(true),
+			Pending:     lipgloss.NewStyle().Bold(true),
+			Add:         lipgloss.NewStyle(),
+			Delete:      lipgloss.NewStyle(),
+			Hunk:        lipgloss.NewStyle().Bold(true),
+			File:        lipgloss.NewStyle().Bold(true),
 		}
 	}
 	return Theme{Palette: p, Styles: styles, Profile: profile, NoColor: noColor}
@@ -164,12 +171,25 @@ func (t Theme) RiskBadge(r model.Risk) string {
 func (t Theme) CIStatus(status string) string {
 	switch strings.ToLower(status) {
 	case "passing", "success":
-		return t.Styles.Success.Render(status)
+		return t.Styles.SuccessCI.Render("CI pass")
 	case "pending", "queued", "in_progress":
 		return t.Styles.Pending.Render(status)
 	case "failing", "failed", "failure", "error":
 		return t.Styles.Error.Render(status)
 	default:
 		return t.Styles.Muted.Render(status)
+	}
+}
+
+func (t Theme) ReviewStatus(decision string) string {
+	switch strings.ToUpper(decision) {
+	case "APPROVED":
+		return t.Styles.SuccessCI.Render("approved")
+	case "CHANGES_REQUESTED":
+		return t.Styles.Error.Render("changes requested")
+	case "REVIEW_REQUIRED":
+		return t.Styles.Muted.Render("review required")
+	default:
+		return ""
 	}
 }

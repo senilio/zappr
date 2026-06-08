@@ -17,15 +17,12 @@ type SortMode int
 const (
 	SortUpdated SortMode = iota
 	SortNumber
-	SortRisk
 )
 
 func (m SortMode) String() string {
 	switch m {
 	case SortNumber:
 		return "number"
-	case SortRisk:
-		return "risk"
 	default:
 		return "updated"
 	}
@@ -35,8 +32,6 @@ func (m SortMode) Next() SortMode {
 	switch m {
 	case SortUpdated:
 		return SortNumber
-	case SortNumber:
-		return SortRisk
 	default:
 		return SortUpdated
 	}
@@ -72,8 +67,11 @@ func (a *App) Refresh(ctx context.Context, repo string) ([]model.PullRequest, er
 	}
 	for i := range prs {
 		prs[i].Triage = risk.ClassifyWithTrust(prs[i], a.TrustedAuthors)
-		if aiTriage, err := a.AI.Triage(ctx, prs[i]); err == nil && aiTriage != nil {
-			prs[i].Triage.AI = aiTriage
+		// Preserve any existing AI triage from the cache so that a manual
+		// "r" analysis is not silently wiped on the next background refresh.
+		// AI is only (re-)run by Analyze, which has the full diff available.
+		if cached, err := a.Cache.Get(prs[i].Repo, prs[i].Number); err == nil && cached.Triage.AI != nil {
+			prs[i].Triage.AI = cached.Triage.AI
 		}
 		if err := a.Cache.Put(prs[i]); err != nil {
 			return nil, err
@@ -104,10 +102,6 @@ func SortPullRequests(prs []model.PullRequest, sortMode SortMode) {
 			return !prs[i].Skipped
 		}
 		switch sortMode {
-		case SortRisk:
-			if riskWeight(prs[i].Triage.Risk) != riskWeight(prs[j].Triage.Risk) {
-				return riskWeight(prs[i].Triage.Risk) > riskWeight(prs[j].Triage.Risk)
-			}
 		case SortNumber:
 			return prs[i].Number > prs[j].Number
 		default:
@@ -142,7 +136,9 @@ func (a *App) Analyze(ctx context.Context, repo string, number int) (model.PullR
 	}
 	pr.Diff = diff
 	pr.Triage = risk.ClassifyWithTrust(pr, a.TrustedAuthors)
-	if aiTriage, err := a.AI.Triage(ctx, pr); err == nil && aiTriage != nil {
+	if aiTriage, err := a.AI.Triage(ctx, pr); err != nil {
+		pr.Triage.AI = &model.AITriage{Error: err.Error()}
+	} else if aiTriage != nil {
 		pr.Triage.AI = aiTriage
 	}
 	if err := a.Cache.Put(pr); err != nil {
@@ -159,19 +155,6 @@ func (a *App) Comment(ctx context.Context, repo string, number int, body string)
 	return a.GitHub.Comment(ctx, repo, number, body)
 }
 
-func (a *App) Skip(repo string, number int) error {
-	return a.Cache.Skip(repo, number)
-}
-
-func riskWeight(r model.Risk) int {
-	switch r {
-	case model.RiskBlock:
-		return 3
-	case model.RiskReview:
-		return 2
-	case model.RiskSafe:
-		return 1
-	default:
-		return 0
-	}
+func (a *App) SetSkip(repo string, number int, skipped bool) error {
+	return a.Cache.SetSkip(repo, number, skipped)
 }

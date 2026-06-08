@@ -26,8 +26,8 @@ func TestSQLiteStorePersistsPRs(t *testing.T) {
 	if err := store.Put(pr); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
-	if err := store.Skip("owner/repo", 7); err != nil {
-		t.Fatalf("Skip: %v", err)
+	if err := store.SetSkip("owner/repo", 7, true); err != nil {
+		t.Fatalf("SetSkip: %v", err)
 	}
 
 	store2, err := OpenSQLite(path)
@@ -48,6 +48,17 @@ func TestSQLiteStorePersistsPRs(t *testing.T) {
 	}
 	if prs[0].Triage.Risk != model.RiskSafe {
 		t.Fatalf("risk = %s", prs[0].Triage.Risk)
+	}
+
+	if err := store2.SetSkip("owner/repo", 7, false); err != nil {
+		t.Fatalf("SetSkip unskip: %v", err)
+	}
+	prs, err = store2.List()
+	if err != nil {
+		t.Fatalf("List after unskip: %v", err)
+	}
+	if prs[0].Skipped {
+		t.Fatal("unskip state not persisted")
 	}
 }
 

@@ -78,7 +78,7 @@ func newApp(cfg config.Config) (*app.App, error) {
 		aiCommand = cmd
 	}
 	if strings.TrimSpace(aiCommand) != "" {
-		aiProvider = ai.ShellProvider{Command: aiCommand, Timeout: cfg.AI.Timeout.Duration()}
+		aiProvider = ai.ShellProvider{Command: aiCommand, Prompt: cfg.AI.Prompt, Timeout: cfg.AI.Timeout.Duration()}
 	}
 	store, err := cache.OpenSQLite(cfg.Cache.Path)
 	if err != nil {
@@ -108,7 +108,7 @@ func runWatch(zappr *app.App, cfg config.Config, args []string) error {
 	if err != nil {
 		return err
 	}
-	program := tea.NewProgram(tui.New(zappr, repo, cfg.Refresh.Interval.Duration()))
+	program := tea.NewProgram(tui.New(zappr, repo, cfg.Refresh.Interval.Duration()), tea.WithAltScreen())
 	_, err = program.Run()
 	return err
 }
@@ -125,7 +125,7 @@ func runInbox(zappr *app.App, args []string) error {
 		return err
 	}
 	for _, pr := range prs {
-		fmt.Printf("%-12s #%d %-6s %-8s %s\n", pr.Repo, pr.Number, strings.ToUpper(string(pr.Triage.Risk)), pr.CIStatus, pr.Title)
+		fmt.Printf("%-12s #%d %-8s %s\n", pr.Repo, pr.Number, pr.CIStatus, pr.Title)
 	}
 	return nil
 }
@@ -141,14 +141,9 @@ func runReview(zappr *app.App, args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("%s #%d %s\n%s\n", pr.Repo, pr.Number, strings.ToUpper(string(pr.Triage.Risk)), pr.Title)
-	fmt.Printf("Rule-based summary: %s\n", pr.Triage.Summary)
-	printList("Reasons", pr.Triage.Reasons)
-	printList("Concerns", pr.Triage.Concerns)
-	printList("High-risk files", pr.Triage.HighRiskFiles)
-	printList("Review targets", pr.Triage.ReviewTargets)
+	fmt.Printf("%s #%d\n%s\n", pr.Repo, pr.Number, pr.Title)
 	if pr.Triage.AI != nil {
-		fmt.Println("AI (advisory - does not affect risk):")
+		fmt.Println("AI:")
 		if pr.Triage.AI.Error != "" {
 			fmt.Printf("- error: %s\n", pr.Triage.AI.Error)
 		} else {
@@ -166,12 +161,8 @@ func runApprove(zappr *app.App, args []string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
-	pr, err := zappr.Analyze(ctx, repo, number)
-	if err != nil {
+	if _, err := zappr.Analyze(ctx, repo, number); err != nil {
 		return err
-	}
-	if pr.Triage.Risk == "block" {
-		return fmt.Errorf("refusing quick approval for BLOCK PR; inspect manually")
 	}
 	return zappr.Approve(ctx, repo, number, "")
 }
@@ -327,6 +318,6 @@ Commands:
   zappr doctor                  check gh, auth, cache
 
 Keys:
-  j/k navigate  enter inspect  a approve, y confirm  c comment  s skip  r refresh  v diff  ? help  q quit
+  j/k navigate  enter inspect  a approve, y confirm  c comment  s toggle skip  r refresh  v diff  ? help  q quit
 `
 }

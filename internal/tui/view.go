@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -11,6 +12,8 @@ import (
 
 const minWideWidth = 110
 const minMediumWidth = 76
+const paneFrame = 2  // border top + border bottom (lipgloss frame vertical)
+const paneHFrame = 4 // border (2) + padding (2) horizontal
 
 func (m Model) View() string {
 	switch m.mode {
@@ -53,7 +56,7 @@ func (m Model) inboxView() string {
 		b.WriteString("no open pull requests\n")
 	}
 
-	fmt.Fprintf(&b, "%-3s %-8s %-12s %-8s %s\n", "", "PR", "Risk", "CI", "Title")
+	fmt.Fprintf(&b, "%-3s %-8s %-8s %s\n", "", "PR", "CI", "Title")
 	for i, pr := range m.prs {
 		cursor := " "
 		if i == m.selected {
@@ -63,9 +66,9 @@ func (m Model) inboxView() string {
 		if pr.Skipped {
 			skip = " [skipped]"
 		}
-		fmt.Fprintf(&b, "%-3s #%-7d %-12s %-8s %s%s\n", cursor, pr.Number, riskLabel(pr.Triage.Risk), pr.CIStatus, pr.Title, skip)
+		fmt.Fprintf(&b, "%-3s #%-7d %-8s %s%s\n", cursor, pr.Number, pr.CIStatus, pr.Title, skip)
 	}
-	b.WriteString("\nj/k navigate  enter inspect  a approve, y confirm  c comment  s skip  r refresh  v diff  ? help  q quit\n")
+	b.WriteString("\nj/k navigate  enter inspect  a approve, y confirm  c comment  s toggle skip  r refresh  v toggle diff  ? help  q quit\n")
 	return b.String()
 }
 
@@ -79,15 +82,17 @@ func (m Model) detailView() string {
 		return m.inboxView()
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s #%d %s\n", pr.Repo, pr.Number, riskLabel(pr.Triage.Risk))
+	fmt.Fprintf(&b, "%s #%d\n", pr.Repo, pr.Number)
 	fmt.Fprintf(&b, "%s\n", pr.Title)
 	fmt.Fprintf(&b, "Author: %s  CI: %s  Files: %d  +%d -%d\n\n", pr.Author, pr.CIStatus, pr.ChangedFiles, pr.Additions, pr.Deletions)
-	writeTriage(&b, pr.Triage)
+	if pr.Triage.AI != nil {
+		writeAINotes(&b, pr.Triage)
+	}
 	b.WriteString("\nFiles:\n")
 	for _, file := range pr.Files {
 		fmt.Fprintf(&b, "%-8s %s (+%d -%d)\n", file.Status, file.Path, file.Additions, file.Deletions)
 	}
-	b.WriteString("\na approve, y confirm  c comment  s skip  r re-run analysis  v view diff  esc inbox  ? help  q quit\n")
+	b.WriteString("\na approve, y confirm  c comment  s skip  r re-run analysis  v toggle diff  V full diff pager  esc inbox  ? help  q quit\n")
 	return b.String()
 }
 
@@ -105,7 +110,9 @@ func (m Model) approveView() string {
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "Approve %s #%d?\n\n", pr.Repo, pr.Number)
-	writeTriage(&b, pr.Triage)
+	if pr.Triage.AI != nil {
+		writeAINotes(&b, pr.Triage)
+	}
 	b.WriteString("\nPress y to approve via gh pr review --approve, n/esc to cancel.\n")
 	return b.String()
 }
@@ -128,24 +135,17 @@ func (m Model) helpView() string {
 func helpText() string {
 	return `zappr help
 
-Risk legend (deterministic, authoritative):
-  SAFE  ok   safe for quick approval
-  REVIEW !   human inspection recommended
-  BLOCK  x   quick approval refused
-
-AI triage is advisory only and never changes risk.
-
 Keys:
   j/k        move / scroll
   tab        cycle pane focus
   o          cycle sort
   enter      inspect PR
-  v          load/view diff
+  v          toggle diff pane (load/hide diff)
   V          open full diff pager
-  n/p        next/prev file in diff
-  s          skip PR (inbox) / toggle side-by-side (diff)
-  r          refresh (inbox) / re-run analysis (detail)
-  a then y   approve (y confirms; refused for BLOCK)
+  shift+up/down  prev/next file
+  s          toggle skip (inbox) / side-by-side (diff)
+  r          refresh (inbox) / re-run AI analysis (detail)
+  a then y   approve
   c          comment
   ? esc      toggle help / back
   q          quit`
@@ -158,7 +158,7 @@ func (m Model) helpPanel() string {
 func (m Model) layoutView() string {
 	header := m.headerView()
 	footer := m.footerView()
-	bodyHeight := max(4, m.height-lipgloss.Height(header)-lipgloss.Height(footer))
+	bodyHeight := max(4, m.height-lipgloss.Height(header)-lipgloss.Height(footer)-1)
 
 	if m.mode == ModeConfirmApprove {
 		return lipgloss.JoinVertical(lipgloss.Left, header, m.centerModal(m.approvePanel(), bodyHeight), footer)
@@ -181,6 +181,9 @@ func (m Model) layoutView() string {
 	return lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
 }
 
+// headerView renders the top status bar. When a background operation is
+// active (statusActive), the spinner and message are appended here so the
+// indicator is always visible and never overlaps pane borders.
 func (m Model) headerView() string {
 	parts := []string{m.theme.Styles.Title.Render("zappr"), m.repo}
 	if !m.lastFetch.IsZero() {
@@ -193,10 +196,16 @@ func (m Model) headerView() string {
 	} else {
 		parts = append(parts, m.theme.Styles.Muted.Render("AI: off"))
 	}
-	if m.loading {
+	// Status indicator: shown inline in header so it never overlaps pane borders.
+	if m.statusActive {
+		if m.statusErr {
+			parts = append(parts, m.theme.Styles.Error.Render("✗ "+m.statusText))
+		} else {
+			parts = append(parts, m.statusSpinner.View()+" "+m.theme.Styles.Pending.Render(m.statusText))
+		}
+	} else if m.loading {
 		parts = append(parts, m.theme.Styles.Pending.Render("loading"))
-	}
-	if m.error != "" {
+	} else if m.error != "" {
 		parts = append(parts, m.theme.Styles.Error.Render(m.error))
 	} else if m.message != "" {
 		parts = append(parts, m.theme.Styles.Muted.Render(m.message))
@@ -209,51 +218,167 @@ func (m Model) footerView() string {
 		return m.theme.Styles.Footer.Width(m.width).Render("j/k move  enter details  v diff  ? help  q quit")
 	}
 	var keys string
-	switch m.mode {
-	case ModeDiff:
-		keys = "j/k scroll  n/p file  s side-by-side  V pager  esc back  ? help  q quit"
-	case ModeDetail:
-		keys = "j/k scroll  tab focus  v diff  a approve, y confirm  c comment  s skip  r re-run analysis  esc inbox  ? help  q quit"
+	switch m.focus {
+	case FocusDiff:
+		keys = "j/k scroll  n/p file  s side-by-side  V pager  tab focus  esc back  ? help  q quit"
+	case FocusSummary:
+		keys = "j/k scroll  tab focus  v toggle diff  a approve, y confirm  c comment  s skip  r re-run analysis  esc inbox  ? help  q quit"
 	default:
-		keys = "j/k move  tab focus  o sort  enter inspect  v diff  a approve, y confirm  c comment  s skip  r refresh  ? help  q quit"
+		keys = "j/k move  tab focus  o sort  enter inspect  v toggle diff  a approve, y confirm  c comment  s toggle skip  r refresh  ? help  q quit"
 	}
 	return m.theme.Styles.Footer.Width(m.width).Render(keys)
 }
 
 func (m Model) wideLayout(height int) string {
 	gap := 1
-	inboxW := max(28, m.width*28/100)
-	summaryW := max(34, m.width*34/100)
-	diffW := max(30, m.width-inboxW-summaryW-gap*2)
-	return lipgloss.JoinHorizontal(lipgloss.Top,
-		m.pane("Inbox", m.inboxPanel(inboxW, height), inboxW, height, FocusInbox),
-		strings.Repeat(" ", gap),
-		m.pane("Summary", m.summaryPanel(summaryW, height), summaryW, height, FocusSummary),
-		strings.Repeat(" ", gap),
-		m.pane("Diff / Details", m.diffPanel(diffW, height), diffW, height, FocusDiff),
+	leftW := max(28, m.width*40/100)
+	diffW := max(30, m.width-leftW-gap)
+	inboxH, summaryH := m.leftColumnHeights(height)
+	left := lipgloss.JoinVertical(lipgloss.Left,
+		m.pane(m.titledPane("Inbox", m.inboxScrollPct()), m.inboxPanel(leftW, inboxH), leftW, inboxH, FocusInbox),
+		m.pane(m.titledPane("Summary", m.summaryScrollPct()), m.summaryPanel(leftW, summaryH), leftW, summaryH, FocusSummary),
 	)
+	right := m.pane(m.titledPane("Diff / Details", m.diffScrollPct()), m.diffPanel(diffW, height), diffW, height, FocusDiff)
+	return lipgloss.JoinHorizontal(lipgloss.Top, left, strings.Repeat(" ", gap), right)
+}
+
+// leftColumnHeights splits the left column between Inbox and Summary.
+//
+// When Inbox is focused: inbox gets 70% of height (scrollable), summary gets 30%.
+// When Summary/Diff focused (inspecting a PR): inbox collapses to show only
+// the selected PR block (content rows + pane frame), summary takes the rest.
+func (m Model) leftColumnHeights(height int) (inboxH, summaryH int) {
+	if m.focus == FocusInbox {
+		inboxH = max(6, height*70/100)
+		summaryH = max(4, height-inboxH)
+		return
+	}
+	// Collapsed: just the selected PR block + border frame.
+	contentRows := m.selectedInboxRows()
+	inboxH = max(4, contentRows+paneFrame)
+	summaryH = max(4, height-inboxH)
+	return
 }
 
 func (m Model) mediumLayout(height int) string {
 	topH := max(8, height/2)
 	bottomH := max(6, height-topH)
 	top := lipgloss.JoinHorizontal(lipgloss.Top,
-		m.pane("Inbox", m.inboxPanel(m.width/2-1, topH), m.width/2-1, topH, FocusInbox),
+		m.pane(m.titledPane("Inbox", m.inboxScrollPct()), m.inboxPanel(m.width/2-1, topH), m.width/2-1, topH, FocusInbox),
 		" ",
-		m.pane("Summary", m.summaryPanel(m.width/2, topH), m.width/2, topH, FocusSummary),
+		m.pane(m.titledPane("Summary", m.summaryScrollPct()), m.summaryPanel(m.width/2, topH), m.width/2, topH, FocusSummary),
 	)
-	bottom := m.pane("Diff / Details", m.diffPanel(m.width, bottomH), m.width, bottomH, FocusDiff)
+	bottom := m.pane(m.titledPane("Diff / Details", m.diffScrollPct()), m.diffPanel(m.width, bottomH), m.width, bottomH, FocusDiff)
 	return lipgloss.JoinVertical(lipgloss.Left, top, bottom)
 }
 
 func (m Model) compactLayout(height int) string {
 	if m.mode == ModeDiff {
-		return m.pane("Diff", m.diffPanel(m.width, height), m.width, height, FocusDiff)
+		return m.pane(m.titledPane("Diff", m.diffScrollPct()), m.diffPanel(m.width, height), m.width, height, FocusDiff)
 	}
 	if m.mode == ModeDetail {
-		return m.pane("Details", m.summaryPanel(m.width, height), m.width, height, FocusSummary)
+		return m.pane(m.titledPane("Details", m.summaryScrollPct()), m.summaryPanel(m.width, height), m.width, height, FocusSummary)
 	}
-	return m.pane("Inbox", m.inboxPanel(m.width, height), m.width, height, FocusInbox)
+	return m.pane(m.titledPane("Inbox", m.inboxScrollPct()), m.inboxPanel(m.width, height), m.width, height, FocusInbox)
+}
+
+// titledPane appends a scroll percentage to a pane title when pct > 0.
+// Returns "Title 42%" or just "Title" when pct is 0 (at top or no overflow).
+func (m Model) titledPane(base string, pct int) string {
+	if pct > 0 {
+		return fmt.Sprintf("%s %d%%", base, pct)
+	}
+	return base
+}
+
+// inboxScrollPct returns the scroll percentage of the inbox viewport (0 = at top or no overflow).
+func (m Model) inboxScrollPct() int {
+	return vpScrollPct(m.inboxVP.YOffset, m.inboxVP.TotalLineCount(), m.inboxVP.VisibleLineCount())
+}
+
+// summaryScrollPct returns the scroll percentage of the summary viewport.
+func (m Model) summaryScrollPct() int {
+	return vpScrollPct(m.summaryVP.YOffset, m.summaryVP.TotalLineCount(), m.summaryVP.VisibleLineCount())
+}
+
+// diffScrollPct returns the scroll percentage of the diff viewport.
+func (m Model) diffScrollPct() int {
+	return vpScrollPct(m.diffVP.YOffset, m.diffVP.TotalLineCount(), m.diffVP.VisibleLineCount())
+}
+
+// vpScrollPct computes a [0,100] scroll percentage from viewport metrics.
+// Returns 0 when at the top, content fits in view, or metrics are unset.
+func vpScrollPct(yOffset, totalLines, visibleLines int) int {
+	scrollable := totalLines - visibleLines
+	if scrollable <= 0 || yOffset <= 0 {
+		return 0
+	}
+	pct := int(float64(yOffset) / float64(scrollable) * 100)
+	if pct > 99 {
+		pct = 99
+	}
+	return pct
+}
+
+// paneInnerWidths returns the content (inner) width for each pane given the
+// current layout and terminal width. Outer pane width minus paneHFrame (4).
+func (m Model) paneInnerWidths() (inbox, summary, diff int) {
+	if m.width >= minWideWidth {
+		gap := 1
+		leftW := max(28, m.width*40/100)
+		diffW := max(30, m.width-leftW-gap)
+		inbox = max(1, leftW-paneHFrame)
+		summary = inbox
+		diff = max(1, diffW-paneHFrame)
+	} else if m.width >= minMediumWidth {
+		half := m.width / 2
+		inbox = max(1, half-1-paneHFrame)
+		summary = max(1, half-paneHFrame)
+		diff = max(1, m.width-paneHFrame)
+	} else {
+		w := max(1, m.width-paneHFrame)
+		inbox, summary, diff = w, w, w
+	}
+	return
+}
+
+// wrapLines word-wraps each logical line in s to at most w visible columns.
+// Preserves explicit newlines; hard-breaks words longer than w.
+// Uses lipgloss so ANSI escape codes do not count toward width.
+func wrapLines(s string, w int) string {
+	if w <= 0 {
+		return s
+	}
+	logicalLines := strings.Split(s, "\n")
+	out := make([]string, 0, len(logicalLines))
+	wrapper := lipgloss.NewStyle().Width(w).MaxWidth(w)
+	for _, line := range logicalLines {
+		if lipgloss.Width(line) <= w {
+			out = append(out, line)
+			continue
+		}
+		// Wrap via lipgloss: it word-wraps at w, producing multiple visual lines.
+		rendered := wrapper.Render(line)
+		// Strip the trailing padding spaces lipgloss adds to fill Width.
+		for _, wl := range strings.Split(rendered, "\n") {
+			out = append(out, strings.TrimRight(wl, " "))
+		}
+	}
+	return strings.Join(out, "\n")
+}
+
+// selectedInboxRows returns the number of display rows (excluding border frame)
+// needed to show exactly the selected PR in the inbox pane.
+func (m Model) selectedInboxRows() int {
+	if len(m.prs) == 0 {
+		return 3 // "no open pull requests" + frame
+	}
+	pr := m.prs[m.selected]
+	rows := 3 // title + ci/review + author lines
+	if pr.Skipped {
+		rows++
+	}
+	return rows
 }
 
 func (m Model) pane(title string, content string, width int, height int, focus Focus) string {
@@ -261,35 +386,153 @@ func (m Model) pane(title string, content string, width int, height int, focus F
 	if m.focus == focus {
 		style = m.theme.Styles.Focused
 	}
+	// Treat width/height as the total outer size; subtract the frame so the
+	// rendered box (border + padding + content) fits exactly within the
+	// allotted columns. This keeps the rightmost pane's right border visible.
 	innerW := max(1, width-style.GetHorizontalFrameSize())
 	innerH := max(1, height-style.GetVerticalFrameSize())
-	titleLine := m.theme.Styles.Title.Render(title)
-	content = lipgloss.NewStyle().Width(innerW).Height(max(1, innerH-1)).Render(content)
-	return style.Width(width).Height(height).Render(lipgloss.JoinVertical(lipgloss.Left, titleLine, content))
+	// Hard-clip content to innerH lines so the box never grows taller than its
+	// allotted height. lipgloss.Height pads but does NOT truncate; without this
+	// an overflowing panel would push the entire layout up, hiding the header.
+	// MaxWidth truncates over-wide lines; we do NOT use Width() because it wraps.
+	// Viewports and pre-fitted content already pad to innerW, so only MaxWidth is needed.
+	content = lipgloss.NewStyle().Height(innerH).MaxHeight(innerH).MaxWidth(innerW).Render(content)
+	box := style.Width(innerW).Height(innerH).MaxHeight(height).MaxWidth(width).Render(content)
+	return embedTitle(box, title, style, m.theme.NoColor)
+}
+
+// embedTitle overwrites the center of the first line of a rendered box with
+// the pane title, centered and surrounded by a single space on each side.
+// The title text is colored to match the border foreground. Corner glyphs are
+// preserved. Falls back to returning the box unchanged if there is not enough
+// room for the title.
+func embedTitle(box string, title string, style lipgloss.Style, noColor bool) string {
+	lines := strings.SplitN(box, "\n", 2)
+	if len(lines) == 0 {
+		return box
+	}
+	topLine := lines[0]
+	rest := ""
+	if len(lines) > 1 {
+		rest = "\n" + lines[1]
+	}
+
+	// Measure visible width of the top border line.
+	lineWidth := lipgloss.Width(topLine)
+	// We need at least: 2 corner chars + 2 spaces + 1 title char.
+	needed := lipgloss.Width(title) + 2 // " title "
+	if lineWidth < needed+2 {
+		return box
+	}
+
+	// Build styled title segment " title ".
+	titleStyle := lipgloss.NewStyle()
+	if !noColor {
+		titleStyle = titleStyle.Foreground(style.GetBorderTopForeground())
+	}
+	segment := titleStyle.Render(" " + title + " ")
+	segWidth := lipgloss.Width(title) + 2 // visual width of the segment
+
+	// Position: center within the line, keeping 1 char margin for corners.
+	available := lineWidth - 2 // exclude corner cols
+	leftPad := (available - segWidth) / 2
+	rightPad := available - segWidth - leftPad
+
+	// Strip ANSI from topLine to slice by rune position (corners + filler).
+	plain := stripANSI(topLine)
+	runes := []rune(plain)
+	if len(runes) < lineWidth {
+		return box
+	}
+
+	// Rebuild the top border glyph-by-glyph (no ANSI in original anyway for
+	// rounded/thick borders from lipgloss — it applies color via the border
+	// foreground which wraps the whole line). We reconstruct using the border
+	// top glyph and corner glyphs directly from the style's border definition.
+	bs := style.GetBorderStyle()
+	cornerL := bs.TopLeft
+	cornerR := bs.TopRight
+	filler := bs.Top
+	if filler == "" {
+		filler = "─"
+	}
+	if cornerL == "" {
+		cornerL = string(runes[0])
+	}
+	if cornerR == "" {
+		cornerR = string(runes[len(runes)-1])
+	}
+
+	borderStyle := lipgloss.NewStyle()
+	if !noColor {
+		borderStyle = borderStyle.Foreground(style.GetBorderTopForeground())
+	}
+
+	left := borderStyle.Render(cornerL + strings.Repeat(filler, leftPad))
+	right := borderStyle.Render(strings.Repeat(filler, rightPad) + cornerR)
+	newTop := left + segment + right
+
+	return newTop + rest
 }
 
 func (m Model) inboxPanel(width int, height int) string {
 	if len(m.prs) == 0 && !m.loading {
 		return m.theme.Styles.Muted.Render("no open pull requests")
 	}
+	s := m.theme.Styles
+	innerW := max(1, width-paneHFrame)
 	var b strings.Builder
+	// Track line number where selected item starts (for viewport scroll sync).
+	lineCount := 0
+	selectedLine := 0
 	for i, pr := range m.prs {
+		if i == m.selected {
+			selectedLine = lineCount
+		}
 		cursor := " "
+		title := truncateANSI(truncate(pr.Title, max(8, innerW-2)), innerW-2)
+		var titleStr string
 		if i == m.selected {
 			cursor = ">"
+			titleStr = s.TitleStrong.Render(title)
+		} else {
+			titleStr = title
 		}
-		title := truncate(pr.Title, max(8, width-7))
-		fmt.Fprintf(&b, "%s %s #%d\n", cursor, m.theme.RiskBadge(pr.Triage.Risk), pr.Number)
-		fmt.Fprintf(&b, "  %s  +%d -%d  %d files\n", m.theme.CIStatus(pr.CIStatus), pr.Additions, pr.Deletions, pr.ChangedFiles)
-		fmt.Fprintf(&b, "  %s\n", title)
+		fmt.Fprintf(&b, "%s %s\n", cursor, titleStr)
+		lineCount++
+		ciStr := m.theme.CIStatus(pr.CIStatus)
+		if reviewStr := m.theme.ReviewStatus(pr.ReviewDecision); reviewStr != "" {
+			ciStr = ciStr + s.Muted.Render(" · ") + reviewStr
+		}
+		ciLine := truncateANSI(ciStr, innerW-2)
+		fmt.Fprintf(&b, "  %s\n", ciLine)
+		lineCount++
+		authorLine := truncateANSI(s.Muted.Render(fmt.Sprintf("#%d · %s", pr.Number, pr.Author)), innerW-2)
+		fmt.Fprintf(&b, "  %s\n", authorLine)
+		lineCount++
 		if pr.Skipped {
-			fmt.Fprintf(&b, "  %s\n", m.theme.Styles.Muted.Render("skipped"))
+			fmt.Fprintf(&b, "  %s\n", s.Muted.Render("skipped"))
+			lineCount++
 		}
 		if i < len(m.prs)-1 {
 			b.WriteByte('\n')
+			lineCount++
 		}
 	}
-	return b.String()
+	vpH := max(1, height-paneFrame)
+	vp := m.inboxVP
+	vp.Width = innerW
+	vp.Height = vpH
+	vp.SetContent(b.String())
+	// Scroll so that the selected item is always visible (only when overflowing).
+	if vp.TotalLineCount() > vpH {
+		if selectedLine < vp.YOffset {
+			vp.SetYOffset(selectedLine)
+		} else if selectedLine >= vp.YOffset+vpH {
+			vp.SetYOffset(selectedLine - vpH + 1)
+		}
+	}
+	return vp.View()
 }
 
 func (m Model) summaryPanel(width int, height int) string {
@@ -297,70 +540,105 @@ func (m Model) summaryPanel(width int, height int) string {
 	if !ok {
 		return m.theme.Styles.Muted.Render("select PR")
 	}
-	content := m.summaryContent(pr)
+	innerW := max(1, width-paneHFrame)
+	content := wrapLines(m.summaryContent(pr), innerW)
 	vp := m.summaryVP
-	vp.Width = max(1, width-4)
-	vp.Height = max(1, height-4)
+	vp.Width = innerW
+	vp.Height = max(1, height-paneFrame)
 	vp.SetContent(content)
 	return vp.View()
 }
 
 func (m Model) summaryContent(pr model.PullRequest) string {
+	s := m.theme.Styles
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s #%d\n", pr.Title, pr.Number)
-	fmt.Fprintf(&b, "Risk: %s  author: %s  CI: %s\n", plainRiskLabel(pr.Triage.Risk), pr.Author, pr.CIStatus)
-	fmt.Fprintf(&b, "files: %d  +%d -%d\n\n", pr.ChangedFiles, pr.Additions, pr.Deletions)
-	writePlainTriage(&b, pr.Triage)
+
+	// Risk badge + author line.
+	riskBadge := m.theme.RiskBadge(pr.Triage.Risk)
+	fmt.Fprintf(&b, "%s  %s  +%d -%d\n", riskBadge, s.Muted.Render(pr.Author), pr.Additions, pr.Deletions)
+
+	// Files browser (primary content).
 	if len(pr.Files) > 0 {
-		b.WriteString("\nFiles\n")
+		b.WriteByte('\n')
+		b.WriteString(s.Subtitle.Render("Files"))
+		b.WriteByte('\n')
 		for i, file := range pr.Files {
-			marker := " "
+			cursor := " "
+			path := file.Path
 			if i == m.fileIndex {
-				marker = ">"
+				cursor = s.Title.Render(">")
+				path = s.File.Render(path)
 			}
-			fmt.Fprintf(&b, "%s %-10s %s (+%d -%d)\n", marker, file.Status, file.Path, file.Additions, file.Deletions)
+			fmt.Fprintf(&b, "%s %s %s %s %s\n",
+				cursor,
+				s.Muted.Render(file.Status),
+				path,
+				s.Add.Render(fmt.Sprintf("+%d", file.Additions)),
+				s.Delete.Render(fmt.Sprintf("-%d", file.Deletions)),
+			)
 		}
 	}
+
+	// AI verdict (shown only when available).
+	if pr.Triage.AI != nil {
+		b.WriteByte('\n')
+		writeStyledAINotes(&b, m, pr.Triage)
+	} else {
+		b.WriteByte('\n')
+		b.WriteString(s.Muted.Render("press r to run AI review"))
+		b.WriteByte('\n')
+	}
+
 	return b.String()
 }
 
 func (m Model) diffPanel(width int, height int) string {
+	if !m.diffEnabled {
+		return m.theme.Styles.Muted.Render("press v to load diff")
+	}
 	if m.diff == "" {
-		pr, ok := m.current()
-		if !ok {
-			return m.theme.Styles.Muted.Render("select PR")
-		}
-		var b strings.Builder
-		b.WriteString("Files\n")
-		for _, file := range pr.Files {
-			fmt.Fprintf(&b, "%s  +%d -%d\n", file.Path, file.Additions, file.Deletions)
-		}
-		b.WriteString("\npress v to load diff, V to open full pager\n")
-		return b.String()
+		return m.theme.Styles.Muted.Render("loading diff…")
 	}
-	content := m.diff
-	if len(m.diffFiles) > 0 {
-		content = m.diffFilesHeader() + "\n" + content
-	}
+	_, _, diffInnerW := m.paneInnerWidths()
+	vpW := max(1, diffInnerW)
+	vpH := max(1, height-paneFrame)
+	// Render from the stored viewport so YOffset/XOffset (scroll positions) are
+	// preserved and TotalLineCount is accurate for vpCanScroll checks.
 	vp := m.diffVP
-	vp.Width = max(1, width-4)
-	vp.Height = max(1, height-4)
-	vp.SetContent(content)
+	vp.Width = vpW
+	vp.Height = vpH
 	return vp.View()
 }
 
-func (m Model) diffFilesHeader() string {
+// truncateANSI clips a string with ANSI escape codes to maxW visible columns.
+// It walks rune-by-rune, tracking ANSI sequences (which have zero width) and
+// counting visible characters until maxW is reached.
+func truncateANSI(s string, maxW int) string {
 	var b strings.Builder
-	limit := min(len(m.diffFiles), 8)
-	for i := 0; i < limit; i++ {
-		marker := " "
-		if i == m.fileIndex {
-			marker = ">"
+	inEscape := false
+	width := 0
+	for _, r := range s {
+		if r == '\x1b' {
+			inEscape = true
+			b.WriteRune(r)
+			continue
 		}
-		fmt.Fprintf(&b, "%s %s\n", marker, m.theme.Styles.File.Render(m.diffFiles[i].Path))
+		if inEscape {
+			b.WriteRune(r)
+			if (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') {
+				inEscape = false
+			}
+			continue
+		}
+		if width >= maxW {
+			break
+		}
+		b.WriteRune(r)
+		width++
 	}
-	if len(m.diffFiles) > limit {
-		fmt.Fprintf(&b, "%s\n", m.theme.Styles.Muted.Render(fmt.Sprintf("... %d more files", len(m.diffFiles)-limit)))
+	// Reset ANSI attributes so truncation doesn't bleed color into next line.
+	if strings.Contains(b.String(), "\x1b[") {
+		b.WriteString("\x1b[0m")
 	}
 	return b.String()
 }
@@ -379,12 +657,9 @@ func (m Model) approvePanel() string {
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "Approve %s #%d?\n\n", pr.Repo, pr.Number)
-	fmt.Fprintf(&b, "%s\n", m.theme.RiskBadge(pr.Triage.Risk))
-	if pr.Triage.Risk == model.RiskBlock {
-		b.WriteString(m.theme.Styles.Error.Render("Quick approval disabled for BLOCK risk."))
-		b.WriteString("\n")
+	if pr.Triage.AI != nil {
+		writeStyledAINotes(&b, m, pr.Triage)
 	}
-	writeStyledTriage(&b, m, pr.Triage)
 	b.WriteString("\ny approve  n/esc cancel")
 	return b.String()
 }
@@ -397,50 +672,18 @@ func (m Model) commentPanel() string {
 	return fmt.Sprintf("Comment on %s #%d\n\n%s\n\nenter submit  esc cancel", pr.Repo, pr.Number, m.comment)
 }
 
-func writeTriage(b *strings.Builder, triage model.Triage) {
-	b.WriteString("Rule-based verdict (authoritative)\n")
-	fmt.Fprintf(b, "Risk: %s  Confidence: %s\n", riskLabel(triage.Risk), confidencePct(triage.Confidence))
-	fmt.Fprintf(b, "Summary: %s\n", triage.Summary)
-	writeList(b, "Reasons", triage.Reasons)
-	writeList(b, "Concerns", triage.Concerns)
-	writeList(b, "High-risk files", triage.HighRiskFiles)
-	writeList(b, "Review targets", triage.ReviewTargets)
-	writeAINotes(b, triage)
-}
-
-func writeStyledTriage(b *strings.Builder, m Model, triage model.Triage) {
-	b.WriteString(m.theme.Styles.Title.Render("Rule-based verdict (authoritative)") + "\n")
-	fmt.Fprintf(b, "Risk: %s  Confidence: %s\n", m.theme.RiskBadge(triage.Risk), confidencePct(triage.Confidence))
-	fmt.Fprintf(b, "Summary: %s\n", triage.Summary)
-	writeList(b, "Reasons", triage.Reasons)
-	writeList(b, "Concerns", triage.Concerns)
-	writeList(b, "High-risk files", triage.HighRiskFiles)
-	writeList(b, "Review targets", triage.ReviewTargets)
-	writeStyledAINotes(b, m, triage)
-}
-
-func writePlainTriage(b *strings.Builder, triage model.Triage) {
-	b.WriteString("Rule-based verdict (authoritative)\n")
-	fmt.Fprintf(b, "Confidence: %s\n", confidencePct(triage.Confidence))
-	fmt.Fprintf(b, "Summary: %s\n", triage.Summary)
-	writeList(b, "Reasons", triage.Reasons)
-	writeList(b, "Concerns", triage.Concerns)
-	writeList(b, "High-risk files", triage.HighRiskFiles)
-	writeList(b, "Review targets", triage.ReviewTargets)
-	writeAINotes(b, triage)
-}
-
 func writeAINotes(b *strings.Builder, triage model.Triage) {
 	if triage.AI == nil {
 		b.WriteString("\nAI: not run (advisory only)\n")
 		return
 	}
-	b.WriteString("\nAI (advisory - does not affect risk)\n")
+	b.WriteString("\nAI review\n")
 	if triage.AI.Error != "" {
 		fmt.Fprintf(b, "AI error: %s\n", triage.AI.Error)
 		return
 	}
 	fmt.Fprintf(b, "- %s\n", triage.AI.Summary)
+	writeList(b, "Risk", triage.AI.RiskNotes)
 	writeList(b, "AI focus", triage.AI.SuggestedFocus)
 }
 
@@ -449,29 +692,23 @@ func writeStyledAINotes(b *strings.Builder, m Model, triage model.Triage) {
 		b.WriteString("\n" + m.theme.Styles.Muted.Render("AI: not run (advisory only)") + "\n")
 		return
 	}
-	b.WriteString("\n" + m.theme.Styles.Subtitle.Render("AI (advisory - does not affect risk)") + "\n")
+	b.WriteString("\n" + m.theme.Styles.Subtitle.Render("AI review") + "\n")
 	if triage.AI.Error != "" {
 		b.WriteString(m.theme.Styles.Error.Render("AI error: "+triage.AI.Error) + "\n")
 		return
 	}
 	fmt.Fprintf(b, "- %s\n", triage.AI.Summary)
-	writeList(b, "AI focus", triage.AI.SuggestedFocus)
+	writeStyledList(b, m, "Risk", triage.AI.RiskNotes)
+	writeStyledList(b, m, "AI focus", triage.AI.SuggestedFocus)
 }
 
-func confidencePct(c float64) string {
-	return fmt.Sprintf("%d%%", int(c*100+0.5))
-}
-
-func plainRiskLabel(r model.Risk) string {
-	switch r {
-	case model.RiskSafe:
-		return "SAFE ok"
-	case model.RiskReview:
-		return "REVIEW !"
-	case model.RiskBlock:
-		return "BLOCK x"
-	default:
-		return "unknown"
+func writeStyledList(b *strings.Builder, m Model, title string, values []string) {
+	if len(values) == 0 {
+		return
+	}
+	fmt.Fprintf(b, "%s:\n", m.theme.Styles.Subtitle.Render(title))
+	for _, value := range values {
+		fmt.Fprintf(b, "- %s\n", value)
 	}
 }
 
@@ -508,6 +745,12 @@ func truncate(s string, width int) string {
 		return s[:width]
 	}
 	return s[:width-3] + "..."
+}
+
+var ansiPattern = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
+func stripANSI(s string) string {
+	return ansiPattern.ReplaceAllString(s, "")
 }
 
 func min(a, b int) int {

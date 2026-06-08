@@ -10,7 +10,7 @@ zappr is a Go terminal app for pull request triage. It uses Bubble Tea for TUI, 
 - Preserve package boundaries under `internal/`.
 - Do not add web UI, SaaS behavior, GitHub App auth, webhooks, analytics, or distributed services.
 - Human approval stays mandatory; AI output is advisory only.
-- Deterministic risk rules must remain the source of truth for blocking quick approval.
+- Deterministic risk rules remain the source of truth for **classification** but do not gate approval. BLOCK risk is shown as a warning; the user decides whether to approve.
 - Prefer `gh` CLI integration until a concrete reason exists to replace it.
 
 ## Development Commands
@@ -49,5 +49,5 @@ Use `rtk go test ./...` if available in the environment.
 ## GitHub Actions
 
 - Approval/comment actions must use `gh pr review`.
-- Quick approval must refuse `block` risk.
+- Approval is permitted for all risk levels; BLOCK is advisory only.
 - Network/auth/rate-limit failures should surface as user-readable errors.

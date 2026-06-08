@@ -18,22 +18,23 @@ type ChangedFile struct {
 }
 
 type PullRequest struct {
-	Repo         string
-	Number       int
-	Title        string
-	Author       string
-	URL          string
-	Labels       []string
-	Files        []ChangedFile
-	Additions    int
-	Deletions    int
-	ChangedFiles int
-	CIStatus     string
-	Draft        bool
-	UpdatedAt    time.Time
-	Diff         string
-	Triage       Triage
-	Skipped      bool
+	Repo           string
+	Number         int
+	Title          string
+	Author         string
+	URL            string
+	Labels         []string
+	Files          []ChangedFile
+	Additions      int
+	Deletions      int
+	ChangedFiles   int
+	CIStatus       string
+	ReviewDecision string
+	Draft          bool
+	UpdatedAt      time.Time
+	Diff           string
+	Triage         Triage
+	Skipped        bool
 }
 
 func (pr PullRequest) Size() int {
