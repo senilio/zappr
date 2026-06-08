@@ -83,6 +83,34 @@ func (s *SQLiteStore) List() ([]model.PullRequest, error) {
 	return prs, rows.Err()
 }
 
+func (s *SQLiteStore) PruneRepo(repo string, openNumbers map[int]bool) error {
+	rows, err := s.db.Query(`select number from pull_requests where repo = ?`, repo)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	var closed []int
+	for rows.Next() {
+		var number int
+		if err := rows.Scan(&number); err != nil {
+			return err
+		}
+		if !openNumbers[number] {
+			closed = append(closed, number)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, number := range closed {
+		if _, err := s.db.Exec(`delete from pull_requests where repo = ? and number = ?`, repo, number); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *SQLiteStore) Skip(repo string, number int) error {
 	pr, err := s.get(repo, number)
 	if err != nil {

@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"sort"
+	"time"
 
 	"github.com/senilio/zappr/internal/ai"
 	"github.com/senilio/zappr/internal/cache"
@@ -10,6 +11,36 @@ import (
 	"github.com/senilio/zappr/internal/model"
 	"github.com/senilio/zappr/internal/risk"
 )
+
+type SortMode int
+
+const (
+	SortUpdated SortMode = iota
+	SortNumber
+	SortRisk
+)
+
+func (m SortMode) String() string {
+	switch m {
+	case SortNumber:
+		return "number"
+	case SortRisk:
+		return "risk"
+	default:
+		return "updated"
+	}
+}
+
+func (m SortMode) Next() SortMode {
+	switch m {
+	case SortUpdated:
+		return SortNumber
+	case SortNumber:
+		return SortRisk
+	default:
+		return SortUpdated
+	}
+}
 
 type App struct {
 	GitHub github.Provider
@@ -38,24 +69,56 @@ func (a *App) Refresh(ctx context.Context, repo string) ([]model.PullRequest, er
 			return nil, err
 		}
 	}
-	return a.Inbox(), nil
+	openNumbers := make(map[int]bool, len(prs))
+	for _, pr := range prs {
+		openNumbers[pr.Number] = true
+	}
+	if err := a.Cache.PruneRepo(repo, openNumbers); err != nil {
+		return nil, err
+	}
+	return a.Inbox(SortUpdated), nil
 }
 
-func (a *App) Inbox() []model.PullRequest {
+func (a *App) Inbox(sortMode SortMode) []model.PullRequest {
 	prs, err := a.Cache.List()
 	if err != nil {
 		return nil
 	}
+	SortPullRequests(prs, sortMode)
+	return prs
+}
+
+func SortPullRequests(prs []model.PullRequest, sortMode SortMode) {
 	sort.Slice(prs, func(i, j int) bool {
 		if prs[i].Skipped != prs[j].Skipped {
 			return !prs[i].Skipped
 		}
-		if riskWeight(prs[i].Triage.Risk) != riskWeight(prs[j].Triage.Risk) {
-			return riskWeight(prs[i].Triage.Risk) > riskWeight(prs[j].Triage.Risk)
+		switch sortMode {
+		case SortRisk:
+			if riskWeight(prs[i].Triage.Risk) != riskWeight(prs[j].Triage.Risk) {
+				return riskWeight(prs[i].Triage.Risk) > riskWeight(prs[j].Triage.Risk)
+			}
+		case SortNumber:
+			return prs[i].Number > prs[j].Number
+		default:
+			left := prs[i].UpdatedAt
+			right := prs[j].UpdatedAt
+			if left.IsZero() {
+				left = fallbackPRTime(prs[i])
+			}
+			if right.IsZero() {
+				right = fallbackPRTime(prs[j])
+			}
+			if !left.Equal(right) {
+				return left.After(right)
+			}
 		}
-		return prs[i].Number < prs[j].Number
+		return prs[i].Number > prs[j].Number
 	})
-	return prs
+}
+
+func fallbackPRTime(pr model.PullRequest) time.Time {
+	return time.Unix(int64(pr.Number), 0)
 }
 
 func (a *App) Analyze(ctx context.Context, repo string, number int) (model.PullRequest, error) {

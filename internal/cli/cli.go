@@ -148,7 +148,7 @@ func runApprove(zappr *app.App, args []string) error {
 	if pr.Triage.Risk == "block" {
 		return fmt.Errorf("refusing quick approval for BLOCK PR; inspect manually")
 	}
-	return zappr.Approve(ctx, repo, number, "Reviewed via zappr.")
+	return zappr.Approve(ctx, repo, number, "")
 }
 
 func runConfig(args []string) error {
@@ -178,7 +178,7 @@ func runConfig(args []string) error {
 
 func runCache(zappr *app.App, args []string) error {
 	if len(args) == 0 || args[0] == "status" {
-		prs := zappr.Inbox()
+		prs := zappr.Inbox(app.SortUpdated)
 		fmt.Printf("path: %s\n", zappr.Cache.Path())
 		fmt.Printf("pull_requests: %d\n", len(prs))
 		return nil
@@ -302,6 +302,6 @@ Commands:
   zappr doctor                  check gh, auth, cache
 
 Keys:
-  j/k navigate  enter inspect  a approve  c comment  s skip  r refresh  v diff  q quit
+  j/k navigate  enter inspect  a approve, y confirm  c comment  s skip  r refresh  v diff  q quit
 `
 }

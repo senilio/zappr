@@ -1,5 +1,7 @@
 package model
 
+import "time"
+
 type Risk string
 
 const (
@@ -28,6 +30,7 @@ type PullRequest struct {
 	ChangedFiles int
 	CIStatus     string
 	Draft        bool
+	UpdatedAt    time.Time
 	Diff         string
 	Triage       Triage
 	Skipped      bool

@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/senilio/zappr/internal/model"
 )
@@ -21,7 +22,7 @@ func NewGHProvider() *GHProvider {
 }
 
 func (p *GHProvider) ListOpenPRs(ctx context.Context, repo string) ([]model.PullRequest, error) {
-	out, err := p.run(ctx, "pr", "list", "--repo", repo, "--state", "open", "--json", "number,title,author,url,labels,additions,deletions,changedFiles,isDraft,statusCheckRollup")
+	out, err := p.run(ctx, "pr", "list", "--repo", repo, "--state", "open", "--json", "number,title,author,url,labels,additions,deletions,changedFiles,isDraft,statusCheckRollup,updatedAt")
 	if err != nil {
 		return nil, err
 	}
@@ -47,7 +48,7 @@ func (p *GHProvider) ListOpenPRs(ctx context.Context, repo string) ([]model.Pull
 }
 
 func (p *GHProvider) GetPR(ctx context.Context, repo string, number int) (model.PullRequest, error) {
-	out, err := p.run(ctx, "pr", "view", strconv.Itoa(number), "--repo", repo, "--json", "number,title,author,url,labels,additions,deletions,changedFiles,isDraft,statusCheckRollup,files")
+	out, err := p.run(ctx, "pr", "view", strconv.Itoa(number), "--repo", repo, "--json", "number,title,author,url,labels,additions,deletions,changedFiles,isDraft,statusCheckRollup,files,updatedAt")
 	if err != nil {
 		return model.PullRequest{}, err
 	}
@@ -128,6 +129,7 @@ type ghPR struct {
 	Draft             bool            `json:"isDraft"`
 	StatusCheckRollup json.RawMessage `json:"statusCheckRollup"`
 	Files             []ghFile        `json:"files"`
+	UpdatedAt         string          `json:"updatedAt"`
 }
 
 type ghAuthor struct {
@@ -167,7 +169,19 @@ func (p ghPR) toModel(repo string) model.PullRequest {
 		ChangedFiles: p.ChangedFiles,
 		CIStatus:     statusFromRollup(p.StatusCheckRollup),
 		Draft:        p.Draft,
+		UpdatedAt:    parseTime(p.UpdatedAt),
 	}
+}
+
+func parseTime(value string) time.Time {
+	if strings.TrimSpace(value) == "" {
+		return time.Time{}
+	}
+	t, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return time.Time{}
+	}
+	return t
 }
 
 func statusFromRollup(raw json.RawMessage) string {

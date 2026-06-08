@@ -1,6 +1,14 @@
 package tui
 
-import tea "github.com/charmbracelet/bubbletea"
+import (
+	"os/exec"
+	"strconv"
+	"strings"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/senilio/zappr/internal/app"
+	"github.com/senilio/zappr/internal/model"
+)
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -8,12 +16,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = false
 		if msg.err != nil {
 			m.error = msg.err.Error()
-			m.prs = m.app.Inbox()
+			m.prs = visiblePRs(m.app.Inbox(m.sortMode))
 			return m, nil
 		}
 		m.error = ""
 		m.message = "refreshed"
-		m.prs = msg.prs
+		m.prs = sortPRs(visiblePRs(msg.prs), m.sortMode)
 		m.lastFetch = timeNow()
 		if m.selected >= len(m.prs) {
 			m.selected = len(m.prs) - 1
@@ -29,8 +37,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.error = msg.err.Error()
 			return m, nil
 		}
-		m.diff = trimDiff(msg.diff)
+		m.error = ""
+		m.rawDiff = msg.raw
+		m.diff = trimDiff(msg.rendered)
+		m.diffFiles = msg.files
 		m.mode = ModeDiff
+		m.focus = FocusDiff
+		m.diffVP.SetContent(m.diff)
+		m.diffVP.GotoTop()
+		return m, nil
+
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+		m.resizeViewports()
 		return m, nil
 
 	case actionMsg:
@@ -44,6 +64,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.mode = ModeInbox
 		return m, refreshCmd(m.app, m.repo)
 
+	case pagerMsg:
+		m.loading = false
+		if msg.err != nil {
+			m.error = msg.err.Error()
+			return m, nil
+		}
+		m.error = ""
+		m.message = msg.message
+		return m, nil
+
 	case tickMsg:
 		if m.loading {
 			return m, tickCmd(m.pollEvery)
@@ -54,6 +84,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		return m.handleKey(msg)
+	}
+
+	var cmd tea.Cmd
+	switch m.focus {
+	case FocusSummary:
+		m.summaryVP, cmd = m.summaryVP.Update(msg)
+	case FocusDiff:
+		m.diffVP, cmd = m.diffVP.Update(msg)
+	}
+	if cmd != nil {
+		return m, cmd
 	}
 	return m, nil
 }
@@ -72,30 +113,54 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case ModeDiff:
 		if key == "esc" || key == "enter" || key == "v" {
 			m.mode = ModeDetail
+			m.focus = FocusSummary
+			return m, nil
 		}
-		return m, nil
 	}
 
 	switch key {
+	case "tab":
+		m.nextFocus()
+	case "shift+tab":
+		m.prevFocus()
+	case "o":
+		m.cycleSortMode()
 	case "j", "down":
-		if m.selected < len(m.prs)-1 {
+		if m.focus == FocusSummary {
+			m.summaryVP.LineDown(1)
+		} else if m.focus == FocusDiff {
+			m.diffVP.LineDown(1)
+		} else if m.selected < len(m.prs)-1 {
 			m.selected++
+			m.resetPRViewState()
 		}
 	case "k", "up":
-		if m.selected > 0 {
+		if m.focus == FocusSummary {
+			m.summaryVP.LineUp(1)
+		} else if m.focus == FocusDiff {
+			m.diffVP.LineUp(1)
+		} else if m.selected > 0 {
 			m.selected--
+			m.resetPRViewState()
 		}
 	case "enter":
 		if _, ok := m.current(); ok {
 			m.mode = ModeDetail
+			m.focus = FocusSummary
 		}
 	case "esc":
 		m.mode = ModeInbox
+		m.focus = FocusInbox
 	case "r":
 		m.loading = true
 		m.message = "refreshing"
 		return m, refreshCmd(m.app, m.repo)
 	case "v":
+		if m.diff != "" {
+			m.mode = ModeDiff
+			m.focus = FocusDiff
+			return m, nil
+		}
 		pr, ok := m.current()
 		if !ok {
 			return m, nil
@@ -103,6 +168,38 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.loading = true
 		m.message = "fetching diff"
 		return m, diffCmd(m.app, pr)
+	case "V":
+		if pr, ok := m.current(); ok {
+			return m, openDiffPagerCmd(pr.Repo, pr.Number)
+		}
+	case "n", "]":
+		if len(m.diffFiles) > 0 && m.fileIndex < len(m.diffFiles)-1 {
+			m.fileIndex++
+			m.diffVP.SetYOffset(m.diffFileOffset())
+		} else if pr, ok := m.current(); ok && m.fileIndex < len(pr.Files)-1 {
+			m.fileIndex++
+		}
+	case "p", "[":
+		if m.fileIndex > 0 {
+			m.fileIndex--
+			if len(m.diffFiles) > 0 {
+				m.diffVP.SetYOffset(m.diffFileOffset())
+			}
+		}
+	case "s":
+		if m.rawDiff != "" && (m.mode == ModeDiff || m.focus == FocusDiff) {
+			m.sideBySide = !m.sideBySide
+			m.loading = true
+			return m, renderDiffCmd(m.rawDiff, m.width, m.sideBySide)
+		}
+		if pr, ok := m.current(); ok {
+			if err := m.app.Skip(pr.Repo, pr.Number); err != nil {
+				m.error = err.Error()
+				return m, nil
+			}
+			m.prs = visiblePRs(m.app.Inbox(m.sortMode))
+			m.message = "skipped"
+		}
 	case "a":
 		if pr, ok := m.current(); ok {
 			if pr.Triage.Risk == "block" {
@@ -115,15 +212,6 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if _, ok := m.current(); ok {
 			m.comment = ""
 			m.mode = ModeComment
-		}
-	case "s":
-		if pr, ok := m.current(); ok {
-			if err := m.app.Skip(pr.Repo, pr.Number); err != nil {
-				m.error = err.Error()
-				return m, nil
-			}
-			m.prs = m.app.Inbox()
-			m.message = "skipped"
 		}
 	}
 	return m, nil
@@ -144,6 +232,114 @@ func (m Model) handleApproveKey(key string) (tea.Model, tea.Cmd) {
 		return m, approveCmd(m.app, pr)
 	}
 	return m, nil
+}
+
+func (m *Model) resizeViewports() {
+	m.summaryVP.Width = max(1, m.width/3)
+	m.summaryVP.Height = max(1, m.height-6)
+	m.diffVP.Width = max(1, m.width/3)
+	m.diffVP.Height = max(1, m.height-6)
+}
+
+func (m *Model) nextFocus() {
+	switch m.focus {
+	case FocusInbox:
+		m.focus = FocusSummary
+	case FocusSummary:
+		m.focus = FocusDiff
+	default:
+		m.focus = FocusInbox
+	}
+}
+
+func (m *Model) prevFocus() {
+	switch m.focus {
+	case FocusDiff:
+		m.focus = FocusSummary
+	case FocusSummary:
+		m.focus = FocusInbox
+	default:
+		m.focus = FocusDiff
+	}
+}
+
+func (m Model) diffFileOffset() int {
+	if m.fileIndex <= 0 || m.fileIndex >= len(m.diffFiles) {
+		return 0
+	}
+	offset := 0
+	for i := 0; i < m.fileIndex; i++ {
+		offset += stringsCountLines(m.diffFiles[i].Body)
+	}
+	return offset
+}
+
+func stringsCountLines(s string) int {
+	count := 0
+	for _, r := range s {
+		if r == '\n' {
+			count++
+		}
+	}
+	return count
+}
+
+func openDiffPagerCmd(repo string, number int) tea.Cmd {
+	cmd := "if command -v delta >/dev/null 2>&1; then gh pr diff " + shellQuote(strconv.Itoa(number)) + " --repo " + shellQuote(repo) + " | delta --line-numbers --paging=always; else gh pr diff " + shellQuote(strconv.Itoa(number)) + " --repo " + shellQuote(repo) + " | less -R; fi"
+	return tea.ExecProcess(exec.Command("sh", "-c", cmd), func(err error) tea.Msg {
+		if err != nil {
+			return pagerMsg{err: err}
+		}
+		return pagerMsg{message: "closed diff pager"}
+	})
+}
+
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+}
+
+func (m *Model) resetPRViewState() {
+	m.diff = ""
+	m.rawDiff = ""
+	m.diffFiles = nil
+	m.fileIndex = 0
+	m.summaryVP.GotoTop()
+	m.diffVP.GotoTop()
+}
+
+func (m *Model) cycleSortMode() {
+	current := 0
+	if pr, ok := m.current(); ok {
+		current = pr.Number
+	}
+	m.sortMode = m.sortMode.Next()
+	m.prs = sortPRs(m.prs, m.sortMode)
+	m.message = "sort: " + m.sortMode.String()
+	if current == 0 {
+		return
+	}
+	for i, pr := range m.prs {
+		if pr.Number == current {
+			m.selected = i
+			return
+		}
+	}
+}
+
+func sortPRs(prs []model.PullRequest, sortMode app.SortMode) []model.PullRequest {
+	out := append([]model.PullRequest(nil), prs...)
+	app.SortPullRequests(out, sortMode)
+	return out
+}
+
+func visiblePRs(prs []model.PullRequest) []model.PullRequest {
+	out := make([]model.PullRequest, 0, len(prs))
+	for _, pr := range prs {
+		if !pr.Draft {
+			out = append(out, pr)
+		}
+	}
+	return out
 }
 
 func (m Model) handleCommentKey(key string) (tea.Model, tea.Cmd) {

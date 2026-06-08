@@ -31,6 +31,15 @@ func (s *MemoryStore) List() ([]model.PullRequest, error) {
 	return out, nil
 }
 
+func (s *MemoryStore) PruneRepo(repo string, openNumbers map[int]bool) error {
+	for key, pr := range s.prs {
+		if pr.Repo == repo && !openNumbers[pr.Number] {
+			delete(s.prs, key)
+		}
+	}
+	return nil
+}
+
 func (s *MemoryStore) Skip(repo string, number int) error {
 	key := cacheKey(repo, number)
 	pr, ok := s.prs[key]

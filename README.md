@@ -55,7 +55,7 @@ zappr doctor                  # check gh, auth, cache
 ```text
 j/k        navigate
 enter      inspect selected PR
-a          approve selected PR
+a          start approval; y confirms
 c          comment on selected PR
 s          skip selected PR
 r          refresh/re-run analysis

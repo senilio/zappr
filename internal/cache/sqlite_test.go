@@ -72,3 +72,38 @@ func TestSQLiteStoreClear(t *testing.T) {
 		t.Fatalf("len = %d, want 0", len(prs))
 	}
 }
+
+func TestSQLiteStorePruneRepo(t *testing.T) {
+	store, err := OpenSQLite(filepath.Join(t.TempDir(), "zappr.db"))
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	defer store.Close()
+
+	for _, pr := range []model.PullRequest{
+		{Repo: "owner/repo", Number: 1, Title: "closed", Triage: model.Triage{Risk: model.RiskSafe}},
+		{Repo: "owner/repo", Number: 2, Title: "open", Triage: model.Triage{Risk: model.RiskSafe}},
+		{Repo: "other/repo", Number: 1, Title: "other", Triage: model.Triage{Risk: model.RiskSafe}},
+	} {
+		if err := store.Put(pr); err != nil {
+			t.Fatalf("Put: %v", err)
+		}
+	}
+
+	if err := store.PruneRepo("owner/repo", map[int]bool{2: true}); err != nil {
+		t.Fatalf("PruneRepo: %v", err)
+	}
+
+	prs, err := store.List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(prs) != 2 {
+		t.Fatalf("len = %d, want 2", len(prs))
+	}
+	for _, pr := range prs {
+		if pr.Repo == "owner/repo" && pr.Number == 1 {
+			t.Fatal("closed PR was not pruned")
+		}
+	}
+}
