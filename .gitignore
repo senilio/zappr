@@ -1,0 +1,28 @@
+# Binaries
+/zappr
+/bin/
+/dist/
+
+# Go build/test output
+*.test
+*.out
+coverage.txt
+coverage.out
+
+# Local cache/config data
+*.db
+*.db-shm
+*.db-wal
+.cache/
+.config/
+
+# Editor and OS files
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment files
+.env
+.env.*
