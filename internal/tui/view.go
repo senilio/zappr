@@ -12,8 +12,10 @@ import (
 
 const minWideWidth = 110
 const minMediumWidth = 76
-const paneFrame = 2  // border top + border bottom (lipgloss frame vertical)
-const paneHFrame = 4 // border (2) + padding (2) horizontal
+const paneFrame = 2   // border top + border bottom (lipgloss frame vertical)
+const paneHFrame = 4  // border (2) + padding (2) horizontal
+const chromeLines = 2 // header + footer
+const truncateSafetyMargin = 2
 
 func (m Model) View() string {
 	switch m.mode {
@@ -58,15 +60,17 @@ func (m Model) inboxView() string {
 
 	fmt.Fprintf(&b, "%-3s %-8s %-8s %s\n", "", "PR", "CI", "Title")
 	for i, pr := range m.prs {
-		cursor := " "
-		if i == m.selected {
-			cursor = ">"
-		}
 		skip := ""
 		if pr.Skipped {
 			skip = " [skipped]"
 		}
-		fmt.Fprintf(&b, "%-3s #%-7d %-8s %s%s\n", cursor, pr.Number, pr.CIStatus, pr.Title, skip)
+		line := fmt.Sprintf("#%-7d %-8s %s%s", pr.Number, pr.CIStatus, pr.Title, skip)
+		if i == m.selected {
+			if !m.theme.NoColor {
+				line = lipgloss.NewStyle().Background(m.theme.Palette.Focus).Foreground(m.theme.Palette.Panel).Render(line)
+			}
+		}
+		fmt.Fprintf(&b, "%s\n", line)
 	}
 	b.WriteString("\nj/k navigate  enter inspect  a approve, y confirm  c comment  s toggle skip  r refresh  v toggle diff  ? help  q quit\n")
 	return b.String()
@@ -158,7 +162,7 @@ func (m Model) helpPanel() string {
 func (m Model) layoutView() string {
 	header := m.headerView()
 	footer := m.footerView()
-	bodyHeight := max(4, m.height-lipgloss.Height(header)-lipgloss.Height(footer)-1)
+	bodyHeight := max(4, m.height-chromeLines)
 
 	if m.mode == ModeConfirmApprove {
 		return lipgloss.JoinVertical(lipgloss.Left, header, m.centerModal(m.approvePanel(), bodyHeight), footer)
@@ -185,17 +189,7 @@ func (m Model) layoutView() string {
 // active (statusActive), the spinner and message are appended here so the
 // indicator is always visible and never overlaps pane borders.
 func (m Model) headerView() string {
-	parts := []string{m.theme.Styles.Title.Render("zappr"), m.repo}
-	if !m.lastFetch.IsZero() {
-		parts = append(parts, "refreshed "+shortDuration(time.Since(m.lastFetch))+" ago")
-	}
-	parts = append(parts, fmt.Sprintf("%d PRs", len(m.prs)))
-	parts = append(parts, "sort: "+m.sortMode.String())
-	if m.aiEnabled {
-		parts = append(parts, m.theme.Styles.Muted.Render("AI: on"))
-	} else {
-		parts = append(parts, m.theme.Styles.Muted.Render("AI: off"))
-	}
+	parts := []string{m.theme.Styles.Title.Render("zappr ⚡"), m.repo}
 	// Status indicator: shown inline in header so it never overlaps pane borders.
 	if m.statusActive {
 		if m.statusErr {
@@ -207,26 +201,43 @@ func (m Model) headerView() string {
 		parts = append(parts, m.theme.Styles.Pending.Render("loading"))
 	} else if m.error != "" {
 		parts = append(parts, m.theme.Styles.Error.Render(m.error))
-	} else if m.message != "" {
-		parts = append(parts, m.theme.Styles.Muted.Render(m.message))
 	}
-	return m.theme.Styles.Header.Width(m.width).Render(strings.Join(parts, "  "))
+	return railView(m.theme.Styles.Header.Width(m.width).Render(strings.Join(parts, " ")), m.width)
 }
 
 func (m Model) footerView() string {
 	if m.width < minMediumWidth {
-		return m.theme.Styles.Footer.Width(m.width).Render("j/k move  enter details  v diff  ? help  q quit")
+		return railView(m.theme.Styles.Footer.Width(m.width).Render(m.footerShortcuts([]shortcut{{"v", "diff"}, {"?", "help"}, {"q", "quit"}})), m.width)
 	}
-	var keys string
+	var keys []shortcut
 	switch m.focus {
 	case FocusDiff:
-		keys = "j/k scroll  n/p file  s side-by-side  V pager  tab focus  esc back  ? help  q quit"
+		keys = []shortcut{{"j/k", "scroll"}, {"left/right", "pan"}, {"n/p", "file"}, {"s", "side-by-side"}, {"V", "pager"}, {"esc", "back"}, {"?", "help"}, {"q", "quit"}}
 	case FocusSummary:
-		keys = "j/k scroll  tab focus  v toggle diff  a approve, y confirm  c comment  s skip  r re-run analysis  esc inbox  ? help  q quit"
+		keys = []shortcut{{"j/k", "scroll"}, {"v", "diff"}, {"a", "approve"}, {"c", "comment"}, {"s", "skip"}, {"r", "AI review"}, {"esc", "inbox"}, {"?", "help"}, {"q", "quit"}}
 	default:
-		keys = "j/k move  tab focus  o sort  enter inspect  v toggle diff  a approve, y confirm  c comment  s toggle skip  r refresh  ? help  q quit"
+		keys = []shortcut{{"o", "sort"}, {"v", "diff"}, {"a", "approve"}, {"c", "comment"}, {"s", "skip"}, {"r", "refresh"}, {"?", "help"}, {"q", "quit"}}
 	}
-	return m.theme.Styles.Footer.Width(m.width).Render(keys)
+	return railView(m.theme.Styles.Footer.Width(m.width).Render(m.footerShortcuts(keys)), m.width)
+}
+
+func railView(s string, width int) string {
+	return strings.TrimRight(truncateANSIWidth(strings.ReplaceAll(s, "\n", " "), max(0, width)), "\n")
+}
+
+type shortcut struct {
+	Key   string
+	Label string
+}
+
+func (m Model) footerShortcuts(keys []shortcut) string {
+	parts := make([]string, 0, len(keys))
+	keyStyle := m.theme.Styles.TitleStrong
+	labelStyle := m.theme.Styles.Muted
+	for _, key := range keys {
+		parts = append(parts, keyStyle.Render(key.Key)+" "+labelStyle.Render(key.Label))
+	}
+	return strings.Join(parts, "  ")
 }
 
 func (m Model) wideLayout(height int) string {
@@ -235,27 +246,16 @@ func (m Model) wideLayout(height int) string {
 	diffW := max(30, m.width-leftW-gap)
 	inboxH, summaryH := m.leftColumnHeights(height)
 	left := lipgloss.JoinVertical(lipgloss.Left,
-		m.pane(m.titledPane("Inbox", m.inboxScrollPct()), m.inboxPanel(leftW, inboxH), leftW, inboxH, FocusInbox),
+		m.pane(m.titledPane(m.inboxTitle(), m.inboxScrollPct()), m.inboxPanel(leftW, inboxH), leftW, inboxH, FocusInbox),
 		m.pane(m.titledPane("Summary", m.summaryScrollPct()), m.summaryPanel(leftW, summaryH), leftW, summaryH, FocusSummary),
 	)
 	right := m.pane(m.titledPane("Diff / Details", m.diffScrollPct()), m.diffPanel(diffW, height), diffW, height, FocusDiff)
 	return lipgloss.JoinHorizontal(lipgloss.Top, left, strings.Repeat(" ", gap), right)
 }
 
-// leftColumnHeights splits the left column between Inbox and Summary.
-//
-// When Inbox is focused: inbox gets 70% of height (scrollable), summary gets 30%.
-// When Summary/Diff focused (inspecting a PR): inbox collapses to show only
-// the selected PR block (content rows + pane frame), summary takes the rest.
+// leftColumnHeights returns stable pane heights for left column.
 func (m Model) leftColumnHeights(height int) (inboxH, summaryH int) {
-	if m.focus == FocusInbox {
-		inboxH = max(6, height*70/100)
-		summaryH = max(4, height-inboxH)
-		return
-	}
-	// Collapsed: just the selected PR block + border frame.
-	contentRows := m.selectedInboxRows()
-	inboxH = max(4, contentRows+paneFrame)
+	inboxH = max(8, height*70/100)
 	summaryH = max(4, height-inboxH)
 	return
 }
@@ -264,7 +264,7 @@ func (m Model) mediumLayout(height int) string {
 	topH := max(8, height/2)
 	bottomH := max(6, height-topH)
 	top := lipgloss.JoinHorizontal(lipgloss.Top,
-		m.pane(m.titledPane("Inbox", m.inboxScrollPct()), m.inboxPanel(m.width/2-1, topH), m.width/2-1, topH, FocusInbox),
+		m.pane(m.titledPane(m.inboxTitle(), m.inboxScrollPct()), m.inboxPanel(m.width/2-1, topH), m.width/2-1, topH, FocusInbox),
 		" ",
 		m.pane(m.titledPane("Summary", m.summaryScrollPct()), m.summaryPanel(m.width/2, topH), m.width/2, topH, FocusSummary),
 	)
@@ -279,7 +279,14 @@ func (m Model) compactLayout(height int) string {
 	if m.mode == ModeDetail {
 		return m.pane(m.titledPane("Details", m.summaryScrollPct()), m.summaryPanel(m.width, height), m.width, height, FocusSummary)
 	}
-	return m.pane(m.titledPane("Inbox", m.inboxScrollPct()), m.inboxPanel(m.width, height), m.width, height, FocusInbox)
+	return m.pane(m.titledPane(m.inboxTitle(), m.inboxScrollPct()), m.inboxPanel(m.width, height), m.width, height, FocusInbox)
+}
+
+func (m Model) inboxTitle() string {
+	if len(m.prs) == 0 {
+		return "Inbox (00/00)"
+	}
+	return fmt.Sprintf("Inbox (%02d/%02d)", m.selected+1, len(m.prs))
 }
 
 // titledPane appends a scroll percentage to a pane title when pct > 0.
@@ -367,20 +374,6 @@ func wrapLines(s string, w int) string {
 	return strings.Join(out, "\n")
 }
 
-// selectedInboxRows returns the number of display rows (excluding border frame)
-// needed to show exactly the selected PR in the inbox pane.
-func (m Model) selectedInboxRows() int {
-	if len(m.prs) == 0 {
-		return 3 // "no open pull requests" + frame
-	}
-	pr := m.prs[m.selected]
-	rows := 3 // title + ci/review + author lines
-	if pr.Skipped {
-		rows++
-	}
-	return rows
-}
-
 func (m Model) pane(title string, content string, width int, height int, focus Focus) string {
 	style := m.theme.Styles.Pane
 	if m.focus == focus {
@@ -391,14 +384,25 @@ func (m Model) pane(title string, content string, width int, height int, focus F
 	// allotted columns. This keeps the rightmost pane's right border visible.
 	innerW := max(1, width-style.GetHorizontalFrameSize())
 	innerH := max(1, height-style.GetVerticalFrameSize())
-	// Hard-clip content to innerH lines so the box never grows taller than its
-	// allotted height. lipgloss.Height pads but does NOT truncate; without this
-	// an overflowing panel would push the entire layout up, hiding the header.
-	// MaxWidth truncates over-wide lines; we do NOT use Width() because it wraps.
-	// Viewports and pre-fitted content already pad to innerW, so only MaxWidth is needed.
-	content = lipgloss.NewStyle().Height(innerH).MaxHeight(innerH).MaxWidth(innerW).Render(content)
-	box := style.Width(innerW).Height(innerH).MaxHeight(height).MaxWidth(width).Render(content)
+	// Hard-fit content before border rendering. lipgloss sizing can pad, but it
+	// must not be the only overflow guard because wide lines can reflow the box.
+	content = fitPaneContent(content, innerW, innerH)
+	box := style.Width(innerW).Height(innerH).MaxWidth(width).MaxHeight(height).Render(content)
 	return embedTitle(box, title, style, m.theme.NoColor)
+}
+
+func fitPaneContent(content string, width int, height int) string {
+	if width <= 0 || height <= 0 {
+		return ""
+	}
+	lines := strings.Split(content, "\n")
+	if len(lines) > height {
+		lines = lines[:height]
+	}
+	for i := range lines {
+		lines[i] = truncateANSIWidth(lines[i], width)
+	}
+	return strings.Join(lines, "\n")
 }
 
 // embedTitle overwrites the center of the first line of a rendered box with
@@ -481,37 +485,52 @@ func (m Model) inboxPanel(width int, height int) string {
 	}
 	s := m.theme.Styles
 	innerW := max(1, width-paneHFrame)
+	selectedStyle := lipgloss.NewStyle().Width(innerW)
+	if !m.theme.NoColor {
+		selectedStyle = selectedStyle.Background(m.theme.Palette.Border)
+	}
 	var b strings.Builder
 	// Track line number where selected item starts (for viewport scroll sync).
 	lineCount := 0
 	selectedLine := 0
+	selectedHeight := 0
 	for i, pr := range m.prs {
 		if i == m.selected {
 			selectedLine = lineCount
+			selectedHeight = 3
+			if pr.Skipped {
+				selectedHeight++
+			}
 		}
-		cursor := " "
-		title := truncateANSI(truncate(pr.Title, max(8, innerW-2)), innerW-2)
-		var titleStr string
+		title := truncateANSIWidth(pr.Title, innerW)
+		titleStr := s.TitleStrong.Render(title)
 		if i == m.selected {
-			cursor = ">"
-			titleStr = s.TitleStrong.Render(title)
-		} else {
-			titleStr = title
+			titleStr = selectedStyle.Render(titleStr)
 		}
-		fmt.Fprintf(&b, "%s %s\n", cursor, titleStr)
+		fmt.Fprintf(&b, "%s\n", titleStr)
 		lineCount++
 		ciStr := m.theme.CIStatus(pr.CIStatus)
 		if reviewStr := m.theme.ReviewStatus(pr.ReviewDecision); reviewStr != "" {
 			ciStr = ciStr + s.Muted.Render(" · ") + reviewStr
 		}
-		ciLine := truncateANSI(ciStr, innerW-2)
-		fmt.Fprintf(&b, "  %s\n", ciLine)
+		ciLine := truncateANSIWidth(ciStr, innerW)
+		if i == m.selected {
+			ciLine = selectedStyle.Render(ciLine)
+		}
+		fmt.Fprintf(&b, "%s\n", ciLine)
 		lineCount++
-		authorLine := truncateANSI(s.Muted.Render(fmt.Sprintf("#%d · %s", pr.Number, pr.Author)), innerW-2)
-		fmt.Fprintf(&b, "  %s\n", authorLine)
+		authorLine := truncateANSIWidth(s.Muted.Render(fmt.Sprintf("#%d · %s", pr.Number, pr.Author)), innerW)
+		if i == m.selected {
+			authorLine = selectedStyle.Render(authorLine)
+		}
+		fmt.Fprintf(&b, "%s\n", authorLine)
 		lineCount++
 		if pr.Skipped {
-			fmt.Fprintf(&b, "  %s\n", s.Muted.Render("skipped"))
+			skipped := truncateANSIWidth(s.Muted.Render("skipped"), innerW)
+			if i == m.selected {
+				skipped = selectedStyle.Render(skipped)
+			}
+			fmt.Fprintf(&b, "%s\n", skipped)
 			lineCount++
 		}
 		if i < len(m.prs)-1 {
@@ -523,13 +542,14 @@ func (m Model) inboxPanel(width int, height int) string {
 	vp := m.inboxVP
 	vp.Width = innerW
 	vp.Height = vpH
-	vp.SetContent(b.String())
+	vp.SetContent(fitPaneContentWidth(b.String(), innerW))
 	// Scroll so that the selected item is always visible (only when overflowing).
 	if vp.TotalLineCount() > vpH {
+		selectedBottom := selectedLine + selectedHeight - 1
 		if selectedLine < vp.YOffset {
 			vp.SetYOffset(selectedLine)
-		} else if selectedLine >= vp.YOffset+vpH {
-			vp.SetYOffset(selectedLine - vpH + 1)
+		} else if selectedBottom >= vp.YOffset+vpH {
+			vp.SetYOffset(selectedBottom - vpH + 1)
 		}
 	}
 	return vp.View()
@@ -541,7 +561,7 @@ func (m Model) summaryPanel(width int, height int) string {
 		return m.theme.Styles.Muted.Render("select PR")
 	}
 	innerW := max(1, width-paneHFrame)
-	content := wrapLines(m.summaryContent(pr), innerW)
+	content := fitPaneContentWidth(m.summaryContent(pr, innerW), innerW)
 	vp := m.summaryVP
 	vp.Width = innerW
 	vp.Height = max(1, height-paneFrame)
@@ -549,7 +569,18 @@ func (m Model) summaryPanel(width int, height int) string {
 	return vp.View()
 }
 
-func (m Model) summaryContent(pr model.PullRequest) string {
+func fitPaneContentWidth(content string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	lines := strings.Split(content, "\n")
+	for i := range lines {
+		lines[i] = truncateANSIWidth(lines[i], width)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (m Model) summaryContent(pr model.PullRequest, innerW int) string {
 	s := m.theme.Styles
 	var b strings.Builder
 
@@ -563,18 +594,20 @@ func (m Model) summaryContent(pr model.PullRequest) string {
 		b.WriteString(s.Subtitle.Render("Files"))
 		b.WriteByte('\n')
 		for i, file := range pr.Files {
-			cursor := " "
 			path := file.Path
 			if i == m.fileIndex {
-				cursor = s.Title.Render(">")
 				path = s.File.Render(path)
 			}
-			fmt.Fprintf(&b, "%s %s %s %s %s\n",
-				cursor,
-				s.Muted.Render(file.Status),
-				path,
-				s.Add.Render(fmt.Sprintf("+%d", file.Additions)),
-				s.Delete.Render(fmt.Sprintf("-%d", file.Deletions)),
+			status := truncateANSIWidth(s.Muted.Render(file.Status), 10)
+			add := truncateANSIWidth(s.Add.Render(fmt.Sprintf("+%d", file.Additions)), 6)
+			del := truncateANSIWidth(s.Delete.Render(fmt.Sprintf("-%d", file.Deletions)), 6)
+			metaW := lipgloss.Width(stripANSI(status)) + lipgloss.Width(stripANSI(add)) + lipgloss.Width(stripANSI(del)) + 3
+			pathW := max(1, innerW-metaW)
+			fmt.Fprintf(&b, "%s %s %s %s\n",
+				truncateANSIWidth(path, pathW),
+				status,
+				add,
+				del,
 			)
 		}
 	}
@@ -605,15 +638,15 @@ func (m Model) diffPanel(width int, height int) string {
 	// Render from the stored viewport so YOffset/XOffset (scroll positions) are
 	// preserved and TotalLineCount is accurate for vpCanScroll checks.
 	vp := m.diffVP
-	vp.Width = vpW
+	vp.Width = max(1, vpW-truncateSafetyMargin)
 	vp.Height = vpH
 	return vp.View()
 }
 
-// truncateANSI clips a string with ANSI escape codes to maxW visible columns.
-// It walks rune-by-rune, tracking ANSI sequences (which have zero width) and
-// counting visible characters until maxW is reached.
-func truncateANSI(s string, maxW int) string {
+// truncateANSIWidth clips a string with ANSI escape codes to maxW visible columns.
+// No ellipsis. Uses rune widths so wide glyphs stay inside border.
+func truncateANSIWidth(s string, maxW int) string {
+	maxW = max(0, maxW-truncateSafetyMargin)
 	var b strings.Builder
 	inEscape := false
 	width := 0
@@ -630,11 +663,12 @@ func truncateANSI(s string, maxW int) string {
 			}
 			continue
 		}
-		if width >= maxW {
+		w := lipgloss.Width(string(r))
+		if width+w > maxW {
 			break
 		}
 		b.WriteRune(r)
-		width++
+		width += w
 	}
 	// Reset ANSI attributes so truncation doesn't bleed color into next line.
 	if strings.Contains(b.String(), "\x1b[") {
@@ -744,7 +778,7 @@ func truncate(s string, width int) string {
 	if width <= 3 {
 		return s[:width]
 	}
-	return s[:width-3] + "..."
+	return s[:width]
 }
 
 var ansiPattern = regexp.MustCompile(`\x1b\[[0-9;]*m`)

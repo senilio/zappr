@@ -179,13 +179,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "j", "down":
 		switch m.focus {
 		case FocusSummary:
-			if vpCanScroll(m.summaryVP) {
-				m.summaryVP.LineDown(1)
-			}
+			m.summaryVP.LineDown(1)
 		case FocusDiff:
-			if vpCanScroll(m.diffVP) {
-				m.diffVP.LineDown(1)
-			}
+			m.diffVP.LineDown(1)
 		default: // FocusInbox
 			if m.selected < len(m.prs)-1 {
 				m.selected++
@@ -196,13 +192,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "k", "up":
 		switch m.focus {
 		case FocusSummary:
-			if vpCanScroll(m.summaryVP) {
-				m.summaryVP.LineUp(1)
-			}
+			m.summaryVP.LineUp(1)
 		case FocusDiff:
-			if vpCanScroll(m.diffVP) {
-				m.diffVP.LineUp(1)
-			}
+			m.diffVP.LineUp(1)
 		default: // FocusInbox
 			if m.selected > 0 {
 				m.selected--
@@ -210,35 +202,31 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, m.autoDiffCmd()
 			}
 		}
+	case "left":
+		if m.focus == FocusDiff {
+			m.diffVP.ScrollLeft(max(1, m.diffVP.Width/2))
+		}
+	case "right":
+		if m.focus == FocusDiff {
+			m.diffVP.ScrollRight(max(1, m.diffVP.Width/2))
+		}
 	case "pgdown", " ":
 		switch m.focus {
 		case FocusSummary:
-			if vpCanScroll(m.summaryVP) {
-				m.summaryVP.ViewDown()
-			}
+			m.summaryVP.ViewDown()
 		case FocusDiff:
-			if vpCanScroll(m.diffVP) {
-				m.diffVP.ViewDown()
-			}
+			m.diffVP.ViewDown()
 		case FocusInbox:
-			if vpCanScroll(m.inboxVP) {
-				m.inboxVP.ViewDown()
-			}
+			m.inboxVP.ViewDown()
 		}
 	case "pgup":
 		switch m.focus {
 		case FocusSummary:
-			if vpCanScroll(m.summaryVP) {
-				m.summaryVP.ViewUp()
-			}
+			m.summaryVP.ViewUp()
 		case FocusDiff:
-			if vpCanScroll(m.diffVP) {
-				m.diffVP.ViewUp()
-			}
+			m.diffVP.ViewUp()
 		case FocusInbox:
-			if vpCanScroll(m.inboxVP) {
-				m.inboxVP.ViewUp()
-			}
+			m.inboxVP.ViewUp()
 		}
 	case "shift+down":
 		if len(m.diffFiles) > 0 && m.fileIndex < len(m.diffFiles)-1 {
@@ -293,6 +281,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.diffEnabled = true
+			m.syncDiffVP()
 			if m.diff != "" {
 				m.mode = ModeDiff
 				m.focus = FocusDiff
@@ -306,7 +295,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.focus = FocusDiff
 			mv := Model{width: m.width, height: m.height, theme: m.theme, focus: m.focus, prs: m.prs, selected: m.selected}
 			_, _, diffInnerW := mv.paneInnerWidths()
-			return m, tea.Batch(m.startStatus("fetching diff…"), diffCmd(m.app, pr, max(1, diffInnerW)))
+			return m, tea.Batch(m.startStatus("fetching diff…"), diffCmd(m.app, pr, diffRenderWidth(diffInnerW)))
 		}
 		// Wide/medium: toggle diff pane content.
 		m.diffEnabled = !m.diffEnabled
@@ -314,6 +303,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if m.mode == ModeInbox {
 				m.mode = ModeDetail
 			}
+			m.syncDiffVP()
 			return m, m.autoDiffCmd()
 		}
 		// Turned off: unfocus diff pane if it was focused.
@@ -350,7 +340,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			pr, _ := m.current()
 			mv := Model{width: m.width, height: m.height, theme: m.theme, focus: m.focus, prs: m.prs, selected: m.selected}
 			_, _, diffInnerW := mv.paneInnerWidths()
-			return m, renderDiffCmd(m.rawDiff, pr.Repo, pr.Number, max(1, diffInnerW), m.sideBySide)
+			return m, renderDiffCmd(m.rawDiff, pr.Repo, pr.Number, diffRenderWidth(diffInnerW), m.sideBySide)
 		}
 		if pr, ok := m.current(); ok {
 			if err := m.app.SetSkip(pr.Repo, pr.Number, !pr.Skipped); err != nil {
@@ -412,7 +402,7 @@ func (m *Model) autoDiffCmd() tea.Cmd {
 	m.diffLoadKey = key
 	mv := Model{width: m.width, height: m.height, theme: m.theme, focus: m.focus, prs: m.prs, selected: m.selected}
 	_, _, diffInnerW := mv.paneInnerWidths()
-	return diffCmd(m.app, pr, max(1, diffInnerW))
+	return diffCmd(m.app, pr, diffRenderWidth(diffInnerW))
 }
 
 func (m *Model) resizeViewports() {
@@ -422,7 +412,7 @@ func (m *Model) resizeViewports() {
 	// functions (wideLayout / mediumLayout) and the pane frame size (2).
 	const headerLines = 1
 	const footerLines = 1
-	bodyH := max(4, m.height-headerLines-footerLines-1)
+	bodyH := max(4, m.height-headerLines-footerLines)
 	mv := Model{width: m.width, height: m.height, theme: m.theme, focus: m.focus, prs: m.prs, selected: m.selected}
 	if m.width >= minWideWidth {
 		inboxH, summaryH := mv.leftColumnHeights(bodyH)
@@ -445,7 +435,8 @@ func (m *Model) resizeViewports() {
 	}
 	// Update diff viewport width to the real diff pane inner width.
 	_, _, diffInnerW := mv.paneInnerWidths()
-	m.diffVP.Width = max(1, diffInnerW)
+	m.diffVP.Width = max(1, diffInnerW-truncateSafetyMargin)
+	m.diffVP.SetHorizontalStep(max(1, m.diffVP.Width/2))
 	m.syncDiffVP()
 }
 
@@ -523,7 +514,7 @@ func (m *Model) resetPRViewState() {
 
 // syncSummaryVP updates the stored summaryVP's content so that TotalLineCount
 // is accurate for the scroll percentage indicator. Width is set to the real
-// summary inner width; content is word-wrapped so line count is correct.
+// summary inner width; content is hard-clipped so line count is correct.
 func (m *Model) syncSummaryVP() {
 	pr, ok := m.current()
 	if !ok {
@@ -539,7 +530,7 @@ func (m *Model) syncSummaryVP() {
 		selected:  m.selected,
 	}
 	_, summaryInnerW, _ := mv.paneInnerWidths()
-	content := wrapLines(mv.summaryContent(pr), summaryInnerW)
+	content := mv.summaryContent(pr, summaryInnerW)
 	m.summaryVP.Width = summaryInnerW
 	m.summaryVP.SetContent(content)
 }
@@ -572,9 +563,14 @@ func (m *Model) syncDiffVP() {
 	// Use the real diff-pane inner width so horizontal cut matches render.
 	mv := Model{width: m.width, height: m.height, theme: m.theme, focus: m.focus, prs: m.prs, selected: m.selected}
 	_, _, diffInnerW := mv.paneInnerWidths()
-	vpW := max(1, diffInnerW)
+	vpW := max(1, diffInnerW-truncateSafetyMargin)
 	m.diffVP.Width = vpW
+	m.diffVP.SetHorizontalStep(max(1, vpW/2))
 	m.diffVP.SetContent(content)
+}
+
+func diffRenderWidth(visibleWidth int) int {
+	return max(visibleWidth*20, 1000)
 }
 
 func (m *Model) cycleSortMode() {

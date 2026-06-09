@@ -1,9 +1,11 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/senilio/zappr/internal/model"
 )
 
@@ -31,6 +33,13 @@ func minimalModel() Model {
 	m.selected = 0
 	m.mode = ModeInbox
 	m.focus = FocusInbox
+	return m
+}
+
+func modelWithPRs(prs []model.PullRequest, selected int) Model {
+	m := minimalModel()
+	m.prs = prs
+	m.selected = selected
 	return m
 }
 
@@ -159,6 +168,170 @@ bar.go
 	if len(files) > 1 {
 		t.Fatalf("expected 0 or 1 chunks from delta output (no git markers), got %d", len(files))
 	}
+}
+
+func TestInboxTitleDoesNotChangePaneGeometryWithSelectedContent(t *testing.T) {
+	short := model.PullRequest{Number: 1, Repo: "org/repo", Title: "short"}
+	long := model.PullRequest{Number: 2, Repo: "org/repo", Title: strings.Repeat("long-title-", 12)}
+
+	base := modelWithPRs([]model.PullRequest{short, long}, 0)
+	base.width = 90
+	base.height = 24
+	base.mode = ModeInbox
+	shortView := base.View()
+
+	base.selected = 1
+	longView := base.View()
+
+	if got, want := lipWidthOfFirstLine(shortView), lipWidthOfFirstLine(longView); got != want {
+		t.Fatalf("pane width changed with selected PR content: %d vs %d", got, want)
+	}
+	if got, want := len(strings.Split(shortView, "\n")), len(strings.Split(longView, "\n")); got != want {
+		t.Fatalf("pane height changed with selected PR content: %d vs %d", got, want)
+	}
+}
+
+func TestDiffHorizontalScrollMovesXOffset(t *testing.T) {
+	m := minimalModel()
+	m.width = 120
+	m.height = 20
+	m.mode = ModeDiff
+	m.focus = FocusDiff
+	m.diffEnabled = true
+	m.diff = strings.Repeat("abcdefghijklmnopqrstuvwxyz", 8)
+	m.syncDiffVP()
+
+	initial := m.diffPanel(m.width, m.height)
+	if !strings.Contains(initial, "abcd") {
+		t.Fatalf("initial diff view missing expected prefix: %q", initial)
+	}
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRight})
+	m = next.(Model)
+	afterRight := m.diffPanel(m.width, m.height)
+	if afterRight == initial {
+		t.Fatal("diff view did not change after right key")
+	}
+
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	m = next.(Model)
+	afterLeft := m.diffPanel(m.width, m.height)
+	if afterLeft != initial {
+		t.Fatalf("diff view not restored after left key")
+	}
+}
+
+func TestInboxSelectedPRUsesFullBlockHighlight(t *testing.T) {
+	m := modelWithPRs([]model.PullRequest{{
+		Number:   1,
+		Repo:     "org/repo",
+		Title:    "very long title with wide chars 測試 測試 測試",
+		Author:   "author",
+		CIStatus: "passing",
+		Skipped:  true,
+	}}, 0)
+	m.width = 28
+	m.height = 12
+	view := m.inboxPanel(m.width, m.height)
+	for _, line := range strings.Split(view, "\n") {
+		if lipgloss.Width(stripANSI(line)) > m.width-4 {
+			t.Fatalf("line over width: %q", line)
+		}
+	}
+	if strings.Contains(view, ">") {
+		t.Fatalf("selected inbox row still has cursor: %q", view)
+	}
+}
+
+func TestInboxScrollKeepsSelectedPRVisible(t *testing.T) {
+	prs := make([]model.PullRequest, 8)
+	for i := range prs {
+		prs[i] = model.PullRequest{Number: i + 1, Repo: "org/repo", Title: strings.Repeat("item-", i+1), Author: "author", CIStatus: "passing"}
+	}
+	m := modelWithPRs(prs, len(prs)-1)
+	m.width = 48
+	m.height = 12
+	view := m.inboxPanel(m.width, m.height)
+	if !strings.Contains(view, prs[len(prs)-1].Title) {
+		t.Fatalf("inbox view missing selected PR title %q: %q", prs[len(prs)-1].Title, view)
+	}
+	if !strings.Contains(view, "CI pass") || !strings.Contains(view, "#8 · author") {
+		t.Fatalf("inbox view missing full selected PR details: %q", view)
+	}
+}
+
+func TestLayoutUsesFullHeight(t *testing.T) {
+	m := modelWithPRs([]model.PullRequest{{Number: 1, Repo: "org/repo", Title: "title", Author: "author", CIStatus: "passing"}}, 0)
+	m.width = 120
+	m.height = 20
+	view := m.View()
+	got := len(strings.Split(strings.TrimRight(view, "\n"), "\n"))
+	if got != m.height {
+		t.Fatalf("layout height = %d, want %d", got, m.height)
+	}
+}
+
+func TestDiffVerticalScrollMovesYOffset(t *testing.T) {
+	m := minimalModel()
+	m.width = 120
+	m.height = 20
+	m.mode = ModeDiff
+	m.focus = FocusDiff
+	m.diffEnabled = true
+	m.diff = strings.Repeat("line\n", 80)
+	m.resizeViewports()
+
+	initial := m.diffVP.YOffset
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = next.(Model)
+	if m.diffVP.YOffset <= initial {
+		t.Fatalf("diff YOffset did not move down after down key: %d -> %d", initial, m.diffVP.YOffset)
+	}
+
+	afterDown := m.diffVP.YOffset
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyPgDown})
+	m = next.(Model)
+	if m.diffVP.YOffset <= afterDown {
+		t.Fatalf("diff YOffset did not move down after pgdown: %d -> %d", afterDown, m.diffVP.YOffset)
+	}
+}
+
+func TestSummarySelectedFileFlushLeftAndHighlighted(t *testing.T) {
+	m := modelWithPRs([]model.PullRequest{{
+		Number: 1,
+		Repo:   "org/repo",
+		Title:  "title",
+		Author: "author",
+		Files:  []model.ChangedFile{{Path: "a/very/long/path/name.go", Status: "M"}, {Path: "other.go", Status: "A"}},
+	}}, 0)
+	m.width = 40
+	m.height = 14
+	m.focus = FocusSummary
+	m.fileIndex = 0
+	view := m.summaryPanel(m.width, m.height)
+	if strings.Contains(view, ">") {
+		t.Fatalf("selected summary row still has cursor: %q", view)
+	}
+	if !strings.Contains(view, "name.go") {
+		t.Fatalf("selected file path missing: %q", view)
+	}
+	for _, line := range strings.Split(view, "\n") {
+		if lipgloss.Width(stripANSI(line)) > m.width-4 {
+			t.Fatalf("summary line over width: %q", line)
+		}
+	}
+}
+
+func TestTruncateANSIWidthLeavesTwoColumnMargin(t *testing.T) {
+	got := lipgloss.Width(stripANSI(truncateANSIWidth("abcdef", 6)))
+	if got != 4 {
+		t.Fatalf("truncate width = %d, want 4", got)
+	}
+}
+
+func lipWidthOfFirstLine(s string) int {
+	line := strings.SplitN(s, "\n", 2)[0]
+	return lipgloss.Width(stripANSI(line))
 }
 
 func contains(s, sub string) bool {
