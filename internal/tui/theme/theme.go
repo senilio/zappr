@@ -173,9 +173,9 @@ func (t Theme) CIStatus(status string) string {
 	case "passing", "success":
 		return t.Styles.SuccessCI.Render("CI pass")
 	case "pending", "queued", "in_progress":
-		return t.Styles.Pending.Render(status)
+		return t.Styles.Pending.Render("CI pending")
 	case "failing", "failed", "failure", "error":
-		return t.Styles.Error.Render(status)
+		return t.Styles.Error.Render("CI failed")
 	default:
 		return t.Styles.Muted.Render(status)
 	}
@@ -188,7 +188,7 @@ func (t Theme) ReviewStatus(decision string) string {
 	case "CHANGES_REQUESTED":
 		return t.Styles.Error.Render("changes requested")
 	case "REVIEW_REQUIRED":
-		return t.Styles.Muted.Render("review required")
+		return t.Styles.Muted.Render("awaiting approval")
 	default:
 		return ""
 	}

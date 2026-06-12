@@ -9,7 +9,6 @@ import (
 	"github.com/senilio/zappr/internal/cache"
 	"github.com/senilio/zappr/internal/github"
 	"github.com/senilio/zappr/internal/model"
-	"github.com/senilio/zappr/internal/risk"
 )
 
 type SortMode int
@@ -66,7 +65,6 @@ func (a *App) Refresh(ctx context.Context, repo string) ([]model.PullRequest, er
 		return nil, err
 	}
 	for i := range prs {
-		prs[i].Triage = risk.ClassifyWithTrust(prs[i], a.TrustedAuthors)
 		// Preserve any existing AI triage from the cache so that a manual
 		// "r" analysis is not silently wiped on the next background refresh.
 		// AI is only (re-)run by Analyze, which has the full diff available.
@@ -135,7 +133,6 @@ func (a *App) Analyze(ctx context.Context, repo string, number int) (model.PullR
 		return model.PullRequest{}, err
 	}
 	pr.Diff = diff
-	pr.Triage = risk.ClassifyWithTrust(pr, a.TrustedAuthors)
 	if aiTriage, err := a.AI.Triage(ctx, pr); err != nil {
 		pr.Triage.AI = &model.AITriage{Error: err.Error()}
 	} else if aiTriage != nil {

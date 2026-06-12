@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/senilio/zappr/internal/app"
 	"github.com/senilio/zappr/internal/model"
 	uitheme "github.com/senilio/zappr/internal/tui/theme"
@@ -25,6 +26,8 @@ const (
 	ModeConfirmApprove
 	ModeComment
 	ModeHelp
+	ModeCommand
+	ModeConfirmCommand
 )
 
 type Model struct {
@@ -43,9 +46,12 @@ type Model struct {
 	diffFiles     []diffFile // raw per-file bodies (for file switching + V pager)
 	renderedFiles []diffFile // rendered (delta/fallback) per-file bodies
 	fileIndex     int
+	commitIndex   int
 	sideBySide    bool
 	comment       string
-	lastFetch     time.Time
+	diffXOffset    int
+	summaryXOffset int
+	lastFetch      time.Time
 	pollEvery     time.Duration
 	width         int
 	height        int
@@ -61,8 +67,35 @@ type Model struct {
 	statusErr     bool
 	statusSpinner spinner.Model
 	statusToken   int
-	diffLoadKey   string
-	diffEnabled   bool
+	diffLoadKey        string
+	commitDiffKey      string
+	renderedCommitDiff string
+	diffEnabled        bool
+	summaryMode   SummaryMode
+
+	commandInput   string // typed input after ":"
+	pendingCmd     viCommand // command awaiting confirmation
+
+	aiAnalyzing bool // true while AI analysis is in-flight
+}
+
+type SummaryMode int
+
+const (
+	SummaryModeFiles SummaryMode = iota
+	SummaryModeCommits
+	SummaryModeComments
+)
+
+func (m SummaryMode) String() string {
+	switch m {
+	case SummaryModeCommits:
+		return "commits"
+	case SummaryModeComments:
+		return "comments"
+	default:
+		return "files"
+	}
 }
 
 type Focus int
@@ -82,7 +115,7 @@ func New(zappr *app.App, repo string, pollEvery time.Duration) Model {
 	dvp := viewport.New(0, 0)
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
-	return Model{app: zappr, repo: repo, loading: true, pollEvery: pollEvery, sortMode: app.SortUpdated, theme: uitheme.Default(), aiEnabled: zappr.AIEnabled(), inboxVP: ivp, summaryVP: vp, diffVP: dvp, statusSpinner: sp}
+	return Model{app: zappr, repo: repo, loading: true, pollEvery: pollEvery, sortMode: app.SortUpdated, theme: uitheme.Default(), aiEnabled: zappr.AIEnabled(), inboxVP: ivp, summaryVP: vp, diffVP: dvp, statusSpinner: sp, summaryMode: SummaryModeFiles}
 }
 
 func (m Model) Init() tea.Cmd {
@@ -112,6 +145,12 @@ type actionMsg struct {
 type pagerMsg struct {
 	message string
 	err     error
+}
+
+type commitDiffMsg struct {
+	sha      string
+	rendered string
+	err      error
 }
 
 type tickMsg struct{}
@@ -198,6 +237,21 @@ func diffCmd(app *app.App, pr model.PullRequest, width int) tea.Cmd {
 	}
 }
 
+func commitDiffCmd(ghProvider interface {
+	GetCommitDiff(ctx context.Context, repo string, sha string) (string, error)
+}, repo string, sha string, width int) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		raw, err := ghProvider.GetCommitDiff(ctx, repo, sha)
+		if err != nil {
+			return commitDiffMsg{sha: sha, err: err}
+		}
+		rendered, _ := renderDiff(ctx, raw, width, false)
+		return commitDiffMsg{sha: sha, rendered: rendered}
+	}
+}
+
 func renderDiffCmd(diff string, repo string, number int, width int, sideBySide bool) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -278,7 +332,7 @@ func diffPath(line string) string {
 
 func renderDiff(ctx context.Context, diff string, width int, sideBySide bool) (string, error) {
 	if _, err := exec.LookPath("delta"); err == nil {
-		args := []string{"--paging=never", "--line-numbers", "--file-decoration-style=none", "--hunk-header-decoration-style=none"}
+		args := []string{"--paging=never", "--line-numbers", "--file-decoration-style=none", "--hunk-header-decoration-style=none", "--hunk-header-style=omit"}
 		if width > 0 {
 			args = append(args, fmt.Sprintf("--width=%d", width))
 		}
@@ -292,7 +346,15 @@ func renderDiff(ctx context.Context, diff string, width int, sideBySide bool) (s
 		cmd.Stdout = &out
 		cmd.Stderr = &stderr
 		if err := cmd.Run(); err == nil {
-			return out.String(), nil
+			// delta emits non-SGR CSI sequences (e.g. ESC[0K) that measure as
+			// zero width but are executed by the terminal, corrupting layout.
+			// Strip them at ingest while preserving color codes.
+			// Also trim leading/trailing blank lines that delta adds around
+			// each file header to avoid empty rows at the pane border.
+			cleaned := stripNonSGR(out.String())
+			cleaned = strings.TrimRight(cleaned, "\n")
+			cleaned = strings.TrimLeft(cleaned, "\n")
+			return cleaned, nil
 		}
 	}
 	return fallbackDiff(diff), nil
@@ -322,4 +384,14 @@ func fallbackDiff(diff string) string {
 		b.WriteByte('\n')
 	}
 	return b.String()
+}
+
+func longestLineWidth(content string) int {
+	width := 0
+	for _, line := range strings.Split(content, "\n") {
+		if w := ansi.StringWidth(line); w > width {
+			width = w
+		}
+	}
+	return width
 }

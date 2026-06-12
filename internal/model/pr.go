@@ -17,6 +17,19 @@ type ChangedFile struct {
 	Status    string
 }
 
+type PRCommit struct {
+	OID      string
+	Headline string
+	Author   string
+	Date     time.Time
+}
+
+type PRComment struct {
+	Author    string
+	Body      string
+	CreatedAt time.Time
+}
+
 type PullRequest struct {
 	Repo           string
 	Number         int
@@ -33,6 +46,8 @@ type PullRequest struct {
 	Draft          bool
 	UpdatedAt      time.Time
 	Diff           string
+	Commits        []PRCommit
+	Comments       []PRComment
 	Triage         Triage
 	Skipped        bool
 }

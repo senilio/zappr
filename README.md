@@ -2,12 +2,12 @@
 
 Terminal-first pull request inbox for fast, human-owned GitHub review triage.
 
-zappr watches open pull requests, classifies review risk with deterministic rules, optionally runs shell-command AI triage, and lets you inspect, comment, skip, or approve from a keyboard-driven Bubble Tea UI.
+zappr watches open pull requests, optionally runs shell-command AI triage on demand, and lets you inspect files, commits, PR conversation comments, diffs, comment, or approve from a keyboard-driven Bubble Tea UI.
 
 ## Principles
 
 - Human approves; zappr only recommends.
-- Deterministic risk rules outrank AI output.
+- AI review is manual and advisory.
 - Terminal-only, local-first, no SaaS.
 - Fast triage over deep autonomous review.
 - `gh` CLI is the initial GitHub provider.
@@ -42,7 +42,7 @@ zappr doctor
 zappr watch owner/repo        # open keyboard inbox
 zappr inbox owner/repo        # refresh and print inbox
 zappr review owner/repo#123   # analyze one PR
-zappr approve owner/repo#123  # approve non-block PR via gh pr review
+zappr approve owner/repo#123  # approve PR via gh pr review
 zappr config path             # print config path
 zappr config init             # create default config
 zappr cache status            # show local cache status
@@ -53,34 +53,52 @@ zappr doctor                  # check gh, auth, cache
 ## TUI Keys
 
 ```text
-j/k        navigate
-enter      inspect selected PR
-a          start approval; y confirms
-c          comment on selected PR
-s          skip PR (inbox); toggle side-by-side (diff)
-r          refresh (inbox); re-run analysis (detail)
-v          view diff
-?          help (keys + risk legend)
-esc        back
-q          quit
+j/k          navigate inbox
+enter        inspect selected PR
+a            start approval; y confirms
+A            approve immediately (no confirmation)
+c            comment on selected PR
+r            refresh (inbox); re-run AI analysis (detail/diff)
+v            toggle diff pane
+V            open full diff in external pager (delta or less)
+s            toggle side-by-side diff
+1/2/3        summary pane: files / commits / comments
+[/]          previous / next file or commit in summary/diff
+?            help
+:            command palette (vim-style colon commands)
+esc          back / cancel
+q            quit
 ```
 
-The header shows `AI: on|off`. Triage panels separate the deterministic
-`Rule-based verdict (authoritative)` from `AI (advisory - does not affect risk)`.
+The summary pane starts on changed files and can switch to commits or PR
+conversation comments with `1`, `2`, and `3`. Long lines are hard-truncated in
+all panes; diffs use horizontal scrolling instead of wrapping.
 
-## Risk Model
+### Command palette
 
-Risk is conservative and deterministic:
+Press `:` to open the command palette. Type a command prefix to filter; press
+`Enter` on an exact match to execute.
 
-- `safe`: low-risk changes, usually docs-only or generated/test-only.
-- `review`: production code, medium size, missing tests, or uncertain data.
-- `block`: failing CI, drafts, auth/security/billing/migrations/infra/API changes, lockfiles, or very large diffs.
+| Command | Action |
+|---------|--------|
+| `:ap`   | Comment `atlantis plan` on selected PR |
+| `:aa`   | Comment `atlantis apply` on selected PR (prompts for confirmation) |
 
-Blocked PRs cannot be quick-approved from zappr.
+## AI Review
+
+AI review is opt-in and never runs automatically. Press `r` on a selected PR to
+run the configured shell command against the full PR metadata and diff.
+
+- AI output is advisory only.
+- Approval remains a human decision.
+- When no AI result exists, the summary pane shows `press r to run AI review`.
+- AI results are persisted in SQLite; a subsequent `r` re-runs analysis.
 
 ### Trusted authors
 
-Configure authors whose PRs are biased toward `safe`:
+Authors listed under `trust.authors` are treated as trusted. For trusted-author
+PRs the deterministic classifier softens a `Review` result to `Safe` and raises
+confidence on already-`Safe` results. A `Block` result is never overridden.
 
 ```yaml
 trust:
@@ -88,10 +106,6 @@ trust:
     - alice
     - bob
 ```
-
-Trust only softens a `review` verdict to `safe` (and raises confidence on
-already-safe PRs). It never overrides `block`; failing CI, drafts, high-risk
-paths, and very large diffs still block quick approval.
 
 ## Config
 
@@ -114,6 +128,7 @@ refresh:
   interval: 2m0s
 ai:
   command: ""
+  prompt: ""
   timeout: 1m0s
 cache:
   path: /Users/you/.cache/zappr/zappr.db
@@ -121,11 +136,16 @@ trust:
   authors: []
 ```
 
-`ZAPPR_AI_COMMAND` overrides `ai.command` for optional shell-command AI triage.
+Environment overrides:
+
+| Variable           | Config field  | Description                       |
+|--------------------|---------------|-----------------------------------|
+| `ZAPPR_AI_COMMAND` | `ai.command`  | Shell command for AI triage       |
+| `ZAPPR_AI_PROMPT`  | `ai.prompt`   | Prompt passed to the AI command   |
 
 ## Cache
 
-zappr stores PR metadata, triage output, and local skip state in SQLite.
+zappr stores PR metadata and AI triage output in SQLite.
 
 Default path:
 

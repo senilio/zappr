@@ -108,7 +108,7 @@ func runWatch(zappr *app.App, cfg config.Config, args []string) error {
 	if err != nil {
 		return err
 	}
-	program := tea.NewProgram(tui.New(zappr, repo, cfg.Refresh.Interval.Duration()), tea.WithAltScreen())
+	program := tea.NewProgram(tui.New(zappr, repo, cfg.Refresh.Interval.Duration()), tea.WithAltScreen(), tea.WithMouseCellMotion())
 	_, err = program.Run()
 	return err
 }
@@ -318,6 +318,6 @@ Commands:
   zappr doctor                  check gh, auth, cache
 
 Keys:
-  j/k navigate  enter inspect  a approve, y confirm  c comment  s toggle skip  r refresh  v diff  ? help  q quit
+  j/k navigate  enter inspect  a approve, y confirm  c comment  r refresh  v diff  1/2/3 summary  ? help  q quit
 `
 }

@@ -16,6 +16,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case refreshMsg:
 		m.loading = false
+		m.aiAnalyzing = false
 		if msg.err != nil {
 			m.error = msg.err.Error()
 			m.prs = visiblePRs(m.app.Inbox(m.sortMode))
@@ -43,6 +44,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.syncSummaryVP()
 		return m, tea.Batch(cmds...)
 
+	case commitDiffMsg:
+		if msg.err != nil {
+			return m, m.finishStatus("commit diff error: "+msg.err.Error(), true)
+		}
+		// Only apply if this SHA is still the active commit.
+		if msg.sha == m.commitDiffKey {
+			m.renderedCommitDiff = msg.rendered
+			m.diffVP.GotoTop()
+			m.syncDiffVP()
+		}
+		return m, nil
+
 	case diffMsg:
 		m.loading = false
 		// Ignore stale diff results that no longer match the selected PR.
@@ -60,6 +73,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.diff = trimDiff(msg.rendered)
 		m.diffFiles = msg.files
 		m.renderedFiles = msg.renderedFiles
+		m.diffXOffset = 0
 		m.diffVP.GotoTop()
 		m.syncDiffVP()
 		return m, nil
@@ -121,6 +135,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		return m.handleKey(msg)
+	case tea.MouseMsg:
+		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
+			return m.handleMouseClick(msg)
+		}
 	}
 
 	var cmd tea.Cmd
@@ -138,17 +156,121 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+type paneRegion struct {
+	focus      Focus
+	x, y, w, h int
+}
+
+func (r paneRegion) contains(x, y int) bool {
+	return x >= r.x && x < r.x+r.w && y >= r.y && y < r.y+r.h
+}
+
+func (m Model) paneRegions() []paneRegion {
+	if m.width <= 0 || m.height <= 0 {
+		return nil
+	}
+	bodyY := 1
+	bodyH := max(4, m.height-chromeLines)
+
+	if m.width >= minWideWidth {
+		leftW, diffW, gap := m.widePaneOuterWidths()
+		inboxH, summaryH := m.leftColumnHeights(bodyH)
+		return []paneRegion{
+			{focus: FocusInbox, x: 0, y: bodyY, w: leftW, h: inboxH},
+			{focus: FocusSummary, x: 0, y: bodyY + inboxH, w: leftW, h: summaryH},
+			{focus: FocusDiff, x: leftW + gap, y: bodyY, w: diffW, h: bodyH},
+		}
+	}
+
+	if m.width >= minMediumWidth {
+		topH := max(8, bodyH/2)
+		bottomH := max(6, bodyH-topH)
+		inboxW := m.width/2 - 1
+		summaryW := m.width / 2
+		return []paneRegion{
+			{focus: FocusInbox, x: 0, y: bodyY, w: inboxW, h: topH},
+			{focus: FocusSummary, x: inboxW + 1, y: bodyY, w: summaryW, h: topH},
+			{focus: FocusDiff, x: 0, y: bodyY + topH, w: m.width, h: bottomH},
+		}
+	}
+
+	switch m.mode {
+	case ModeDiff:
+		return []paneRegion{{focus: FocusDiff, x: 0, y: bodyY, w: m.width, h: bodyH}}
+	case ModeDetail:
+		return []paneRegion{{focus: FocusSummary, x: 0, y: bodyY, w: m.width, h: bodyH}}
+	default:
+		return []paneRegion{{focus: FocusInbox, x: 0, y: bodyY, w: m.width, h: bodyH}}
+	}
+}
+
+func (m Model) paneRegionAt(x, y int) (paneRegion, bool) {
+	for _, region := range m.paneRegions() {
+		if region.contains(x, y) {
+			return region, true
+		}
+	}
+	return paneRegion{}, false
+}
+
+func (m Model) inboxIndexAt(region paneRegion, _ int, y int) (int, bool) {
+	contentY := y - region.y - 1
+	if contentY < 0 || contentY >= max(1, region.h-paneFrame) {
+		return 0, false
+	}
+	line := m.inboxVP.YOffset + contentY
+	// Each inbox item: 2 content lines + 1 blank separator = 3 lines per item.
+	idx := line / 3
+	if idx < 0 || idx >= len(m.prs) {
+		return 0, false
+	}
+	// Separator line (line%3 == 2) clicks only focus the pane.
+	if line%3 == 2 {
+		return 0, false
+	}
+	return idx, true
+}
+
+func (m Model) handleMouseClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	region, ok := m.paneRegionAt(msg.X, msg.Y)
+	if !ok {
+		return m, nil
+	}
+	m.focus = region.focus
+	switch region.focus {
+	case FocusInbox:
+		m.mode = ModeInbox
+		if idx, ok := m.inboxIndexAt(region, msg.X, msg.Y); ok && idx != m.selected {
+			m.selected = idx
+			m.resizeViewports()
+			m.resetPRViewState()
+			return m, m.autoDiffCmd()
+		}
+	case FocusSummary:
+		if _, ok := m.current(); ok {
+			m.mode = ModeDetail
+		}
+	case FocusDiff:
+		if m.diffEnabled || m.mode == ModeDiff {
+			m.mode = ModeDiff
+		}
+	}
+	m.resizeViewports()
+	return m, nil
+}
+
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
-	if key == "q" || key == "ctrl+c" {
-		return m, tea.Quit
-	}
 
 	switch m.mode {
 	case ModeComment:
 		return m.handleCommentKey(key)
 	case ModeConfirmApprove:
 		return m.handleApproveKey(key)
+	case ModeCommand:
+		return m.handleCommandKey(key)
+	case ModeConfirmCommand:
+		return m.handleConfirmCommandKey(key)
 	case ModeHelp:
 		if key == "esc" || key == "?" || key == "enter" {
 			m.mode = m.prevMode
@@ -163,9 +285,26 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	if key == "q" || key == "ctrl+c" {
+		return m, tea.Quit
+	}
+
 	if key == "?" {
 		m.prevMode = m.mode
 		m.mode = ModeHelp
+		return m, nil
+	}
+	if m.setSummaryMode(key) {
+		m.summaryVP.GotoTop()
+		m.commitIndex = 0
+		m.summaryXOffset = 0
+		m.commitDiffKey = ""
+		m.renderedCommitDiff = ""
+		m.syncSummaryVP()
+		m.syncDiffVP()
+		if m.summaryMode == SummaryModeCommits {
+			return m, m.autoCommitDiffCmd()
+		}
 		return m, nil
 	}
 
@@ -174,12 +313,56 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.nextFocus()
 	case "shift+tab":
 		m.prevFocus()
+	case "g":
+		switch m.focus {
+		case FocusSummary:
+			m.summaryVP.GotoTop()
+		case FocusDiff:
+			m.diffVP.GotoTop()
+		default: // FocusInbox
+			if m.selected != 0 {
+				m.selected = 0
+				m.resetPRViewState()
+				return m, m.autoDiffCmd()
+			}
+		}
+	case "G":
+		switch m.focus {
+		case FocusSummary:
+			m.summaryVP.GotoBottom()
+		case FocusDiff:
+			m.diffVP.GotoBottom()
+		default: // FocusInbox
+			last := len(m.prs) - 1
+			if last >= 0 && m.selected != last {
+				m.selected = last
+				m.resetPRViewState()
+				return m, m.autoDiffCmd()
+			}
+		}
 	case "o":
 		m.cycleSortMode()
 	case "j", "down":
 		switch m.focus {
 		case FocusSummary:
-			m.summaryVP.LineDown(1)
+			if m.summaryMode == SummaryModeCommits {
+				if pr, ok := m.current(); ok && m.commitIndex < len(pr.Commits)-1 {
+					m.commitIndex++
+					m.syncSummaryVP()
+					m.syncSummaryVPScroll()
+					return m, m.autoCommitDiffCmd()
+				}
+			} else if m.summaryMode == SummaryModeFiles {
+				if pr, ok := m.current(); ok && m.fileIndex < len(pr.Files)-1 {
+					m.fileIndex++
+					m.diffVP.GotoTop()
+					m.syncDiffVP()
+					m.syncSummaryVP()
+					m.syncSummaryVPScroll()
+				}
+			} else {
+				m.summaryVP.LineDown(1)
+			}
 		case FocusDiff:
 			m.diffVP.LineDown(1)
 		default: // FocusInbox
@@ -192,7 +375,24 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "k", "up":
 		switch m.focus {
 		case FocusSummary:
-			m.summaryVP.LineUp(1)
+			if m.summaryMode == SummaryModeCommits {
+				if m.commitIndex > 0 {
+					m.commitIndex--
+					m.syncSummaryVP()
+					m.syncSummaryVPScroll()
+					return m, m.autoCommitDiffCmd()
+				}
+			} else if m.summaryMode == SummaryModeFiles {
+				if m.fileIndex > 0 {
+					m.fileIndex--
+					m.diffVP.GotoTop()
+					m.syncDiffVP()
+					m.syncSummaryVP()
+					m.syncSummaryVPScroll()
+				}
+			} else {
+				m.summaryVP.LineUp(1)
+			}
 		case FocusDiff:
 			m.diffVP.LineUp(1)
 		default: // FocusInbox
@@ -204,11 +404,15 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "left":
 		if m.focus == FocusDiff {
-			m.diffVP.ScrollLeft(max(1, m.diffVP.Width/2))
+			m.diffXOffset = max(0, m.diffXOffset-max(1, m.diffVP.Width/2))
+		} else if m.focus == FocusSummary && m.summaryMode == SummaryModeCommits {
+			m.summaryXOffset = max(0, m.summaryXOffset-max(1, m.summaryVP.Width/2))
 		}
 	case "right":
 		if m.focus == FocusDiff {
-			m.diffVP.ScrollRight(max(1, m.diffVP.Width/2))
+			m.diffXOffset = min(m.maxDiffXOffset(), m.diffXOffset+max(1, m.diffVP.Width/2))
+		} else if m.focus == FocusSummary && m.summaryMode == SummaryModeCommits {
+			m.summaryXOffset = m.summaryXOffset + max(1, m.summaryVP.Width/2)
 		}
 	case "pgdown", " ":
 		switch m.focus {
@@ -229,23 +433,40 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.inboxVP.ViewUp()
 		}
 	case "shift+down":
-		if len(m.diffFiles) > 0 && m.fileIndex < len(m.diffFiles)-1 {
+		if m.summaryMode == SummaryModeCommits {
+			if pr, ok := m.current(); ok && m.commitIndex < len(pr.Commits)-1 {
+				m.commitIndex++
+				m.syncSummaryVP()
+				m.syncSummaryVPScroll()
+				return m, m.autoCommitDiffCmd()
+			}
+		} else if len(m.diffFiles) > 0 && m.fileIndex < len(m.diffFiles)-1 {
 			m.fileIndex++
 			m.diffVP.GotoTop()
 			m.syncDiffVP()
 			m.syncSummaryVP()
+			m.syncSummaryVPScroll()
 		} else if pr, ok := m.current(); ok && m.fileIndex < len(pr.Files)-1 {
 			m.fileIndex++
 			m.diffVP.GotoTop()
 			m.syncDiffVP()
 			m.syncSummaryVP()
+			m.syncSummaryVPScroll()
 		}
 	case "shift+up":
-		if m.fileIndex > 0 {
+		if m.summaryMode == SummaryModeCommits {
+			if m.commitIndex > 0 {
+				m.commitIndex--
+				m.syncSummaryVP()
+				m.syncSummaryVPScroll()
+				return m, m.autoCommitDiffCmd()
+			}
+		} else if m.fileIndex > 0 {
 			m.fileIndex--
 			m.diffVP.GotoTop()
 			m.syncDiffVP()
 			m.syncSummaryVP()
+			m.syncSummaryVPScroll()
 		}
 	case "enter":
 		if _, ok := m.current(); ok {
@@ -263,6 +484,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if pr, ok := m.current(); ok {
 				m.loading = true
 				m.message = "re-running analysis"
+				m.aiAnalyzing = true
 				return m, tea.Batch(m.startStatus("re-running analysis…"), analyzeCmd(m.app, pr))
 			}
 		}
@@ -294,7 +516,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.mode = ModeDiff
 			m.focus = FocusDiff
 			mv := Model{width: m.width, height: m.height, theme: m.theme, focus: m.focus, prs: m.prs, selected: m.selected}
-			_, _, diffInnerW := mv.paneInnerWidths()
+			diffInnerW := mv.paneInnerWidth(mv.diffPaneOuterWidth(), FocusDiff)
 			return m, tea.Batch(m.startStatus("fetching diff…"), diffCmd(m.app, pr, diffRenderWidth(diffInnerW)))
 		}
 		// Wide/medium: toggle diff pane content.
@@ -321,11 +543,13 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.diffVP.GotoTop()
 			m.syncDiffVP()
 			m.syncSummaryVP()
+			m.syncSummaryVPScroll()
 		} else if pr, ok := m.current(); ok && m.fileIndex < len(pr.Files)-1 {
 			m.fileIndex++
 			m.diffVP.GotoTop()
 			m.syncDiffVP()
 			m.syncSummaryVP()
+			m.syncSummaryVPScroll()
 		}
 	case "p", "[":
 		if m.fileIndex > 0 {
@@ -333,35 +557,35 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.diffVP.GotoTop()
 			m.syncDiffVP()
 			m.syncSummaryVP()
+			m.syncSummaryVPScroll()
 		}
 	case "s":
 		if m.rawDiff != "" && (m.mode == ModeDiff || m.focus == FocusDiff) {
 			m.sideBySide = !m.sideBySide
 			pr, _ := m.current()
 			mv := Model{width: m.width, height: m.height, theme: m.theme, focus: m.focus, prs: m.prs, selected: m.selected}
-			_, _, diffInnerW := mv.paneInnerWidths()
+			diffInnerW := mv.paneInnerWidth(mv.diffPaneOuterWidth(), FocusDiff)
 			return m, renderDiffCmd(m.rawDiff, pr.Repo, pr.Number, diffRenderWidth(diffInnerW), m.sideBySide)
-		}
-		if pr, ok := m.current(); ok {
-			if err := m.app.SetSkip(pr.Repo, pr.Number, !pr.Skipped); err != nil {
-				m.error = err.Error()
-				return m, nil
-			}
-			m.prs = visiblePRs(m.app.Inbox(m.sortMode))
-			if pr.Skipped {
-				m.message = "unskipped"
-			} else {
-				m.message = "skipped"
-			}
 		}
 	case "a":
 		if _, ok := m.current(); ok {
 			m.mode = ModeConfirmApprove
 		}
+	case "A":
+		if pr, ok := m.current(); ok {
+			m.loading = true
+			return m, tea.Batch(m.startStatus("approving…"), approveCmd(m.app, pr))
+		}
 	case "c":
 		if _, ok := m.current(); ok {
 			m.comment = ""
 			m.mode = ModeComment
+		}
+	case ":":
+		if _, ok := m.current(); ok {
+			m.commandInput = ""
+			m.prevMode = m.mode
+			m.mode = ModeCommand
 		}
 	}
 	return m, nil
@@ -401,8 +625,33 @@ func (m *Model) autoDiffCmd() tea.Cmd {
 	}
 	m.diffLoadKey = key
 	mv := Model{width: m.width, height: m.height, theme: m.theme, focus: m.focus, prs: m.prs, selected: m.selected}
-	_, _, diffInnerW := mv.paneInnerWidths()
+	diffInnerW := mv.paneInnerWidth(mv.diffPaneOuterWidth(), FocusDiff)
 	return diffCmd(m.app, pr, diffRenderWidth(diffInnerW))
+}
+
+// autoCommitDiffCmd fetches the diff for the currently selected commit when
+// diff is enabled and the commit has not already been loaded.
+func (m *Model) autoCommitDiffCmd() tea.Cmd {
+	if !m.diffEnabled {
+		return nil
+	}
+	pr, ok := m.current()
+	if !ok {
+		return nil
+	}
+	if m.commitIndex < 0 || m.commitIndex >= len(pr.Commits) {
+		return nil
+	}
+	sha := pr.Commits[m.commitIndex].OID
+	if m.commitDiffKey == sha {
+		return nil
+	}
+	m.commitDiffKey = sha
+	m.renderedCommitDiff = ""
+	m.diffVP.GotoTop()
+	mv := Model{width: m.width, height: m.height, theme: m.theme, focus: m.focus, prs: m.prs, selected: m.selected}
+	diffInnerW := mv.paneInnerWidth(mv.diffPaneOuterWidth(), FocusDiff)
+	return commitDiffCmd(m.app.GitHub, pr.Repo, sha, diffRenderWidth(diffInnerW))
 }
 
 func (m *Model) resizeViewports() {
@@ -433,9 +682,9 @@ func (m *Model) resizeViewports() {
 		m.summaryVP.Height = vpH
 		m.diffVP.Height = vpH
 	}
-	// Update diff viewport width to the real diff pane inner width.
-	_, _, diffInnerW := mv.paneInnerWidths()
-	m.diffVP.Width = max(1, diffInnerW-truncateSafetyMargin)
+	// Update diff viewport width to the real visible diff content width.
+	diffInnerW := mv.paneInnerWidth(mv.diffPaneOuterWidth(), FocusDiff)
+	m.diffVP.Width = mv.diffContentWidth(diffInnerW)
 	m.diffVP.SetHorizontalStep(max(1, m.diffVP.Width/2))
 	m.syncDiffVP()
 }
@@ -504,12 +753,44 @@ func (m *Model) resetPRViewState() {
 	m.diffFiles = nil
 	m.renderedFiles = nil
 	m.fileIndex = 0
+	m.commitIndex = 0
 	m.diffLoadKey = ""
+	m.commitDiffKey = ""
+	m.renderedCommitDiff = ""
+	m.diffXOffset = 0
+	m.summaryXOffset = 0
 	m.inboxVP.GotoTop()
 	m.summaryVP.GotoTop()
 	m.diffVP.GotoTop()
 	m.syncSummaryVP()
 	m.syncDiffVP()
+}
+
+// syncSummaryVPScroll adjusts the summary viewport Y offset to keep the
+// selected item visible when in commits or files mode.
+func (m *Model) syncSummaryVPScroll() {
+	vpH := m.summaryVP.VisibleLineCount()
+	if vpH <= 0 {
+		return
+	}
+	switch m.summaryMode {
+	case SummaryModeCommits:
+		// Each commit renders as 2 lines (headline + meta).
+		selectedLine := m.commitIndex * 2
+		if selectedLine < m.summaryVP.YOffset {
+			m.summaryVP.SetYOffset(selectedLine)
+		} else if selectedLine+1 >= m.summaryVP.YOffset+vpH {
+			m.summaryVP.SetYOffset(selectedLine + 2 - vpH)
+		}
+	case SummaryModeFiles:
+		// Each file renders as 1 line.
+		selectedLine := m.fileIndex
+		if selectedLine < m.summaryVP.YOffset {
+			m.summaryVP.SetYOffset(selectedLine)
+		} else if selectedLine >= m.summaryVP.YOffset+vpH {
+			m.summaryVP.SetYOffset(selectedLine - vpH + 1)
+		}
+	}
 }
 
 // syncSummaryVP updates the stored summaryVP's content so that TotalLineCount
@@ -521,13 +802,15 @@ func (m *Model) syncSummaryVP() {
 		return
 	}
 	mv := Model{
-		theme:     m.theme,
-		fileIndex: m.fileIndex,
-		width:     m.width,
-		height:    m.height,
-		focus:     m.focus,
-		prs:       m.prs,
-		selected:  m.selected,
+		theme:       m.theme,
+		fileIndex:   m.fileIndex,
+		commitIndex: m.commitIndex,
+		summaryMode: m.summaryMode,
+		width:       m.width,
+		height:      m.height,
+		focus:       m.focus,
+		prs:         m.prs,
+		selected:    m.selected,
 	}
 	_, summaryInnerW, _ := mv.paneInnerWidths()
 	content := mv.summaryContent(pr, summaryInnerW)
@@ -543,34 +826,69 @@ func (m *Model) syncDiffVP() {
 	if !m.diffEnabled || m.diff == "" {
 		return
 	}
-	// Resolve which rendered file body to show (same logic as diffPanel).
-	content := m.diff
-	if len(m.renderedFiles) > 0 {
-		idx := 0
-		if pr, ok := m.current(); ok && m.fileIndex >= 0 && m.fileIndex < len(pr.Files) {
-			want := pr.Files[m.fileIndex].Path
-			for i, rf := range m.renderedFiles {
-				if rf.Path == want {
-					idx = i
-					break
-				}
-			}
-		} else if m.fileIndex >= 0 && m.fileIndex < len(m.renderedFiles) {
-			idx = m.fileIndex
-		}
-		content = m.renderedFiles[idx].Body
-	}
-	// Use the real diff-pane inner width so horizontal cut matches render.
+	content := m.currentDiffContent()
+	// Use the real visible diff content width so horizontal cut matches render.
 	mv := Model{width: m.width, height: m.height, theme: m.theme, focus: m.focus, prs: m.prs, selected: m.selected}
-	_, _, diffInnerW := mv.paneInnerWidths()
-	vpW := max(1, diffInnerW-truncateSafetyMargin)
+	diffInnerW := mv.paneInnerWidth(mv.diffPaneOuterWidth(), FocusDiff)
+	vpW := mv.diffContentWidth(diffInnerW)
 	m.diffVP.Width = vpW
 	m.diffVP.SetHorizontalStep(max(1, vpW/2))
 	m.diffVP.SetContent(content)
+	m.diffXOffset = min(m.diffXOffset, m.maxDiffXOffset())
+}
+
+func (m Model) currentDiffContent() string {
+	// In commits mode show the selected commit's diff (if loaded).
+	if m.summaryMode == SummaryModeCommits {
+		if m.renderedCommitDiff != "" {
+			return m.renderedCommitDiff
+		}
+		// Commit diff not yet loaded — show the full PR diff as fallback,
+		// or a placeholder if that's also not loaded.
+		if m.diff != "" {
+			return m.diff
+		}
+		return ""
+	}
+	content := m.diff
+	if len(m.renderedFiles) == 0 {
+		return content
+	}
+	idx := 0
+	if pr, ok := m.current(); ok && m.fileIndex >= 0 && m.fileIndex < len(pr.Files) {
+		want := pr.Files[m.fileIndex].Path
+		for i, rf := range m.renderedFiles {
+			if rf.Path == want {
+				idx = i
+				break
+			}
+		}
+	} else if m.fileIndex >= 0 && m.fileIndex < len(m.renderedFiles) {
+		idx = m.fileIndex
+	}
+	return m.renderedFiles[idx].Body
+}
+
+func (m Model) maxDiffXOffset() int {
+	return max(0, longestLineWidth(m.currentDiffContent())-m.diffVP.Width)
+}
+
+func (m *Model) setSummaryMode(key string) bool {
+	switch key {
+	case "1":
+		m.summaryMode = SummaryModeFiles
+	case "2":
+		m.summaryMode = SummaryModeCommits
+	case "3":
+		m.summaryMode = SummaryModeComments
+	default:
+		return false
+	}
+	return true
 }
 
 func diffRenderWidth(visibleWidth int) int {
-	return max(visibleWidth*20, 1000)
+	return max(visibleWidth*100, 10000)
 }
 
 func (m *Model) cycleSortMode() {
@@ -635,4 +953,71 @@ func (m Model) handleCommentKey(key string) (tea.Model, tea.Cmd) {
 		m.comment += key
 	}
 	return m, nil
+}
+
+func (m Model) handleCommandKey(key string) (tea.Model, tea.Cmd) {
+	if key == "esc" {
+		m.mode = m.prevMode
+		m.commandInput = ""
+		return m, nil
+	}
+	if key == "enter" {
+		cmd, ok := exactCommand(m.commandInput)
+		if !ok {
+			// No exact match; do nothing (user must refine input)
+			return m, nil
+		}
+		if cmd.RequireConfirm {
+			m.pendingCmd = cmd
+			m.mode = ModeConfirmCommand
+			return m, nil
+		}
+		return m.executeCommand(cmd)
+	}
+	if key == "backspace" || key == "ctrl+h" {
+		if len(m.commandInput) > 0 {
+			m.commandInput = m.commandInput[:len(m.commandInput)-1]
+		}
+		return m, nil
+	}
+	// Accept printable single characters (no spaces)
+	if len(key) == 1 && key != " " {
+		m.commandInput += key
+	}
+	return m, nil
+}
+
+func (m Model) handleConfirmCommandKey(key string) (tea.Model, tea.Cmd) {
+	if key == "esc" || key == "n" {
+		m.mode = m.prevMode
+		m.commandInput = ""
+		return m, nil
+	}
+	if key == "y" || key == "enter" {
+		return m.executeCommand(m.pendingCmd)
+	}
+	return m, nil
+}
+
+func (m Model) executeCommand(cmd viCommand) (tea.Model, tea.Cmd) {
+	pr, ok := m.current()
+	if !ok {
+		m.mode = m.prevMode
+		m.commandInput = ""
+		return m, nil
+	}
+	m.mode = m.prevMode
+	m.commandInput = ""
+
+	// Map command name to the appropriate body.
+	var body string
+	switch cmd.Name {
+	case "ap":
+		body = "atlantis plan"
+	case "aa":
+		body = "atlantis apply"
+	default:
+		return m, nil
+	}
+	return m, tea.Batch(m.startStatus("commenting…"), commentCmd(m.app, pr, body))
 }

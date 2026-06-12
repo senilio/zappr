@@ -35,9 +35,11 @@ func (p *GHProvider) ListOpenPRs(ctx context.Context, repo string) ([]model.Pull
 	prs := make([]model.PullRequest, 0, len(raw))
 	for _, item := range raw {
 		pr := item.toModel(repo)
-		files, err := p.getFiles(ctx, repo, pr.Number)
+		files, commits, comments, err := p.getDetails(ctx, repo, pr.Number)
 		if err == nil {
 			pr.Files = files
+			pr.Commits = commits
+			pr.Comments = comments
 			if pr.ChangedFiles == 0 {
 				pr.ChangedFiles = len(files)
 			}
@@ -48,7 +50,7 @@ func (p *GHProvider) ListOpenPRs(ctx context.Context, repo string) ([]model.Pull
 }
 
 func (p *GHProvider) GetPR(ctx context.Context, repo string, number int) (model.PullRequest, error) {
-	out, err := p.run(ctx, "pr", "view", strconv.Itoa(number), "--repo", repo, "--json", "number,title,author,url,labels,additions,deletions,changedFiles,isDraft,statusCheckRollup,reviewDecision,files,updatedAt")
+	out, err := p.run(ctx, "pr", "view", strconv.Itoa(number), "--repo", repo, "--json", "number,title,author,url,labels,additions,deletions,changedFiles,isDraft,statusCheckRollup,reviewDecision,files,commits,comments,updatedAt")
 	if err != nil {
 		return model.PullRequest{}, err
 	}
@@ -61,6 +63,15 @@ func (p *GHProvider) GetPR(ctx context.Context, repo string, number int) (model.
 
 func (p *GHProvider) GetDiff(ctx context.Context, repo string, number int) (string, error) {
 	out, err := p.run(ctx, "pr", "diff", strconv.Itoa(number), "--repo", repo)
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
+func (p *GHProvider) GetCommitDiff(ctx context.Context, repo string, sha string) (string, error) {
+	out, err := p.run(ctx, "api", "/repos/"+repo+"/commits/"+sha,
+		"--header", "Accept: application/vnd.github.diff")
 	if err != nil {
 		return "", err
 	}
@@ -80,26 +91,36 @@ func (p *GHProvider) Comment(ctx context.Context, repo string, number int, body 
 	if strings.TrimSpace(body) == "" {
 		return fmt.Errorf("comment body is required")
 	}
-	_, err := p.run(ctx, "pr", "review", strconv.Itoa(number), "--repo", repo, "--comment", "--body", body)
+	_, err := p.run(ctx, "pr", "comment", strconv.Itoa(number), "--repo", repo, "--body", body)
 	return err
 }
 
-func (p *GHProvider) getFiles(ctx context.Context, repo string, number int) ([]model.ChangedFile, error) {
-	out, err := p.run(ctx, "pr", "view", strconv.Itoa(number), "--repo", repo, "--json", "files")
+func (p *GHProvider) getDetails(ctx context.Context, repo string, number int) ([]model.ChangedFile, []model.PRCommit, []model.PRComment, error) {
+	out, err := p.run(ctx, "pr", "view", strconv.Itoa(number), "--repo", repo, "--json", "files,commits,comments")
 	if err != nil {
-		return nil, err
+		return nil, nil, nil, err
 	}
 	var raw struct {
-		Files []ghFile `json:"files"`
+		Files    []ghFile    `json:"files"`
+		Commits  []ghCommit  `json:"commits"`
+		Comments []ghComment `json:"comments"`
 	}
 	if err := json.Unmarshal(out, &raw); err != nil {
-		return nil, fmt.Errorf("parse gh files: %w", err)
+		return nil, nil, nil, fmt.Errorf("parse gh pr details: %w", err)
 	}
 	files := make([]model.ChangedFile, 0, len(raw.Files))
 	for _, file := range raw.Files {
 		files = append(files, model.ChangedFile{Path: file.Path, Additions: file.Additions, Deletions: file.Deletions, Status: file.Status})
 	}
-	return files, nil
+	commits := make([]model.PRCommit, 0, len(raw.Commits))
+	for _, commit := range raw.Commits {
+		commits = append(commits, commit.toModel())
+	}
+	comments := make([]model.PRComment, 0, len(raw.Comments))
+	for _, comment := range raw.Comments {
+		comments = append(comments, comment.toModel())
+	}
+	return files, commits, comments, nil
 }
 
 func (p *GHProvider) run(ctx context.Context, args ...string) ([]byte, error) {
@@ -130,6 +151,8 @@ type ghPR struct {
 	StatusCheckRollup json.RawMessage `json:"statusCheckRollup"`
 	ReviewDecision    string          `json:"reviewDecision"`
 	Files             []ghFile        `json:"files"`
+	Commits           []ghCommit      `json:"commits"`
+	Comments          []ghComment     `json:"comments"`
 	UpdatedAt         string          `json:"updatedAt"`
 }
 
@@ -146,6 +169,29 @@ type ghFile struct {
 	Additions int    `json:"additions"`
 	Deletions int    `json:"deletions"`
 	Status    string `json:"status"`
+}
+
+type ghCommit struct {
+	OID             string           `json:"oid"`
+	MessageHeadline string           `json:"messageHeadline"`
+	CommittedDate   string           `json:"committedDate"`
+	AuthoredDate    string           `json:"authoredDate"`
+	Authors         []ghCommitAuthor `json:"authors"`
+}
+
+type ghCommitAuthor struct {
+	Name string         `json:"name"`
+	User *ghCommitLogin `json:"user"`
+}
+
+type ghCommitLogin struct {
+	Login string `json:"login"`
+}
+
+type ghComment struct {
+	Author    ghAuthor `json:"author"`
+	Body      string   `json:"body"`
+	CreatedAt string   `json:"createdAt"`
 }
 
 func (p ghPR) toModel(repo string) model.PullRequest {
@@ -172,7 +218,47 @@ func (p ghPR) toModel(repo string) model.PullRequest {
 		ReviewDecision: p.ReviewDecision,
 		Draft:          p.Draft,
 		UpdatedAt:      parseTime(p.UpdatedAt),
+		Commits:        toModelCommits(p.Commits),
+		Comments:       toModelComments(p.Comments),
 	}
+}
+
+func (c ghCommit) toModel() model.PRCommit {
+	author := "unknown"
+	for _, item := range c.Authors {
+		if item.User != nil && strings.TrimSpace(item.User.Login) != "" {
+			author = item.User.Login
+			break
+		}
+		if strings.TrimSpace(item.Name) != "" {
+			author = item.Name
+		}
+	}
+	date := parseTime(c.CommittedDate)
+	if date.IsZero() {
+		date = parseTime(c.AuthoredDate)
+	}
+	return model.PRCommit{OID: c.OID, Headline: c.MessageHeadline, Author: author, Date: date}
+}
+
+func (c ghComment) toModel() model.PRComment {
+	return model.PRComment{Author: c.Author.Login, Body: c.Body, CreatedAt: parseTime(c.CreatedAt)}
+}
+
+func toModelCommits(commits []ghCommit) []model.PRCommit {
+	out := make([]model.PRCommit, 0, len(commits))
+	for _, commit := range commits {
+		out = append(out, commit.toModel())
+	}
+	return out
+}
+
+func toModelComments(comments []ghComment) []model.PRComment {
+	out := make([]model.PRComment, 0, len(comments))
+	for _, comment := range comments {
+		out = append(out, comment.toModel())
+	}
+	return out
 }
 
 func parseTime(value string) time.Time {

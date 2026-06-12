@@ -7,6 +7,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/senilio/zappr/internal/model"
+	"github.com/senilio/zappr/internal/tui/theme"
 )
 
 func TestVisiblePRsExcludesDrafts(t *testing.T) {
@@ -33,6 +34,7 @@ func minimalModel() Model {
 	m.selected = 0
 	m.mode = ModeInbox
 	m.focus = FocusInbox
+	m.summaryMode = SummaryModeFiles
 	return m
 }
 
@@ -50,6 +52,11 @@ func pressKey(m Model, key string) Model {
 
 func pressSpecial(m Model, key tea.KeyType) Model {
 	next, _ := m.Update(tea.KeyMsg{Type: key})
+	return next.(Model)
+}
+
+func clickMouse(m Model, x, y int) Model {
+	next, _ := m.Update(tea.MouseMsg{X: x, Y: y, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
 	return next.(Model)
 }
 
@@ -107,6 +114,80 @@ func TestAutoDiffCmdDeduplicates(t *testing.T) {
 	m.diffLoadKey = "org/repo#1"
 	if cmd := m.autoDiffCmd(); cmd != nil {
 		t.Fatal("autoDiffCmd should return nil when diffLoadKey matches current PR")
+	}
+}
+
+func TestMouseClickSelectsInboxPR(t *testing.T) {
+	m := modelWithPRs([]model.PullRequest{
+		{Number: 1, Repo: "org/repo", Title: "first"},
+		{Number: 2, Repo: "org/repo", Title: "second"},
+		{Number: 3, Repo: "org/repo", Title: "third"},
+	}, 0)
+	m.width = 120
+	m.height = 30
+	m.mode = ModeInbox
+	m.focus = FocusInbox
+	m.resizeViewports()
+
+	// Wide layout: body starts below the header, pane content starts below the
+	// top border. First PR occupies content lines 0-1, separator line 2, second
+	// PR starts at content line 3.
+	m = clickMouse(m, 2, 6)
+
+	if m.selected != 1 {
+		t.Fatalf("selected = %d, want 1", m.selected)
+	}
+	if m.focus != FocusInbox {
+		t.Fatalf("focus = %v, want FocusInbox", m.focus)
+	}
+	if m.mode != ModeInbox {
+		t.Fatalf("mode = %v, want ModeInbox", m.mode)
+	}
+}
+
+func TestMouseClickInboxSeparatorOnlyFocuses(t *testing.T) {
+	m := modelWithPRs([]model.PullRequest{
+		{Number: 1, Repo: "org/repo", Title: "first"},
+		{Number: 2, Repo: "org/repo", Title: "second"},
+	}, 0)
+	m.width = 120
+	m.height = 30
+	m.mode = ModeDetail
+	m.focus = FocusSummary
+	m.resizeViewports()
+
+	// Separator after first PR is not selectable.
+	// With 3-line layout (2 content + 1 sep): contentY=2 is separator for PR 0.
+	// region.y=1, so y=4 → contentY=4-1-1=2, line=2, 2%3=2 → separator.
+	m = clickMouse(m, 2, 4)
+
+	if m.selected != 0 {
+		t.Fatalf("selected = %d, want unchanged 0", m.selected)
+	}
+	if m.focus != FocusInbox {
+		t.Fatalf("focus = %v, want FocusInbox", m.focus)
+	}
+	if m.mode != ModeInbox {
+		t.Fatalf("mode = %v, want ModeInbox", m.mode)
+	}
+}
+
+func TestMouseClickSummaryFocusesPane(t *testing.T) {
+	m := minimalModel()
+	m.width = 120
+	m.height = 30
+	m.mode = ModeInbox
+	m.focus = FocusInbox
+	m.resizeViewports()
+
+	// In wide inbox-focused layout, summary pane starts after the tall inbox pane.
+	m = clickMouse(m, 2, 24)
+
+	if m.focus != FocusSummary {
+		t.Fatalf("focus = %v, want FocusSummary", m.focus)
+	}
+	if m.mode != ModeDetail {
+		t.Fatalf("mode = %v, want ModeDetail", m.mode)
 	}
 }
 
@@ -221,7 +302,7 @@ func TestDiffHorizontalScrollMovesXOffset(t *testing.T) {
 	}
 }
 
-func TestInboxSelectedPRUsesFullBlockHighlight(t *testing.T) {
+func TestInboxSelectedPRStaysWithinWidth(t *testing.T) {
 	m := modelWithPRs([]model.PullRequest{{
 		Number:   1,
 		Repo:     "org/repo",
@@ -240,6 +321,13 @@ func TestInboxSelectedPRUsesFullBlockHighlight(t *testing.T) {
 	}
 	if strings.Contains(view, ">") {
 		t.Fatalf("selected inbox row still has cursor: %q", view)
+	}
+}
+
+func TestInboxTitleDropsZeroPadding(t *testing.T) {
+	m := modelWithPRs([]model.PullRequest{{Number: 12}, {Number: 11}}, 0)
+	if got := m.inboxTitle(); got != "Inbox (1/2)" {
+		t.Fatalf("inboxTitle = %q, want %q", got, "Inbox (1/2)")
 	}
 }
 
@@ -268,6 +356,18 @@ func TestLayoutUsesFullHeight(t *testing.T) {
 	got := len(strings.Split(strings.TrimRight(view, "\n"), "\n"))
 	if got != m.height {
 		t.Fatalf("layout height = %d, want %d", got, m.height)
+	}
+}
+
+func TestLayoutUsesFullWidth(t *testing.T) {
+	m := modelWithPRs([]model.PullRequest{{Number: 1, Repo: "org/repo", Title: "title", Author: "author", CIStatus: "passing"}}, 0)
+	m.width = 120
+	m.height = 20
+	view := m.View()
+	for _, line := range strings.Split(strings.TrimRight(view, "\n"), "\n") {
+		if got := lipgloss.Width(stripANSI(line)); got != m.width {
+			t.Fatalf("line width = %d, want %d: %q", got, m.width, line)
+		}
 	}
 }
 
@@ -322,10 +422,348 @@ func TestSummarySelectedFileFlushLeftAndHighlighted(t *testing.T) {
 	}
 }
 
-func TestTruncateANSIWidthLeavesTwoColumnMargin(t *testing.T) {
+func TestTruncateANSIWidthUsesRequestedWidth(t *testing.T) {
 	got := lipgloss.Width(stripANSI(truncateANSIWidth("abcdef", 6)))
-	if got != 4 {
-		t.Fatalf("truncate width = %d, want 4", got)
+	if got != 6 {
+		t.Fatalf("truncate width = %d, want 6", got)
+	}
+}
+
+func TestLeftTruncatePath(t *testing.T) {
+	cases := []struct {
+		path string
+		maxW int
+		want string
+	}{
+		// Fits: no truncation.
+		{"sa.tf", 20, "sa.tf"},
+		// First segment stripped.
+		{"terraform/accounts/sa.tf", 20, "…/accounts/sa.tf"},
+		// Two segments stripped.
+		{"terraform/accounts/emea/eks/sa.tf", 20, "…/emea/eks/sa.tf"},
+		// Falls back to last segment only.
+		{"terraform/accounts/emea/eks/sa.tf", 10, "…/sa.tf"},
+		// Filename itself wider than maxW: hard right-truncate with ellipsis.
+		{"verylongfilename.tf", 5, "…e.tf"},
+		// Zero width.
+		{"terraform/sa.tf", 0, ""},
+	}
+	for _, tc := range cases {
+		got := leftTruncatePath(tc.path, tc.maxW)
+		if got != tc.want {
+			t.Errorf("leftTruncatePath(%q, %d) = %q, want %q", tc.path, tc.maxW, got, tc.want)
+		}
+	}
+}
+
+func TestLeftColumnHeightsShiftByFocus(t *testing.T) {
+	m := minimalModel()
+	inboxH, summaryH := m.leftColumnHeights(20)
+	if inboxH != 16 || summaryH != 4 {
+		t.Fatalf("inbox focus heights = %d/%d, want 16/4", inboxH, summaryH)
+	}
+	m.focus = FocusSummary
+	m.mode = ModeDetail
+	inboxH, summaryH = m.leftColumnHeights(20)
+	if inboxH != 4 || summaryH != 16 {
+		t.Fatalf("summary focus heights = %d/%d, want 4/16", inboxH, summaryH)
+	}
+}
+
+func TestNumberKeysSwitchSummaryModeGlobally(t *testing.T) {
+	m := minimalModel()
+	m = pressKey(m, "2")
+	if m.summaryMode != SummaryModeCommits {
+		t.Fatalf("summaryMode after 2 = %v, want %v", m.summaryMode, SummaryModeCommits)
+	}
+	m = pressKey(m, "3")
+	if m.summaryMode != SummaryModeComments {
+		t.Fatalf("summaryMode after 3 = %v, want %v", m.summaryMode, SummaryModeComments)
+	}
+	m = pressKey(m, "1")
+	if m.summaryMode != SummaryModeFiles {
+		t.Fatalf("summaryMode after 1 = %v, want %v", m.summaryMode, SummaryModeFiles)
+	}
+}
+
+func TestCommentSummaryWrapsLongLines(t *testing.T) {
+	m := modelWithPRs([]model.PullRequest{{
+		Number: 1,
+		Repo:   "org/repo",
+		Title:  "title",
+		Author: "author",
+		Comments: []model.PRComment{{
+			Author: "atlantis",
+			Body:   strings.Repeat("0123456789", 12),
+		}},
+	}}, 0)
+	m.width = 44
+	m.height = 14
+	m.summaryMode = SummaryModeComments
+	view := m.summaryPanel(m.width, m.height)
+	lines := strings.Split(view, "\n")
+	bodyLines := 0
+	for _, line := range strings.Split(view, "\n") {
+		if lipgloss.Width(stripANSI(line)) > m.width-4 {
+			t.Fatalf("comment summary line over width: %q", line)
+		}
+		if strings.Contains(line, "0123456789") {
+			bodyLines++
+		}
+	}
+	if bodyLines != 1 {
+		t.Fatalf("long comment body wrapped into %d lines, want 1: %#v", bodyLines, lines)
+	}
+}
+
+func TestCommitSummaryUsesAvailableWidth(t *testing.T) {
+	m := modelWithPRs([]model.PullRequest{{
+		Number: 1,
+		Repo:   "org/repo",
+		Title:  "title",
+		Author: "author",
+		Commits: []model.PRCommit{{
+			OID:      "1234567890abcdef",
+			Headline: strings.Repeat("x", 80),
+			Author:   "alice",
+		}},
+	}}, 0)
+	m.width = 44
+	m.height = 14
+	m.summaryMode = SummaryModeCommits
+	view := m.summaryPanel(m.width, m.height)
+	lines := strings.Split(view, "\n")
+	if len(lines) == 0 {
+		t.Fatal("empty commit summary view")
+	}
+	if got := lipgloss.Width(stripANSI(lines[0])); got < m.width-10 {
+		t.Fatalf("commit headline used too little width: %d", got)
+	}
+}
+
+func TestDiffPanelHonorsPassedWidth(t *testing.T) {
+	m := minimalModel()
+	m.width = 140
+	m.height = 20
+	m.mode = ModeDiff
+	m.focus = FocusDiff
+	m.diffEnabled = true
+	m.diff = strings.Repeat("abcdefghijklmnopqrstuvwxyz", 8)
+	m.syncDiffVP()
+
+	paneW := 44
+	view := m.diffPanel(paneW, 10)
+	maxLineW := m.diffContentWidth(m.paneInnerWidth(paneW, FocusDiff))
+	for _, line := range strings.Split(view, "\n") {
+		if got := lipgloss.Width(stripANSI(line)); got != maxLineW {
+			t.Fatalf("diff line width = %d, want %d: %q", got, maxLineW, line)
+		}
+	}
+}
+
+func TestDiffPanelHorizontalScrollShowsLaterContentWithoutWrapping(t *testing.T) {
+	m := minimalModel()
+	m.width = 120
+	m.height = 20
+	m.mode = ModeDiff
+	m.focus = FocusDiff
+	m.diffEnabled = true
+	m.diff = strings.Repeat("0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ", 4)
+	m.resizeViewports()
+
+	initial := m.diffPanel(m.diffPaneOuterWidth(), 10)
+	if !strings.Contains(initial, "0123456789") {
+		t.Fatalf("initial diff missing prefix: %q", initial)
+	}
+
+	m = pressSpecial(m, tea.KeyRight)
+	afterRight := m.diffPanel(m.diffPaneOuterWidth(), 10)
+	if afterRight == initial {
+		t.Fatal("diff did not change after horizontal scroll")
+	}
+	for _, line := range strings.Split(afterRight, "\n") {
+		if got := lipgloss.Width(stripANSI(line)); got != m.diffVP.Width {
+			t.Fatalf("scrolled diff line width = %d, want %d: %q", got, m.diffVP.Width, line)
+		}
+	}
+}
+
+func TestWideLayoutWithDiffUsesFullWidth(t *testing.T) {
+	for _, width := range []int{119, 120, 121} {
+		m := modelWithPRs([]model.PullRequest{{
+			Number: 1,
+			Repo:   "org/repo",
+			Title:  "title",
+			Author: "author",
+		}}, 0)
+		m.width = width
+		m.height = 20
+		m.mode = ModeDiff
+		m.focus = FocusDiff
+		m.diffEnabled = true
+		m.diff = strings.Repeat("line\n", 20)
+		m.resizeViewports()
+
+		view := m.View()
+		lines := strings.Split(strings.TrimRight(view, "\n"), "\n")
+		for _, line := range lines {
+			if got := lipgloss.Width(stripANSI(line)); got != m.width {
+				t.Fatalf("width %d: line width = %d, want %d: %q", width, got, m.width, line)
+			}
+		}
+	}
+}
+
+func TestWideDiffHardTruncatesBeforeRightPadding(t *testing.T) {
+	for _, width := range []int{119, 120, 121} {
+		m := modelWithPRs([]model.PullRequest{{Number: 1, Repo: "org/repo", Title: "title", Author: "author"}}, 0)
+		m.width = width
+		m.height = 18
+		m.mode = ModeDiff
+		m.focus = FocusDiff
+		m.diffEnabled = true
+		m.diff = m.theme.Styles.File.Render("terraform/accounts/emea-production/storage/kafka.tf") + "\n" + strings.Repeat("data.terraform_remote_state.vpc_state.outputs.vpc_id", 4)
+		m.resizeViewports()
+
+		paneW := m.diffPaneOuterWidth()
+		want := m.diffContentWidth(m.paneInnerWidth(paneW, FocusDiff))
+		if m.diffVP.Width != want {
+			t.Fatalf("width %d: diff viewport width = %d, want %d", width, m.diffVP.Width, want)
+		}
+		for _, line := range strings.Split(m.diffPanel(paneW, 8), "\n") {
+			if got := lipgloss.Width(stripANSI(line)); got != want {
+				t.Fatalf("width %d: diff line width = %d, want %d: %q", width, got, want, line)
+			}
+		}
+	}
+}
+
+func TestWideLayoutLongDiffDoesNotWrapOrChangeHeight(t *testing.T) {
+	m := modelWithPRs([]model.PullRequest{{Number: 1, Repo: "org/repo", Title: "title", Author: "author"}}, 0)
+	m.width = 120
+	m.height = 20
+	m.mode = ModeDiff
+	m.focus = FocusDiff
+	m.diffEnabled = true
+	m.diff = strings.Repeat("data.terraform_remote_state.vpc_state.outputs.vpc_id", 6)
+	m.resizeViewports()
+
+	view := m.View()
+	lines := strings.Split(strings.TrimRight(view, "\n"), "\n")
+	if len(lines) != m.height {
+		t.Fatalf("view height = %d, want %d", len(lines), m.height)
+	}
+	for _, line := range lines {
+		if got := lipgloss.Width(stripANSI(line)); got != m.width {
+			t.Fatalf("line width = %d, want %d: %q", got, m.width, line)
+		}
+	}
+}
+
+func TestWideLayoutTabbedDiffDoesNotExceedTerminalWidth(t *testing.T) {
+	m := modelWithPRs([]model.PullRequest{{Number: 1, Repo: "org/repo", Title: "title", Author: "author"}}, 0)
+	m.width = 120
+	m.height = 20
+	m.mode = ModeDiff
+	m.focus = FocusDiff
+	m.diffEnabled = true
+	m.diff = strings.Repeat("\tdata.terraform_remote_state.vpc_state.outputs.vpc_id", 6)
+	m.resizeViewports()
+
+	for _, line := range strings.Split(strings.TrimRight(m.View(), "\n"), "\n") {
+		if strings.Contains(line, "\t") {
+			t.Fatalf("rendered line still contains tab: %q", line)
+		}
+		if got := lipgloss.Width(stripANSI(line)); got > m.width {
+			t.Fatalf("line width = %d, want <= %d: %q", got, m.width, line)
+		}
+	}
+}
+
+func TestSummaryHeaderShowsActiveModeAndFooterDropsShortcut(t *testing.T) {
+	m := modelWithPRs([]model.PullRequest{{Number: 1, Repo: "org/repo", Title: "title", Author: "author"}}, 0)
+	m.width = 100
+	m.height = 18
+	m.mode = ModeDetail
+	m.focus = FocusSummary
+	m.summaryMode = SummaryModeCommits
+	view := m.View()
+	if strings.Contains(view, "1/2/3 summary") {
+		t.Fatalf("footer still shows summary shortcut: %q", view)
+	}
+	if !strings.Contains(stripANSI(view), "Summary 1 2 3") {
+		t.Fatalf("summary header missing mode numbers: %q", view)
+	}
+}
+
+// TestStripNonSGRRemovesEraseLineKeepsColor verifies that non-SGR CSI escape
+// sequences emitted by delta (e.g. ESC[0K) are stripped while SGR color codes
+// are preserved. Leaked ESC[0K caused diff lines to wrap/misalign in the
+// terminal because it measures as zero width but erases columns when rendered.
+func TestStripNonSGRRemovesEraseLineKeepsColor(t *testing.T) {
+	in := "\x1b[31mred\x1b[0m text\x1b[0K end\x1b[2J\x1b[?25h done"
+	got := stripNonSGR(in)
+	if !strings.Contains(got, "\x1b[31m") || !strings.Contains(got, "\x1b[0m") {
+		t.Fatalf("stripNonSGR dropped SGR color codes: %q", got)
+	}
+	for _, seq := range []string{"\x1b[0K", "\x1b[2J", "\x1b[?25h"} {
+		if strings.Contains(got, seq) {
+			t.Fatalf("stripNonSGR kept non-SGR CSI %q: %q", seq, got)
+		}
+	}
+	if stripANSI(got) != "red text end done" {
+		t.Fatalf("unexpected visible text: %q", stripANSI(got))
+	}
+}
+
+// TestPaneRendersExactAllocatedWidth guards Bug 2: lipgloss Width() sets the
+// content+padding area and adds the border outside, so pane() must size the box
+// with width-borderSize, not width-frameSize, or every pane renders 2 cols too
+// narrow (leaving dead space at the terminal's right edge).
+func TestPaneRendersExactAllocatedWidth(t *testing.T) {
+	m := modelWithPRs([]model.PullRequest{{Number: 1, Repo: "org/repo", Title: "x"}}, 0)
+	m.theme = theme.Default()
+	m.width = 120
+	m.height = 24
+	for _, focus := range []Focus{FocusInbox, FocusDiff} {
+		for _, w := range []int{10, 30, 69, 100} {
+			box := m.pane("Title", "content line", w, 6, focus)
+			top := strings.SplitN(box, "\n", 2)[0]
+			if got := lipgloss.Width(stripANSI(top)); got != w {
+				t.Fatalf("focus=%v alloc=%d: pane outer width = %d, want %d", focus, w, got, w)
+			}
+		}
+	}
+}
+
+// TestWideLayoutBodyFillsTerminalWidth guards Bug 2 end-to-end with the real
+// bordered theme: every rendered line (incl. the diff pane right border) must
+// span exactly the terminal width, leaving no dead space on the right.
+func TestWideLayoutBodyFillsTerminalWidth(t *testing.T) {
+	for _, width := range []int{110, 113, 120, 160, 200} {
+		m := modelWithPRs([]model.PullRequest{{Number: 7933, Repo: "org/repo", Title: "title", Author: "author"}}, 0)
+		m.theme = theme.Default()
+		m.width = width
+		m.height = 24
+		m.mode = ModeDetail
+		m.focus = FocusDiff
+		m.diffEnabled = true
+		m.diff = strings.Repeat("| EBS latency, IOPS saturation, full disk | ebs.md | EC2 |\n", 20)
+		m.resizeViewports()
+		for i, line := range strings.Split(m.View(), "\n") {
+			if got := lipgloss.Width(stripANSI(line)); got != width {
+				t.Fatalf("width=%d line %d width = %d, want %d: %q", width, i, got, width, stripANSI(line))
+			}
+		}
+	}
+}
+
+// TestDiffContentNoLeakedNonSGREscapes ensures non-SGR CSI escapes are removed
+// from delta output at ingest (guards Bug 1).
+func TestDiffContentNoLeakedNonSGREscapes(t *testing.T) {
+	in := "162\x1b[0K| line one |\n163| line two |\x1b[0K\n"
+	if csiNonSGRPattern.MatchString(stripNonSGR(in)) {
+		t.Fatalf("non-SGR CSI escape survived stripNonSGR: %q", stripNonSGR(in))
 	}
 }
 
