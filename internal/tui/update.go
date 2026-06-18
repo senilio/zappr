@@ -1,7 +1,9 @@
 package tui
 
 import (
+	"fmt"
 	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -19,12 +21,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.aiAnalyzing = false
 		if msg.err != nil {
 			m.error = msg.err.Error()
-			m.prs = visiblePRs(m.app.Inbox(m.sortMode))
+			m.allPRs = m.app.Inbox(m.sortMode)
+			m.applyPRSettings()
 			return m, m.finishStatus("error: "+msg.err.Error(), true)
 		}
 		m.error = ""
 		m.message = "refreshed"
-		m.prs = sortPRs(visiblePRs(msg.prs), m.sortMode)
+		m.allPRs = msg.prs
+		m.applyPRSettings()
 		m.lastFetch = timeNow()
 		if m.selected >= len(m.prs) {
 			m.selected = len(m.prs) - 1
@@ -56,6 +60,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case fileContentMsg:
+		if msg.key != m.selectedFileContentKey() {
+			return m, nil
+		}
+		if msg.err != nil {
+			return m, m.finishStatus("file error: "+msg.err.Error(), true)
+		}
+		m.fileContentKey = msg.key
+		m.fileContent = msg.content
+		m.diffVP.GotoTop()
+		m.syncDiffVP()
+		return m, nil
+
 	case diffMsg:
 		m.loading = false
 		// Ignore stale diff results that no longer match the selected PR.
@@ -63,6 +80,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.repo != pr.Repo || msg.number != pr.Number {
 				return m, nil
 			}
+		} else {
+			return m, nil
 		}
 		if msg.err != nil {
 			m.error = msg.err.Error()
@@ -276,6 +295,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.mode = m.prevMode
 		}
 		return m, nil
+	case ModeSettings:
+		return m.handleSettingsKey(key)
 	case ModeDiff:
 		if key == "esc" || key == "enter" || key == "v" {
 			m.diffEnabled = false
@@ -341,7 +362,13 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 	case "o":
-		m.cycleSortMode()
+		if pr, ok := m.current(); ok {
+			return m, openPRURLCmd(prURL(pr))
+		}
+	case "f":
+		m.prevMode = m.mode
+		m.mode = ModeSettings
+		m.settingsCursor = 0
 	case "j", "down":
 		switch m.focus {
 		case FocusSummary:
@@ -567,6 +594,35 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			diffInnerW := mv.paneInnerWidth(mv.diffPaneOuterWidth(), FocusDiff)
 			return m, renderDiffCmd(m.rawDiff, pr.Repo, pr.Number, diffRenderWidth(diffInnerW), m.sideBySide)
 		}
+	case "x":
+		if !m.diffEnabled {
+			return m, nil
+		}
+		if m.diffMode == DiffModeFile {
+			m.diffMode = DiffModeHunks
+			m.diffVP.GotoTop()
+			m.syncDiffVP()
+			return m, nil
+		}
+		pr, ok := m.current()
+		if !ok || len(pr.Files) == 0 || m.fileIndex < 0 || m.fileIndex >= len(pr.Files) {
+			return m, nil
+		}
+		if strings.EqualFold(pr.Files[m.fileIndex].Status, "removed") {
+			return m, m.finishStatus("file removed in PR", true)
+		}
+		if strings.TrimSpace(pr.HeadRefOID) == "" {
+			return m, m.finishStatus("missing PR head ref", true)
+		}
+		m.diffMode = DiffModeFile
+		m.diffVP.GotoTop()
+		m.syncDiffVP()
+		key := m.selectedFileContentKey()
+		if m.fileContentKey == key && m.fileContent != "" {
+			return m, nil
+		}
+		path := pr.Files[m.fileIndex].Path
+		return m, tea.Batch(m.startStatus("fetching file…"), fileContentCmd(m.app.GitHub, pr.Repo, path, pr.HeadRefOID, key))
 	case "a":
 		if _, ok := m.current(); ok {
 			m.mode = ModeConfirmApprove
@@ -743,6 +799,37 @@ func openDiffPagerCmd(repo string, number int) tea.Cmd {
 	})
 }
 
+func openPRURLCmd(url string) tea.Cmd {
+	if strings.TrimSpace(url) == "" {
+		return nil
+	}
+	name := "xdg-open"
+	args := []string{url}
+	switch runtime.GOOS {
+	case "darwin":
+		name = "open"
+	case "windows":
+		name = "rundll32"
+		args = []string{"url.dll,FileProtocolHandler", url}
+	}
+	return tea.ExecProcess(exec.Command(name, args...), func(err error) tea.Msg {
+		if err != nil {
+			return pagerMsg{err: err}
+		}
+		return pagerMsg{message: "opened PR in browser"}
+	})
+}
+
+func prURL(pr model.PullRequest) string {
+	if strings.TrimSpace(pr.URL) != "" {
+		return pr.URL
+	}
+	if pr.Repo == "" || pr.Number == 0 {
+		return ""
+	}
+	return fmt.Sprintf("https://github.com/%s/pull/%d", pr.Repo, pr.Number)
+}
+
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
@@ -752,6 +839,9 @@ func (m *Model) resetPRViewState() {
 	m.rawDiff = ""
 	m.diffFiles = nil
 	m.renderedFiles = nil
+	m.diffMode = DiffModeHunks
+	m.fileContent = ""
+	m.fileContentKey = ""
 	m.fileIndex = 0
 	m.commitIndex = 0
 	m.diffLoadKey = ""
@@ -838,6 +928,9 @@ func (m *Model) syncDiffVP() {
 }
 
 func (m Model) currentDiffContent() string {
+	if m.diffMode == DiffModeFile {
+		return m.currentFileContent()
+	}
 	// In commits mode show the selected commit's diff (if loaded).
 	if m.summaryMode == SummaryModeCommits {
 		if m.renderedCommitDiff != "" {
@@ -869,6 +962,39 @@ func (m Model) currentDiffContent() string {
 	return m.renderedFiles[idx].Body
 }
 
+func (m Model) selectedFileContentKey() string {
+	pr, ok := m.current()
+	if !ok || m.fileIndex < 0 || m.fileIndex >= len(pr.Files) {
+		return ""
+	}
+	return fmt.Sprintf("%s#%d:%s@%s", pr.Repo, pr.Number, pr.Files[m.fileIndex].Path, pr.HeadRefOID)
+}
+
+func (m Model) currentFileContent() string {
+	if m.fileContentKey != m.selectedFileContentKey() || m.fileContent == "" {
+		return ""
+	}
+	return m.renderFullFileContent(m.fileContent, diffFileMarks(m.selectedRawDiffFile()))
+}
+
+func (m Model) selectedRawDiffFile() string {
+	if len(m.diffFiles) == 0 {
+		return ""
+	}
+	if pr, ok := m.current(); ok && m.fileIndex >= 0 && m.fileIndex < len(pr.Files) {
+		want := pr.Files[m.fileIndex].Path
+		for _, f := range m.diffFiles {
+			if f.Path == want {
+				return f.Body
+			}
+		}
+	}
+	if m.fileIndex >= 0 && m.fileIndex < len(m.diffFiles) {
+		return m.diffFiles[m.fileIndex].Body
+	}
+	return ""
+}
+
 func (m Model) maxDiffXOffset() int {
 	return max(0, longestLineWidth(m.currentDiffContent())-m.diffVP.Width)
 }
@@ -881,6 +1007,8 @@ func (m *Model) setSummaryMode(key string) bool {
 		m.summaryMode = SummaryModeCommits
 	case "3":
 		m.summaryMode = SummaryModeComments
+	case "4":
+		m.summaryMode = SummaryModeAtlantis
 	default:
 		return false
 	}
@@ -897,7 +1025,7 @@ func (m *Model) cycleSortMode() {
 		current = pr.Number
 	}
 	m.sortMode = m.sortMode.Next()
-	m.prs = sortPRs(m.prs, m.sortMode)
+	m.applyPRSettings()
 	m.message = "sort: " + m.sortMode.String()
 	if current == 0 {
 		return
@@ -907,6 +1035,37 @@ func (m *Model) cycleSortMode() {
 			m.selected = i
 			return
 		}
+	}
+}
+
+func (m *Model) applyPRSettings() {
+	current := 0
+	if pr, ok := m.current(); ok {
+		current = pr.Number
+	}
+	source := m.allPRs
+	if source == nil {
+		source = m.prs
+	}
+	m.prs = sortPRs(filterPRs(source, m.hideDrafts), m.sortMode)
+	if len(m.prs) == 0 {
+		m.selected = 0
+		m.resetPRViewState()
+		return
+	}
+	if current != 0 {
+		for i, pr := range m.prs {
+			if pr.Number == current {
+				m.selected = i
+				return
+			}
+		}
+	}
+	if m.selected >= len(m.prs) {
+		m.selected = len(m.prs) - 1
+	}
+	if m.selected < 0 {
+		m.selected = 0
 	}
 }
 
@@ -920,7 +1079,10 @@ func sortPRs(prs []model.PullRequest, sortMode app.SortMode) []model.PullRequest
 	return out
 }
 
-func visiblePRs(prs []model.PullRequest) []model.PullRequest {
+func filterPRs(prs []model.PullRequest, hideDrafts bool) []model.PullRequest {
+	if !hideDrafts {
+		return append([]model.PullRequest(nil), prs...)
+	}
 	out := make([]model.PullRequest, 0, len(prs))
 	for _, pr := range prs {
 		if !pr.Draft {
@@ -928,6 +1090,46 @@ func visiblePRs(prs []model.PullRequest) []model.PullRequest {
 		}
 	}
 	return out
+}
+
+func (m Model) handleSettingsKey(key string) (tea.Model, tea.Cmd) {
+	switch key {
+	case "esc", "f":
+		m.mode = m.prevMode
+		return m, nil
+	case "j", "down":
+		if m.settingsCursor < 1 {
+			m.settingsCursor++
+		}
+	case "k", "up":
+		if m.settingsCursor > 0 {
+			m.settingsCursor--
+		}
+	case " ", "enter", "right", "l":
+		if m.settingsCursor == 0 {
+			m.hideDrafts = !m.hideDrafts
+			m.applyPRSettings()
+			m.message = draftFilterMessage(m.hideDrafts)
+		} else {
+			m.cycleSortMode()
+		}
+	case "left", "h":
+		if m.settingsCursor == 0 {
+			m.hideDrafts = !m.hideDrafts
+			m.applyPRSettings()
+			m.message = draftFilterMessage(m.hideDrafts)
+		} else {
+			m.cycleSortMode()
+		}
+	}
+	return m, nil
+}
+
+func draftFilterMessage(hideDrafts bool) string {
+	if hideDrafts {
+		return "drafts: hidden"
+	}
+	return "drafts: shown"
 }
 
 func (m Model) handleCommentKey(key string) (tea.Model, tea.Cmd) {

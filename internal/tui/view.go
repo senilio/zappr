@@ -32,6 +32,8 @@ func (m Model) View() string {
 		return m.commentView()
 	case ModeHelp:
 		return m.helpView()
+	case ModeSettings:
+		return m.settingsView()
 	case ModeCommand, ModeConfirmCommand:
 		return m.commandView()
 	default:
@@ -73,7 +75,7 @@ func (m Model) inboxView() string {
 		}
 		fmt.Fprintf(&b, "%s\n", line)
 	}
-	b.WriteString("\nj/k navigate  enter inspect  a approve, y confirm  c comment  r refresh  v toggle diff  1/2/3 summary\n")
+	b.WriteString("\nj/k navigate  enter inspect  a approve, y confirm  c comment  r refresh  v toggle diff  1/2/3/4 summary\n")
 	return b.String()
 }
 
@@ -97,7 +99,7 @@ func (m Model) detailView() string {
 	for _, file := range pr.Files {
 		fmt.Fprintf(&b, "%-8s %s (+%d -%d)\n", file.Status, file.Path, file.Additions, file.Deletions)
 	}
-	b.WriteString("\na approve, y confirm  c comment  r re-run analysis  v toggle diff  V full diff pager  1/2/3 summary  esc inbox\n")
+	b.WriteString("\na approve, y confirm  c comment  r re-run analysis  v toggle diff  V full diff pager  1/2/3/4 summary  esc inbox\n")
 	return b.String()
 }
 
@@ -137,19 +139,28 @@ func (m Model) helpView() string {
 	return helpText() + "\nesc back  q quit\n"
 }
 
+func (m Model) settingsView() string {
+	if m.width > 0 {
+		return m.layoutView()
+	}
+	return m.settingsPanel() + "\nesc back  q quit\n"
+}
+
 func helpText() string {
 	return `zappr help
 
 Keys:
   j/k        move / scroll
   tab        cycle pane focus
-  o          cycle sort
+  o          open PR in browser
+  f          filters / sort settings
   enter      inspect PR
   v          toggle diff pane (load/hide diff)
   V          open full diff pager
-  1/2/3      summary: files / commits / comments
+  1/2/3/4    summary: files / commits / comments / atlantis
   shift+up/down  prev/next file
   s          side-by-side diff
+  x          expand selected file / diff hunks
   r          refresh (inbox) / re-run AI analysis (detail)
   a then y   approve
   shift+a    approve (no confirmation)
@@ -178,6 +189,9 @@ func (m Model) layoutView() string {
 	if m.mode == ModeHelp {
 		return fit(lipgloss.JoinVertical(lipgloss.Left, header, m.centerModal(m.helpPanel(), bodyHeight), footer))
 	}
+	if m.mode == ModeSettings {
+		return fit(lipgloss.JoinVertical(lipgloss.Left, header, m.centerModal(m.settingsPanel(), bodyHeight), footer))
+	}
 
 	var body string
 	if m.width >= minWideWidth {
@@ -190,7 +204,7 @@ func (m Model) layoutView() string {
 
 	if m.mode == ModeCommand || m.mode == ModeConfirmCommand {
 		modal := m.renderCommandModal()
-		body = overlayModal(body, modal, m.width, bodyHeight)
+		body = overlayModal(body, modal, m.width, bodyHeight, m.selectedInboxPreserveRanges(bodyHeight))
 	}
 
 	return fit(lipgloss.JoinVertical(lipgloss.Left, header, body, footer))
@@ -206,7 +220,12 @@ func (m Model) renderCommandModal() string {
 // overlayModal composites a modal box centered over a dimmed background.
 // bg is expected to be bodyHeight lines wide at width columns.
 // The background is stripped of color and dimmed; the modal renders at full color.
-func overlayModal(bg, modal string, width, height int) string {
+type preserveRange struct {
+	row        int
+	start, end int
+}
+
+func overlayModal(bg, modal string, width, height int, preserve []preserveRange) string {
 	// Strip ANSI from each background line, then apply uniform dim.
 	// This ensures no internal reset sequences break the dim attribute.
 	bgLines := strings.Split(bg, "\n")
@@ -216,13 +235,7 @@ func overlayModal(bg, modal string, width, height int) string {
 	bgLines = bgLines[:height]
 	dimmedBg := make([]string, height)
 	for i, line := range bgLines {
-		plain := stripANSI(line)
-		// Pad to full width so column slicing is safe.
-		missing := width - ansi.StringWidth(plain)
-		if missing > 0 {
-			plain += strings.Repeat(" ", missing)
-		}
-		dimmedBg[i] = "\x1b[2m" + plain + "\x1b[0m"
+		dimmedBg[i] = dimLineWithPreserve(line, width, rangesForRow(preserve, i))
 	}
 
 	// Split modal into lines and measure its width.
@@ -271,6 +284,90 @@ func overlayModal(bg, modal string, width, height int) string {
 	return strings.Join(result, "\n")
 }
 
+func dimLineWithPreserve(line string, width int, ranges []preserveRange) string {
+	plain := stripANSI(line)
+	missing := width - ansi.StringWidth(plain)
+	if missing > 0 {
+		plain += strings.Repeat(" ", missing)
+	}
+	if len(ranges) == 0 {
+		return "\x1b[2m" + plain + "\x1b[0m"
+	}
+	var b strings.Builder
+	pos := 0
+	for _, r := range ranges {
+		start := max(pos, min(width, r.start))
+		end := max(start, min(width, r.end))
+		if start > pos {
+			b.WriteString("\x1b[2m" + ansi.Cut(plain, pos, start) + "\x1b[0m")
+		}
+		if end > start {
+			b.WriteString(ansi.Cut(line, start, end))
+		}
+		pos = end
+	}
+	if pos < width {
+		b.WriteString("\x1b[2m" + ansi.Cut(plain, pos, width) + "\x1b[0m")
+	}
+	return b.String()
+}
+
+func rangesForRow(ranges []preserveRange, row int) []preserveRange {
+	var out []preserveRange
+	for _, r := range ranges {
+		if r.row == row {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+func (m Model) selectedInboxPreserveRanges(bodyHeight int) []preserveRange {
+	if len(m.prs) == 0 || m.selected < 0 || m.selected >= len(m.prs) || m.width <= 0 {
+		return nil
+	}
+	for _, region := range m.paneRegions() {
+		if region.focus != FocusInbox {
+			continue
+		}
+		var ranges []preserveRange
+		contentH := max(1, region.h-paneFrame)
+		selectedLine := m.selected * 3
+		yOffset := m.selectedInboxYOffset(contentH)
+		for _, itemLine := range []int{selectedLine, selectedLine + 1} {
+			viewLine := itemLine - yOffset
+			if viewLine < 0 || viewLine >= contentH {
+				continue
+			}
+			row := region.y - 1 + 1 + viewLine
+			if row < 0 || row >= bodyHeight {
+				continue
+			}
+			start := region.x + 2
+			end := start + max(1, region.w-paneHFrame)
+			ranges = append(ranges, preserveRange{row: row, start: start, end: end})
+		}
+		return ranges
+	}
+	return nil
+}
+
+func (m Model) selectedInboxYOffset(contentH int) int {
+	yOffset := m.inboxVP.YOffset
+	totalLines := max(0, len(m.prs)*3-1)
+	if totalLines <= contentH {
+		return 0
+	}
+	selectedLine := m.selected * 3
+	selectedBottom := selectedLine + 1
+	if selectedLine < yOffset {
+		yOffset = selectedLine
+	} else if selectedBottom >= yOffset+contentH {
+		yOffset = selectedBottom - contentH + 1
+	}
+	return yOffset
+}
+
 func fitScreen(content string, width int, height int) string {
 	if width <= 0 || height <= 0 {
 		return ""
@@ -302,7 +399,7 @@ func (m Model) headerView() string {
 		if m.statusErr {
 			parts = append(parts, m.theme.Styles.Error.Render("✗ "+m.statusText))
 		} else {
-			parts = append(parts, m.statusSpinner.View()+" "+m.theme.Styles.Pending.Render(m.statusText))
+			parts = append(parts, strings.TrimRight(m.statusSpinner.View(), " ")+" "+m.theme.Styles.Pending.Render(m.statusText))
 		}
 	} else if m.statusActive && m.aiAnalyzing && m.statusErr {
 		parts = append(parts, m.theme.Styles.Error.Render("✗ "+m.statusText))
@@ -325,7 +422,7 @@ func (m Model) footerView() string {
 	var keys []shortcut
 	switch m.focus {
 	case FocusDiff:
-		keys = []shortcut{{"left/right", "pan"}, {"n/p", "file"}, {"s", "side-by-side"}, {"V", "pager"}, {"esc", "back"}}
+		keys = []shortcut{{"left/right", "pan"}, {"n/p", "file"}, {"x", m.diffMode.String()}, {"s", "side-by-side"}, {"V", "pager"}, {"esc", "back"}}
 	case FocusSummary:
 		if m.summaryMode == SummaryModeCommits {
 			keys = []shortcut{{"j/k", "select"}, {"left/right", "pan"}, {"v", "diff"}, {"a", "approve"}, {"esc", "inbox"}}
@@ -333,7 +430,7 @@ func (m Model) footerView() string {
 			keys = []shortcut{{"v", "diff"}, {"a", "approve"}, {"c", "comment"}, {"r", "AI review"}, {"esc", "inbox"}}
 		}
 	default:
-		keys = []shortcut{{"o", "sort"}, {"v", "diff"}, {"a", "approve"}, {"c", "comment"}, {"r", "refresh"}}
+		keys = []shortcut{{"f", "filter"}, {"o", "open"}, {"v", "diff"}, {"a", "approve"}, {"c", "comment"}, {"r", "refresh"}}
 	}
 	return railView(m.theme.Styles.Footer.Width(m.width).Render(m.footerShortcuts(keys)), m.width)
 }
@@ -446,6 +543,7 @@ func (m Model) summaryTitle() string {
 		m.summaryModeTitle(1, SummaryModeFiles),
 		m.summaryModeTitle(2, SummaryModeCommits),
 		m.summaryModeTitle(3, SummaryModeComments),
+		m.summaryModeTitle(4, SummaryModeAtlantis),
 	}
 	return "Summary " + strings.Join(parts, " ")
 }
@@ -680,6 +778,9 @@ func (m Model) inboxPanel(width int, height int) string {
 		// Line 2: #N · author · CI · review (consolidated)
 		dot := s.Muted.Render(" · ")
 		metaParts := []string{fmt.Sprintf("#%d", pr.Number), pr.Author}
+		if pr.Draft {
+			metaParts = append(metaParts, "[draft]")
+		}
 		metaBase := strings.Join(metaParts, stripANSI(dot))
 		ciStr := m.theme.CIStatus(pr.CIStatus)
 		reviewStr := m.theme.ReviewStatus(pr.ReviewDecision)
@@ -784,6 +885,8 @@ func (m Model) summaryContent(pr model.PullRequest, innerW int) string {
 		m.writeCommitSummary(&b, pr, innerW)
 	case SummaryModeComments:
 		m.writeCommentSummary(&b, pr, innerW)
+	case SummaryModeAtlantis:
+		m.writeAtlantisSummary(&b, pr, innerW)
 	default:
 		m.writeFileSummary(&b, pr, innerW)
 	}
@@ -880,7 +983,7 @@ func (m Model) writeCommentSummary(b *strings.Builder, pr model.PullRequest, inn
 		}
 		b.WriteString(truncatePaneLineWidth(s.File.Render(meta), innerW) + "\n")
 		for _, line := range strings.Split(comment.Body, "\n") {
-			b.WriteString(truncatePaneLineWidth(line, innerW) + "\n")
+			b.WriteString(truncatePaneLineWidth(stripEmojiShortcodes(line), innerW) + "\n")
 		}
 		if i < len(pr.Comments)-1 {
 			b.WriteByte('\n')
@@ -888,9 +991,86 @@ func (m Model) writeCommentSummary(b *strings.Builder, pr model.PullRequest, inn
 	}
 }
 
+func (m Model) writeAtlantisSummary(b *strings.Builder, pr model.PullRequest, innerW int) {
+	s := m.theme.Styles
+	if pr.AtlantisPlan == nil {
+		b.WriteString(s.Muted.Render("no Atlantis plan output found") + "\n")
+		return
+	}
+	plan := pr.AtlantisPlan
+	b.WriteString(s.Subtitle.Render("Atlantis plan") + "\n")
+	if plan.Summary != "" {
+		b.WriteString(truncatePaneLineWidth(plan.Summary, innerW) + "\n")
+	}
+	meta := plan.Author
+	if !plan.CreatedAt.IsZero() {
+		meta += " · " + plan.CreatedAt.Format("2006-01-02 15:04")
+	}
+	if meta != "" {
+		b.WriteString(truncatePaneLineWidth(s.Muted.Render(meta), innerW) + "\n")
+	}
+	if !plan.NoChanges {
+		counts := fmt.Sprintf("+%d ~%d -%d", plan.Add, plan.Change, plan.Destroy)
+		b.WriteString(truncatePaneLineWidth(s.Add.Render(counts), innerW) + "\n")
+	}
+
+	changed, noChanges, affected := splitAtlantisLayers(plan.Layers)
+	if len(changed) == 0 && len(noChanges) == 0 && len(affected) == 0 {
+		if plan.NoChanges {
+			noChanges = []model.AtlantisLayer{{Name: "overall", NoChanges: true}}
+		} else {
+			affected = []model.AtlantisLayer{{Name: "overall", Add: plan.Add, Change: plan.Change, Destroy: plan.Destroy, Unknown: true}}
+		}
+	}
+	writeAtlantisLayerGroup(b, m, "Changes", changed, innerW)
+	writeAtlantisLayerGroup(b, m, "Affected layers", affected, innerW)
+	writeAtlantisLayerGroup(b, m, "No changes", noChanges, innerW)
+}
+
+func splitAtlantisLayers(layers []model.AtlantisLayer) (changed, noChanges, affected []model.AtlantisLayer) {
+	for _, layer := range layers {
+		hasCounts := layer.Add != 0 || layer.Change != 0 || layer.Destroy != 0
+		switch {
+		case hasCounts:
+			changed = append(changed, layer)
+		case layer.NoChanges:
+			noChanges = append(noChanges, layer)
+		default:
+			affected = append(affected, layer)
+		}
+	}
+	return changed, noChanges, affected
+}
+
+func writeAtlantisLayerGroup(b *strings.Builder, m Model, title string, layers []model.AtlantisLayer, innerW int) {
+	if len(layers) == 0 {
+		return
+	}
+	s := m.theme.Styles
+	b.WriteByte('\n')
+	b.WriteString(s.Subtitle.Render(title) + "\n")
+	for _, layer := range layers {
+		line := "- " + layer.Name
+		if layer.Add != 0 || layer.Change != 0 || layer.Destroy != 0 {
+			line += fmt.Sprintf(" (+%d ~%d -%d)", layer.Add, layer.Change, layer.Destroy)
+		}
+		if title == "Changes" {
+			b.WriteString(truncatePaneLineWidth(s.Add.Render(line), innerW) + "\n")
+		} else {
+			b.WriteString(truncatePaneLineWidth(line, innerW) + "\n")
+		}
+	}
+}
+
 func (m Model) diffPanel(width int, height int) string {
 	if !m.diffEnabled {
 		return m.theme.Styles.Muted.Render("press v to load diff")
+	}
+	if _, ok := m.current(); !ok {
+		return m.theme.Styles.Muted.Render("select PR")
+	}
+	if m.diffMode == DiffModeFile && m.currentFileContent() == "" {
+		return m.theme.Styles.Muted.Render("loading file…")
 	}
 	if m.summaryMode == SummaryModeCommits {
 		if m.renderedCommitDiff == "" {
@@ -926,6 +1106,78 @@ func (m Model) renderDiffViewport(width int, height int) string {
 		out[i] = padANSIWidth(truncateANSIWidth(cut, width), width)
 	}
 	return strings.Join(out, "\n")
+}
+
+func (m Model) renderFullFileContent(content string, marks diffMarks) string {
+	lines := strings.Split(strings.TrimRight(content, "\n"), "\n")
+	lineNoW := len(fmt.Sprintf("%d", len(lines)))
+	s := m.theme.Styles
+	var b strings.Builder
+	for i, line := range lines {
+		lineNo := i + 1
+		for _, deleted := range marks.deletedBefore[lineNo] {
+			prefix := s.Muted.Render(fmt.Sprintf("%*s │ ", lineNoW, ""))
+			b.WriteString(s.Delete.Render("-") + prefix + s.Delete.Render(deleted) + "\n")
+		}
+		prefix := s.Muted.Render(fmt.Sprintf("%*d │ ", lineNoW, lineNo))
+		if marks.added[lineNo] {
+			b.WriteString(s.Add.Render("+") + prefix + s.Add.Render(line))
+		} else {
+			b.WriteString(" " + prefix + line)
+		}
+		if i < len(lines)-1 || len(marks.deletedBefore[len(lines)+1]) > 0 {
+			b.WriteByte('\n')
+		}
+	}
+	for i, deleted := range marks.deletedBefore[len(lines)+1] {
+		prefix := s.Muted.Render(fmt.Sprintf("%*s │ ", lineNoW, ""))
+		b.WriteString(s.Delete.Render("-") + prefix + s.Delete.Render(deleted))
+		if i < len(marks.deletedBefore[len(lines)+1])-1 {
+			b.WriteByte('\n')
+		}
+	}
+	return b.String()
+}
+
+var emojiShortcodePattern = regexp.MustCompile(`:[A-Za-z0-9_+\-]+:`)
+
+func stripEmojiShortcodes(s string) string {
+	s = emojiShortcodePattern.ReplaceAllString(s, "")
+	s = strings.Join(strings.Fields(s), " ")
+	return s
+}
+
+var diffHunkHeaderPattern = regexp.MustCompile(`^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@`)
+
+type diffMarks struct {
+	added         map[int]bool
+	deletedBefore map[int][]string
+}
+
+func diffFileMarks(diff string) diffMarks {
+	marks := diffMarks{added: make(map[int]bool), deletedBefore: make(map[int][]string)}
+	newLine := 0
+	for _, line := range strings.Split(diff, "\n") {
+		if matches := diffHunkHeaderPattern.FindStringSubmatch(line); len(matches) == 2 {
+			fmt.Sscanf(matches[1], "%d", &newLine)
+			continue
+		}
+		if newLine == 0 || strings.HasPrefix(line, "+++") || strings.HasPrefix(line, "---") {
+			continue
+		}
+		switch {
+		case strings.HasPrefix(line, "+"):
+			marks.added[newLine] = true
+			newLine++
+		case strings.HasPrefix(line, "-"):
+			marks.deletedBefore[newLine] = append(marks.deletedBefore[newLine], strings.TrimPrefix(line, "-"))
+		case strings.HasPrefix(line, `\`):
+			// "\ No newline at end of file" marker; not file content.
+		default:
+			newLine++
+		}
+	}
+	return marks
 }
 
 func padANSIWidth(s string, width int) string {
@@ -1061,6 +1313,11 @@ func (m Model) commandPanel() string {
 		}
 		fmt.Fprintf(&b, "Run :%s on %s #%d?\n\n", m.pendingCmd.Name, pr.Repo, pr.Number)
 		fmt.Fprintf(&b, "%s\n\n", s.Muted.Render(m.pendingCmd.Description))
+		if isAtlantisApply(m.pendingCmd) && (!reviewApproved(pr.ReviewDecision) || !ciPassing(pr.CIStatus)) {
+			b.WriteString(s.Error.Render("Warning: applying before PR is approved and CI is passing.") + "\n")
+			b.WriteString(s.Muted.Render("Approval: ") + m.theme.ReviewStatus(pr.ReviewDecision) + "\n")
+			b.WriteString(s.Muted.Render("CI: ") + m.theme.CIStatus(pr.CIStatus) + "\n\n")
+		}
 		b.WriteString("y confirm  n/esc cancel")
 		return b.String()
 	}
@@ -1085,6 +1342,42 @@ func (m Model) commandPanel() string {
 
 	b.WriteString("\n")
 	b.WriteString(s.Muted.Render("enter execute  esc cancel"))
+	return b.String()
+}
+
+func (m Model) settingsPanel() string {
+	s := m.theme.Styles
+	var b strings.Builder
+	b.WriteString(s.Title.Render("Inbox settings"))
+	b.WriteString("\n\n")
+
+	draftsValue := "show drafts"
+	if m.hideDrafts {
+		draftsValue = "hide drafts"
+	}
+	rows := []struct {
+		label string
+		value string
+	}{
+		{"Draft PRs", draftsValue},
+		{"Sort", m.sortMode.String()},
+	}
+	for i, row := range rows {
+		cursor := "  "
+		lineStyle := s.Muted
+		if i == m.settingsCursor {
+			cursor = "› "
+			lineStyle = s.TitleStrong
+		}
+		b.WriteString(cursor)
+		b.WriteString(lineStyle.Render(row.label))
+		b.WriteString(": ")
+		b.WriteString(row.value)
+		b.WriteString("\n")
+	}
+
+	b.WriteString("\n")
+	b.WriteString(s.Muted.Render("j/k select  enter/space toggle  esc close"))
 	return b.String()
 }
 

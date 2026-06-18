@@ -26,65 +26,89 @@ const (
 	ModeConfirmApprove
 	ModeComment
 	ModeHelp
+	ModeSettings
 	ModeCommand
 	ModeConfirmCommand
 )
 
 type Model struct {
-	app           *app.App
-	repo          string
-	prs           []model.PullRequest
-	selected      int
-	sortMode      app.SortMode
-	focus         Focus
-	mode          Mode
-	loading       bool
-	error         string
-	message       string
-	diff          string
-	rawDiff       string
-	diffFiles     []diffFile // raw per-file bodies (for file switching + V pager)
-	renderedFiles []diffFile // rendered (delta/fallback) per-file bodies
-	fileIndex     int
-	commitIndex   int
-	sideBySide    bool
-	comment       string
+	app            *app.App
+	repo           string
+	allPRs         []model.PullRequest
+	prs            []model.PullRequest
+	selected       int
+	sortMode       app.SortMode
+	hideDrafts     bool
+	settingsCursor int
+	focus          Focus
+	mode           Mode
+	loading        bool
+	error          string
+	message        string
+	diff           string
+	rawDiff        string
+	diffFiles      []diffFile // raw per-file bodies (for file switching + V pager)
+	renderedFiles  []diffFile // rendered (delta/fallback) per-file bodies
+	diffMode       DiffMode
+	fileContent    string
+	fileContentKey string
+	fileIndex      int
+	commitIndex    int
+	sideBySide     bool
+	comment        string
 	diffXOffset    int
 	summaryXOffset int
 	lastFetch      time.Time
-	pollEvery     time.Duration
-	width         int
-	height        int
-	theme         uitheme.Theme
-	aiEnabled     bool
-	prevMode      Mode
-	inboxVP       viewport.Model
-	summaryVP     viewport.Model
-	diffVP        viewport.Model
+	pollEvery      time.Duration
+	width          int
+	height         int
+	theme          uitheme.Theme
+	aiEnabled      bool
+	prevMode       Mode
+	inboxVP        viewport.Model
+	summaryVP      viewport.Model
+	diffVP         viewport.Model
 
-	statusActive  bool
-	statusText    string
-	statusErr     bool
-	statusSpinner spinner.Model
-	statusToken   int
+	statusActive       bool
+	statusText         string
+	statusErr          bool
+	statusSpinner      spinner.Model
+	statusToken        int
 	diffLoadKey        string
 	commitDiffKey      string
 	renderedCommitDiff string
 	diffEnabled        bool
-	summaryMode   SummaryMode
+	summaryMode        SummaryMode
 
-	commandInput   string // typed input after ":"
-	pendingCmd     viCommand // command awaiting confirmation
+	commandInput string    // typed input after ":"
+	pendingCmd   viCommand // command awaiting confirmation
 
 	aiAnalyzing bool // true while AI analysis is in-flight
 }
 
 type SummaryMode int
 
+type DiffMode int
+
+const (
+	DiffModeHunks DiffMode = iota
+	DiffModeFile
+)
+
+func (m DiffMode) String() string {
+	switch m {
+	case DiffModeFile:
+		return "file"
+	default:
+		return "diff"
+	}
+}
+
 const (
 	SummaryModeFiles SummaryMode = iota
 	SummaryModeCommits
 	SummaryModeComments
+	SummaryModeAtlantis
 )
 
 func (m SummaryMode) String() string {
@@ -93,6 +117,8 @@ func (m SummaryMode) String() string {
 		return "commits"
 	case SummaryModeComments:
 		return "comments"
+	case SummaryModeAtlantis:
+		return "atlantis"
 	default:
 		return "files"
 	}
@@ -151,6 +177,12 @@ type commitDiffMsg struct {
 	sha      string
 	rendered string
 	err      error
+}
+
+type fileContentMsg struct {
+	key     string
+	content string
+	err     error
 }
 
 type tickMsg struct{}
@@ -249,6 +281,17 @@ func commitDiffCmd(ghProvider interface {
 		}
 		rendered, _ := renderDiff(ctx, raw, width, false)
 		return commitDiffMsg{sha: sha, rendered: rendered}
+	}
+}
+
+func fileContentCmd(ghProvider interface {
+	GetFileContent(ctx context.Context, repo string, path string, ref string) (string, error)
+}, repo string, path string, ref string, key string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		content, err := ghProvider.GetFileContent(ctx, repo, path, ref)
+		return fileContentMsg{key: key, content: content, err: err}
 	}
 }
 

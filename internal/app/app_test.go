@@ -133,6 +133,10 @@ func (f fakeGitHub) GetCommitDiff(context.Context, string, string) (string, erro
 	return "", nil
 }
 
+func (f fakeGitHub) GetFileContent(context.Context, string, string, string) (string, error) {
+	return "", nil
+}
+
 func (f fakeGitHub) Approve(context.Context, string, int, string) error {
 	return nil
 }

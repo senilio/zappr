@@ -30,6 +30,27 @@ type PRComment struct {
 	CreatedAt time.Time
 }
 
+type AtlantisPlan struct {
+	Author    string          `json:"author"`
+	Body      string          `json:"body"`
+	CreatedAt time.Time       `json:"created_at"`
+	Summary   string          `json:"summary"`
+	Add       int             `json:"add"`
+	Change    int             `json:"change"`
+	Destroy   int             `json:"destroy"`
+	NoChanges bool            `json:"no_changes"`
+	Layers    []AtlantisLayer `json:"layers,omitempty"`
+}
+
+type AtlantisLayer struct {
+	Name      string `json:"name"`
+	Add       int    `json:"add"`
+	Change    int    `json:"change"`
+	Destroy   int    `json:"destroy"`
+	NoChanges bool   `json:"no_changes"`
+	Unknown   bool   `json:"unknown"`
+}
+
 type PullRequest struct {
 	Repo           string
 	Number         int
@@ -44,10 +65,12 @@ type PullRequest struct {
 	CIStatus       string
 	ReviewDecision string
 	Draft          bool
+	HeadRefOID     string
 	UpdatedAt      time.Time
 	Diff           string
 	Commits        []PRCommit
 	Comments       []PRComment
+	AtlantisPlan   *AtlantisPlan `json:"atlantis_plan,omitempty"`
 	Triage         Triage
 	Skipped        bool
 }

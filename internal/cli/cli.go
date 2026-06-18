@@ -318,6 +318,6 @@ Commands:
   zappr doctor                  check gh, auth, cache
 
 Keys:
-  j/k navigate  enter inspect  a approve, y confirm  c comment  r refresh  v diff  1/2/3 summary  ? help  q quit
+  j/k navigate  enter inspect  a approve, y confirm  c comment  r refresh  v diff  1/2/3/4 summary  ? help  q quit
 `
 }

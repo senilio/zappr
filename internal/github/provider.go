@@ -11,6 +11,7 @@ type Provider interface {
 	GetPR(ctx context.Context, repo string, number int) (model.PullRequest, error)
 	GetDiff(ctx context.Context, repo string, number int) (string, error)
 	GetCommitDiff(ctx context.Context, repo string, sha string) (string, error)
+	GetFileContent(ctx context.Context, repo string, path string, ref string) (string, error)
 	Approve(ctx context.Context, repo string, number int, body string) error
 	Comment(ctx context.Context, repo string, number int, body string) error
 }

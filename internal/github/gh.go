@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -22,7 +23,7 @@ func NewGHProvider() *GHProvider {
 }
 
 func (p *GHProvider) ListOpenPRs(ctx context.Context, repo string) ([]model.PullRequest, error) {
-	out, err := p.run(ctx, "pr", "list", "--repo", repo, "--state", "open", "--json", "number,title,author,url,labels,additions,deletions,changedFiles,isDraft,statusCheckRollup,reviewDecision,updatedAt")
+	out, err := p.run(ctx, "pr", "list", "--repo", repo, "--state", "open", "--json", "number,title,author,url,labels,additions,deletions,changedFiles,isDraft,headRefOid,statusCheckRollup,reviewDecision,updatedAt")
 	if err != nil {
 		return nil, err
 	}
@@ -40,6 +41,7 @@ func (p *GHProvider) ListOpenPRs(ctx context.Context, repo string) ([]model.Pull
 			pr.Files = files
 			pr.Commits = commits
 			pr.Comments = comments
+			pr.AtlantisPlan = model.LatestAtlantisPlan(comments)
 			if pr.ChangedFiles == 0 {
 				pr.ChangedFiles = len(files)
 			}
@@ -50,7 +52,7 @@ func (p *GHProvider) ListOpenPRs(ctx context.Context, repo string) ([]model.Pull
 }
 
 func (p *GHProvider) GetPR(ctx context.Context, repo string, number int) (model.PullRequest, error) {
-	out, err := p.run(ctx, "pr", "view", strconv.Itoa(number), "--repo", repo, "--json", "number,title,author,url,labels,additions,deletions,changedFiles,isDraft,statusCheckRollup,reviewDecision,files,commits,comments,updatedAt")
+	out, err := p.run(ctx, "pr", "view", strconv.Itoa(number), "--repo", repo, "--json", "number,title,author,url,labels,additions,deletions,changedFiles,isDraft,headRefOid,statusCheckRollup,reviewDecision,files,commits,comments,updatedAt")
 	if err != nil {
 		return model.PullRequest{}, err
 	}
@@ -76,6 +78,26 @@ func (p *GHProvider) GetCommitDiff(ctx context.Context, repo string, sha string)
 		return "", err
 	}
 	return string(out), nil
+}
+
+func (p *GHProvider) GetFileContent(ctx context.Context, repo string, path string, ref string) (string, error) {
+	if strings.TrimSpace(ref) == "" {
+		return "", fmt.Errorf("file ref is required")
+	}
+	apiPath := "/repos/" + repo + "/contents/" + escapeContentPath(path) + "?ref=" + url.QueryEscape(ref)
+	out, err := p.run(ctx, "api", apiPath, "--header", "Accept: application/vnd.github.raw")
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
+func escapeContentPath(path string) string {
+	parts := strings.Split(path, "/")
+	for i := range parts {
+		parts[i] = url.PathEscape(parts[i])
+	}
+	return strings.Join(parts, "/")
 }
 
 func (p *GHProvider) Approve(ctx context.Context, repo string, number int, body string) error {
@@ -150,6 +172,7 @@ type ghPR struct {
 	Draft             bool            `json:"isDraft"`
 	StatusCheckRollup json.RawMessage `json:"statusCheckRollup"`
 	ReviewDecision    string          `json:"reviewDecision"`
+	HeadRefOID        string          `json:"headRefOid"`
 	Files             []ghFile        `json:"files"`
 	Commits           []ghCommit      `json:"commits"`
 	Comments          []ghComment     `json:"comments"`
@@ -203,6 +226,7 @@ func (p ghPR) toModel(repo string) model.PullRequest {
 	for _, file := range p.Files {
 		files = append(files, model.ChangedFile{Path: file.Path, Additions: file.Additions, Deletions: file.Deletions, Status: file.Status})
 	}
+	comments := toModelComments(p.Comments)
 	return model.PullRequest{
 		Repo:           repo,
 		Number:         p.Number,
@@ -217,9 +241,11 @@ func (p ghPR) toModel(repo string) model.PullRequest {
 		CIStatus:       statusFromRollup(p.StatusCheckRollup),
 		ReviewDecision: p.ReviewDecision,
 		Draft:          p.Draft,
+		HeadRefOID:     p.HeadRefOID,
 		UpdatedAt:      parseTime(p.UpdatedAt),
 		Commits:        toModelCommits(p.Commits),
-		Comments:       toModelComments(p.Comments),
+		Comments:       comments,
+		AtlantisPlan:   model.LatestAtlantisPlan(comments),
 	}
 }
 

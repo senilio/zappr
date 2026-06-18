@@ -6,21 +6,145 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/senilio/zappr/internal/app"
 	"github.com/senilio/zappr/internal/model"
 	"github.com/senilio/zappr/internal/tui/theme"
 )
 
-func TestVisiblePRsExcludesDrafts(t *testing.T) {
+func TestFilterPRsShowsDraftsByDefault(t *testing.T) {
 	prs := []model.PullRequest{
 		{Number: 1, Draft: true},
 		{Number: 2},
 		{Number: 3, Draft: true},
 	}
 
-	got := visiblePRs(prs)
+	got := filterPRs(prs, false)
+
+	if len(got) != 3 {
+		t.Fatalf("filterPRs = %#v, want all PRs", got)
+	}
+}
+
+func TestFilterPRsCanHideDrafts(t *testing.T) {
+	prs := []model.PullRequest{
+		{Number: 1, Draft: true},
+		{Number: 2},
+		{Number: 3, Draft: true},
+	}
+
+	got := filterPRs(prs, true)
 
 	if len(got) != 1 || got[0].Number != 2 {
-		t.Fatalf("visiblePRs = %#v, want only PR #2", got)
+		t.Fatalf("filterPRs = %#v, want only PR #2", got)
+	}
+}
+
+func TestSettingsToggleCanHideDrafts(t *testing.T) {
+	m := modelWithPRs([]model.PullRequest{
+		{Number: 1, Draft: true},
+		{Number: 2},
+	}, 0)
+	m.mode = ModeSettings
+	m.prevMode = ModeInbox
+
+	m = pressSpecial(m, tea.KeySpace)
+
+	if !m.hideDrafts {
+		t.Fatal("hideDrafts should be enabled")
+	}
+	if len(m.prs) != 1 || m.prs[0].Number != 2 {
+		t.Fatalf("prs = %#v, want only non-draft PR", m.prs)
+	}
+}
+
+func TestSettingsCanCycleSortMode(t *testing.T) {
+	m := modelWithPRs([]model.PullRequest{{Number: 2}, {Number: 1}}, 0)
+	m.mode = ModeSettings
+	m.settingsCursor = 1
+
+	m = pressSpecial(m, tea.KeySpace)
+
+	if m.sortMode != app.SortNumber {
+		t.Fatalf("sortMode = %s, want number", m.sortMode)
+	}
+	if m.prs[0].Number != 2 {
+		t.Fatalf("prs = %#v, want sorted by number descending", m.prs)
+	}
+}
+
+func TestOKeyOpensPRURLInsteadOfSorting(t *testing.T) {
+	m := modelWithPRs([]model.PullRequest{{Number: 1, Repo: "org/repo", URL: "https://github.com/org/repo/pull/1"}}, 0)
+	m.sortMode = app.SortUpdated
+
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("o")})
+	m = next.(Model)
+
+	if cmd == nil {
+		t.Fatal("o key should return open-browser command")
+	}
+	if m.sortMode != app.SortUpdated {
+		t.Fatalf("sortMode = %s, want unchanged", m.sortMode)
+	}
+}
+
+func TestPRURLFallsBackToGitHubURL(t *testing.T) {
+	got := prURL(model.PullRequest{Repo: "org/repo", Number: 7})
+	if got != "https://github.com/org/repo/pull/7" {
+		t.Fatalf("prURL = %q", got)
+	}
+}
+
+func TestEmptyInboxClearsStaleDiff(t *testing.T) {
+	m := minimalModel()
+	m.diffEnabled = true
+	m.diff = "stale diff"
+	m.rawDiff = "stale raw diff"
+	m.diffFiles = []diffFile{{Path: "main.go", Body: "stale"}}
+	m.renderedFiles = []diffFile{{Path: "main.go", Body: "stale"}}
+	m.allPRs = nil
+	m.prs = nil
+
+	m.applyPRSettings()
+
+	if m.diff != "" || m.rawDiff != "" || len(m.diffFiles) != 0 || len(m.renderedFiles) != 0 {
+		t.Fatalf("diff state not cleared: %#v", m)
+	}
+	if got := stripANSI(m.diffPanel(80, 10)); !strings.Contains(got, "select PR") {
+		t.Fatalf("diffPanel = %q, want select PR", got)
+	}
+}
+
+func TestFullFileDiffModeRendersSelectedFileContent(t *testing.T) {
+	m := modelWithPRs([]model.PullRequest{{
+		Number:     1,
+		Repo:       "org/repo",
+		HeadRefOID: "abc123",
+		Files:      []model.ChangedFile{{Path: "main.go"}},
+	}}, 0)
+	m.diffEnabled = true
+	m.diffMode = DiffModeFile
+	m.diffFiles = []diffFile{{Path: "main.go", Body: "diff --git a/main.go b/main.go\n@@ -1,3 +1,3 @@\n line1\n-old line\n+line2\n line3\n"}}
+	m.fileContentKey = m.selectedFileContentKey()
+	m.fileContent = "line1\nline2\nline3\n"
+
+	content := m.currentDiffContent()
+	plain := stripANSI(content)
+
+	if !strings.Contains(plain, " 1 │ line1") || !strings.Contains(plain, "-  │ old line") || !strings.Contains(plain, "+2 │ line2") || !strings.Contains(plain, " 3 │ line3") {
+		t.Fatalf("content = %q, want full file with added and removed line markers", content)
+	}
+	if strings.Contains(plain, "-2 │") {
+		t.Fatalf("deleted line should not render a second line-number column: %q", content)
+	}
+}
+
+func TestInboxMarksDraftPRs(t *testing.T) {
+	m := modelWithPRs([]model.PullRequest{{Number: 1, Title: "draft", Author: "alice", Draft: true}}, 0)
+
+	view := stripANSI(m.inboxPanel(80, 10))
+
+	if !strings.Contains(view, "[draft]") {
+		t.Fatalf("inbox missing draft marker: %q", view)
 	}
 }
 
@@ -31,6 +155,7 @@ func minimalModel() Model {
 	m.prs = []model.PullRequest{
 		{Number: 1, Repo: "org/repo", Title: "first"},
 	}
+	m.allPRs = m.prs
 	m.selected = 0
 	m.mode = ModeInbox
 	m.focus = FocusInbox
@@ -41,6 +166,7 @@ func minimalModel() Model {
 func modelWithPRs(prs []model.PullRequest, selected int) Model {
 	m := minimalModel()
 	m.prs = prs
+	m.allPRs = prs
 	m.selected = selected
 	return m
 }
@@ -480,9 +606,138 @@ func TestNumberKeysSwitchSummaryModeGlobally(t *testing.T) {
 	if m.summaryMode != SummaryModeComments {
 		t.Fatalf("summaryMode after 3 = %v, want %v", m.summaryMode, SummaryModeComments)
 	}
+	m = pressKey(m, "4")
+	if m.summaryMode != SummaryModeAtlantis {
+		t.Fatalf("summaryMode after 4 = %v, want %v", m.summaryMode, SummaryModeAtlantis)
+	}
 	m = pressKey(m, "1")
 	if m.summaryMode != SummaryModeFiles {
 		t.Fatalf("summaryMode after 1 = %v, want %v", m.summaryMode, SummaryModeFiles)
+	}
+}
+
+func TestCommandOverlayPreservesSelectedInboxColors(t *testing.T) {
+	m := modelWithPRs([]model.PullRequest{{
+		Number:   1,
+		Repo:     "org/repo",
+		Title:    "selected title",
+		Author:   "author",
+		CIStatus: "passing",
+	}}, 0)
+	m.width = 100
+	m.height = 20
+	m.theme = theme.Default()
+	m.mode = ModeCommand
+	m.focus = FocusInbox
+	m.resizeViewports()
+
+	view := m.View()
+	want := m.theme.Styles.TitleStrong.Render("selected title")
+	if !strings.Contains(view, want) {
+		t.Fatalf("selected title colors not preserved; missing %q in %q", want, view)
+	}
+}
+
+func TestAtlantisApplyWarningForUnsafePR(t *testing.T) {
+	m := modelWithPRs([]model.PullRequest{{
+		Number:         1,
+		Repo:           "org/repo",
+		Title:          "title",
+		Author:         "author",
+		CIStatus:       "failure",
+		ReviewDecision: "REVIEW_REQUIRED",
+	}}, 0)
+	m.mode = ModeConfirmCommand
+	m.pendingCmd = viCommand{Name: "aa", Description: "comment \"atlantis apply\" on selected PR", RequireConfirm: true}
+
+	panel := stripANSI(m.commandPanel())
+	if !strings.Contains(panel, "Warning: applying before PR is approved and CI is passing.") {
+		t.Fatalf("missing warning: %q", panel)
+	}
+	if !strings.Contains(panel, "Approval: awaiting approval") || !strings.Contains(panel, "CI: CI failed") {
+		t.Fatalf("missing unsafe details: %q", panel)
+	}
+}
+
+func TestAtlantisSummaryShowsCondensedPlan(t *testing.T) {
+	m := modelWithPRs([]model.PullRequest{{
+		Number: 1,
+		Repo:   "org/repo",
+		Title:  "title",
+		Author: "author",
+		AtlantisPlan: &model.AtlantisPlan{
+			Author:  "atlantis",
+			Summary: "Plan: 1 to add, 2 to change, 3 to destroy",
+			Add:     1,
+			Change:  2,
+			Destroy: 3,
+			Body:    "noisy raw body",
+			Layers: []model.AtlantisLayer{
+				{Name: "network/prod", Add: 1, Change: 2, Destroy: 3},
+				{Name: "app/dev", NoChanges: true},
+			},
+		},
+	}}, 0)
+	m.width = 60
+	m.height = 16
+	m.summaryMode = SummaryModeAtlantis
+
+	view := stripANSI(m.summaryPanel(m.width, m.height))
+	if !strings.Contains(view, "Atlantis plan") || !strings.Contains(view, "+1 ~2 -3") || !strings.Contains(view, "Changes") || !strings.Contains(view, "network/prod") || !strings.Contains(view, "No changes") || !strings.Contains(view, "app/dev") {
+		t.Fatalf("missing Atlantis summary: %q", view)
+	}
+	if strings.Contains(view, "noisy raw body") || strings.Contains(view, "Unknown") {
+		t.Fatalf("Atlantis summary should omit raw body and unknown label: %q", view)
+	}
+}
+
+func TestAtlantisSummaryUsesAffectedLayersForUncountedLayers(t *testing.T) {
+	m := modelWithPRs([]model.PullRequest{{
+		Number: 1,
+		Repo:   "org/repo",
+		AtlantisPlan: &model.AtlantisPlan{
+			Author:  "atlantis",
+			Summary: "Plan: 0 to add, 2 to change, 0 to destroy",
+			Change:  2,
+			Layers: []model.AtlantisLayer{
+				{Name: "terraform/accounts/prod / default", Unknown: true},
+			},
+		},
+	}}, 0)
+	m.width = 80
+	m.height = 16
+	m.summaryMode = SummaryModeAtlantis
+
+	view := stripANSI(m.summaryPanel(m.width, m.height))
+	if !strings.Contains(view, "Affected layers") || !strings.Contains(view, "terraform/accounts/prod / default") {
+		t.Fatalf("missing affected layers: %q", view)
+	}
+	if strings.Contains(view, "Unknown") || strings.Contains(view, "Plan Summary") || strings.Contains(view, "unchanged attributes hidden") {
+		t.Fatalf("Atlantis summary leaked noisy labels: %q", view)
+	}
+}
+
+func TestCommentSummaryStripsEmojiShortcodes(t *testing.T) {
+	m := modelWithPRs([]model.PullRequest{{
+		Number: 1,
+		Repo:   "org/repo",
+		Title:  "title",
+		Author: "author",
+		Comments: []model.PRComment{{
+			Author: "alice",
+			Body:   ":rocket: ship it :white_check_mark:",
+		}},
+	}}, 0)
+	m.width = 60
+	m.height = 14
+	m.summaryMode = SummaryModeComments
+
+	view := stripANSI(m.summaryPanel(m.width, m.height))
+	if strings.Contains(view, ":rocket:") || strings.Contains(view, ":white_check_mark:") {
+		t.Fatalf("emoji shortcodes not stripped: %q", view)
+	}
+	if !strings.Contains(view, "ship it") {
+		t.Fatalf("comment text missing: %q", view)
 	}
 }
 
@@ -688,10 +943,10 @@ func TestSummaryHeaderShowsActiveModeAndFooterDropsShortcut(t *testing.T) {
 	m.focus = FocusSummary
 	m.summaryMode = SummaryModeCommits
 	view := m.View()
-	if strings.Contains(view, "1/2/3 summary") {
+	if strings.Contains(view, "1/2/3/4 summary") {
 		t.Fatalf("footer still shows summary shortcut: %q", view)
 	}
-	if !strings.Contains(stripANSI(view), "Summary 1 2 3") {
+	if !strings.Contains(stripANSI(view), "Summary 1 2 3 4") {
 		t.Fatalf("summary header missing mode numbers: %q", view)
 	}
 }

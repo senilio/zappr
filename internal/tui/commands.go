@@ -6,10 +6,10 @@ import (
 
 // viCommand describes a single vim-style colon command.
 type viCommand struct {
-	Name        string // e.g. "ap"
-	Description string // shown next to the command in the palette
-	RequireConfirm bool  // if true, prompt before executing
-	Execute     func(m *Model) (bool, string) // returns (err, statusMsg)
+	Name           string                        // e.g. "ap"
+	Description    string                        // shown next to the command in the palette
+	RequireConfirm bool                          // if true, prompt before executing
+	Execute        func(m *Model) (bool, string) // returns (err, statusMsg)
 }
 
 // allCommands is the ordered list of all registered colon commands.
@@ -59,4 +59,21 @@ func exactCommand(input string) (viCommand, bool) {
 		}
 	}
 	return viCommand{}, false
+}
+
+func isAtlantisApply(cmd viCommand) bool {
+	return strings.EqualFold(cmd.Name, "aa")
+}
+
+func ciPassing(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "passing", "success":
+		return true
+	default:
+		return false
+	}
+}
+
+func reviewApproved(decision string) bool {
+	return strings.EqualFold(strings.TrimSpace(decision), "APPROVED")
 }
