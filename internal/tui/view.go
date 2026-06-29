@@ -15,7 +15,7 @@ const minWideWidth = 110
 const minMediumWidth = 76
 const paneFrame = 2   // border top + border bottom (lipgloss frame vertical)
 const paneHFrame = 4  // border (2) + padding (2) horizontal
-const chromeLines = 2 // header + footer
+const chromeLines = 1 // header only
 const paneContentSafetyMargin = 0
 const diffContentSafetyMargin = 0
 const tabStopWidth = 8
@@ -176,21 +176,20 @@ func (m Model) helpPanel() string {
 
 func (m Model) layoutView() string {
 	header := m.headerView()
-	footer := m.footerView()
 	bodyHeight := max(4, m.height-chromeLines)
 	fit := func(s string) string { return fitScreen(s, m.width, m.height) }
 
 	if m.mode == ModeConfirmApprove {
-		return fit(lipgloss.JoinVertical(lipgloss.Left, header, m.centerModal(m.approvePanel(), bodyHeight), footer))
+		return fit(lipgloss.JoinVertical(lipgloss.Left, header, m.centerModal(m.approvePanel(), bodyHeight)))
 	}
 	if m.mode == ModeComment {
-		return fit(lipgloss.JoinVertical(lipgloss.Left, header, m.centerModal(m.commentPanel(), bodyHeight), footer))
+		return fit(lipgloss.JoinVertical(lipgloss.Left, header, m.centerModal(m.commentPanel(), bodyHeight)))
 	}
 	if m.mode == ModeHelp {
-		return fit(lipgloss.JoinVertical(lipgloss.Left, header, m.centerModal(m.helpPanel(), bodyHeight), footer))
+		return fit(lipgloss.JoinVertical(lipgloss.Left, header, m.centerModal(m.helpPanel(), bodyHeight)))
 	}
 	if m.mode == ModeSettings {
-		return fit(lipgloss.JoinVertical(lipgloss.Left, header, m.centerModal(m.settingsPanel(), bodyHeight), footer))
+		return fit(lipgloss.JoinVertical(lipgloss.Left, header, m.centerModal(m.settingsPanel(), bodyHeight)))
 	}
 
 	var body string
@@ -207,7 +206,7 @@ func (m Model) layoutView() string {
 		body = overlayModal(body, modal, m.width, bodyHeight, m.selectedInboxPreserveRanges(bodyHeight))
 	}
 
-	return fit(lipgloss.JoinVertical(lipgloss.Left, header, body, footer))
+	return fit(lipgloss.JoinVertical(lipgloss.Left, header, body))
 }
 
 // renderCommandModal renders the command palette box (border + padding + content).
@@ -805,7 +804,8 @@ func (m Model) inboxPanel(width int, height int) string {
 		lineCount++
 
 		if i < len(m.prs)-1 {
-			b.WriteByte('\n')
+			divider := s.Muted.Render(truncateANSIWidth(strings.Repeat("─", innerW), innerW))
+			fmt.Fprintf(&b, "%s\n", divider)
 			lineCount++
 		}
 	}
@@ -1329,14 +1329,19 @@ func (m Model) commandPanel() string {
 	if len(matches) == 0 {
 		b.WriteString(s.Muted.Render("no matching commands"))
 	} else {
-		for _, cmd := range matches {
+		for i, cmd := range matches {
 			nameStyled := s.TitleStrong.Render(":" + cmd.Name)
 			descStyled := s.Muted.Render(cmd.Description)
 			confirmMark := ""
 			if cmd.RequireConfirm {
 				confirmMark = s.Muted.Render(" [confirm]")
 			}
-			fmt.Fprintf(&b, "%s  %s%s\n", nameStyled, descStyled, confirmMark)
+			if i == m.commandCursor {
+				cursor := s.File.Render(">")
+				fmt.Fprintf(&b, "%s %s  %s%s\n", cursor, nameStyled, descStyled, confirmMark)
+			} else {
+				fmt.Fprintf(&b, "  %s  %s%s\n", nameStyled, descStyled, confirmMark)
+			}
 		}
 	}
 

@@ -152,6 +152,26 @@ func (a *App) Comment(ctx context.Context, repo string, number int, body string)
 	return a.GitHub.Comment(ctx, repo, number, body)
 }
 
+func (a *App) ToggleDraft(ctx context.Context, repo string, number int, isDraft bool) error {
+	return a.GitHub.ToggleDraft(ctx, repo, number, isDraft)
+}
+
+func (a *App) ClosePR(ctx context.Context, repo string, number int, comment string) error {
+	return a.GitHub.ClosePR(ctx, repo, number, comment)
+}
+
+func (a *App) UpdateBranch(ctx context.Context, repo string, number int) error {
+	return a.GitHub.UpdateBranch(ctx, repo, number)
+}
+
+func (a *App) RequestChanges(ctx context.Context, repo string, number int, body string) error {
+	return a.GitHub.RequestChanges(ctx, repo, number, body)
+}
+
+func (a *App) MergePR(ctx context.Context, repo string, number int) error {
+	return a.GitHub.MergePR(ctx, repo, number)
+}
+
 func (a *App) SetSkip(repo string, number int, skipped bool) error {
 	return a.Cache.SetSkip(repo, number, skipped)
 }

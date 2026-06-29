@@ -30,6 +30,36 @@ var allCommands = []viCommand{
 			return executeAtlantisComment(m, "atlantis apply")
 		},
 	},
+	{
+		Name:           "au",
+		Description:    "comment \"atlantis unlock\" on selected PR",
+		RequireConfirm: false,
+	},
+	{
+		Name:           "draft",
+		Description:    "toggle PR draft status",
+		RequireConfirm: false,
+	},
+	{
+		Name:           "close",
+		Description:    "close PR",
+		RequireConfirm: true,
+	},
+	{
+		Name:           "update",
+		Description:    "update branch with base branch",
+		RequireConfirm: true,
+	},
+	{
+		Name:           "block",
+		Description:    "request changes to block PR merge",
+		RequireConfirm: true,
+	},
+	{
+		Name:           "merge",
+		Description:    "merge active PR (squash)",
+		RequireConfirm: true,
+	},
 }
 
 func executeAtlantisComment(m *Model, body string) (bool, string) {

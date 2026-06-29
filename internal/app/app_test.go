@@ -145,6 +145,26 @@ func (f fakeGitHub) Comment(context.Context, string, int, string) error {
 	return nil
 }
 
+func (f fakeGitHub) ToggleDraft(context.Context, string, int, bool) error {
+	return nil
+}
+
+func (f fakeGitHub) ClosePR(context.Context, string, int, string) error {
+	return nil
+}
+
+func (f fakeGitHub) UpdateBranch(context.Context, string, int) error {
+	return nil
+}
+
+func (f fakeGitHub) RequestChanges(context.Context, string, int, string) error {
+	return nil
+}
+
+func (f fakeGitHub) MergePR(context.Context, string, int) error {
+	return nil
+}
+
 type fakeAI struct {
 	result *model.AITriage
 	err    error

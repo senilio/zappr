@@ -51,3 +51,17 @@ Use `rtk go test ./...` if available in the environment.
 - Approval/comment actions must use `gh pr review`.
 - Approval is permitted whenever the user chooses; zappr does not auto-gate by risk.
 - Network/auth/rate-limit failures should surface as user-readable errors.
+- `ToggleDraft`: uses `gh pr edit --draft` (to draft) or `gh pr ready` (to undraft).
+- `ClosePR`: uses `gh pr close`; optionally posts a comment first.
+- `UpdateBranch`: uses `gh pr update-branch`.
+- `RequestChanges`: uses `gh pr review --request-changes`.
+- `MergePR`: uses `gh pr merge --squash --delete-branch`.
+
+## TUI Layout
+
+- No footer. Keyboard shortcuts are shown only in the `?` help screen.
+- `chromeLines = 1` (header only); `footerLines = 0` in `resizeViewports`.
+- Inbox items are separated by a thin muted `─` divider line (3-line stride: 2 content + 1 divider).
+- All stride math (4 sites: `inboxPanel`, `inboxIndexAt`, `selectedInboxPreserveRanges`, `selectedInboxYOffset`) must stay in sync if item line count changes.
+- Inbox items are always clickable regardless of current selection state.
+- Clicking the Summary or Diff pane only changes focus to that pane; item selection stays Inbox-only.

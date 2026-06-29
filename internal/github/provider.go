@@ -14,4 +14,9 @@ type Provider interface {
 	GetFileContent(ctx context.Context, repo string, path string, ref string) (string, error)
 	Approve(ctx context.Context, repo string, number int, body string) error
 	Comment(ctx context.Context, repo string, number int, body string) error
+	ToggleDraft(ctx context.Context, repo string, number int, isDraft bool) error
+	ClosePR(ctx context.Context, repo string, number int, comment string) error
+	UpdateBranch(ctx context.Context, repo string, number int) error
+	RequestChanges(ctx context.Context, repo string, number int, body string) error
+	MergePR(ctx context.Context, repo string, number int) error
 }

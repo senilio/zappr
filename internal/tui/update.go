@@ -259,7 +259,7 @@ func (m Model) handleMouseClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	switch region.focus {
 	case FocusInbox:
 		m.mode = ModeInbox
-		if idx, ok := m.inboxIndexAt(region, msg.X, msg.Y); ok && idx != m.selected {
+		if idx, ok := m.inboxIndexAt(region, msg.X, msg.Y); ok {
 			m.selected = idx
 			m.resizeViewports()
 			m.resetPRViewState()
@@ -640,6 +640,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case ":":
 		if _, ok := m.current(); ok {
 			m.commandInput = ""
+			m.commandCursor = 0
 			m.prevMode = m.mode
 			m.mode = ModeCommand
 		}
@@ -716,7 +717,7 @@ func (m *Model) resizeViewports() {
 	// Pane border adds 2 lines vertically. These constants mirror the layout
 	// functions (wideLayout / mediumLayout) and the pane frame size (2).
 	const headerLines = 1
-	const footerLines = 1
+	const footerLines = 0
 	bodyH := max(4, m.height-headerLines-footerLines)
 	mv := Model{width: m.width, height: m.height, theme: m.theme, focus: m.focus, prs: m.prs, selected: m.selected}
 	if m.width >= minWideWidth {
@@ -1161,12 +1162,28 @@ func (m Model) handleCommandKey(key string) (tea.Model, tea.Cmd) {
 	if key == "esc" {
 		m.mode = m.prevMode
 		m.commandInput = ""
+		m.commandCursor = 0
 		return m, nil
 	}
 	if key == "enter" {
 		cmd, ok := exactCommand(m.commandInput)
 		if !ok {
-			// No exact match; do nothing (user must refine input)
+			// No exact match; try cursor-selected command from matching list
+			matches := matchingCommands(m.commandInput)
+			if len(matches) == 0 {
+				return m, nil
+			}
+			idx := m.commandCursor
+			if idx < 0 {
+				idx = 0
+			}
+			if idx >= len(matches) {
+				idx = len(matches) - 1
+			}
+			cmd = matches[idx]
+			ok = true
+		}
+		if !ok {
 			return m, nil
 		}
 		if cmd.RequireConfirm {
@@ -1176,15 +1193,34 @@ func (m Model) handleCommandKey(key string) (tea.Model, tea.Cmd) {
 		}
 		return m.executeCommand(cmd)
 	}
+	if key == "down" || key == "ctrl+j" {
+		matches := matchingCommands(m.commandInput)
+		if len(matches) > 0 {
+			m.commandCursor++
+			if m.commandCursor >= len(matches) {
+				m.commandCursor = len(matches) - 1
+			}
+		}
+		return m, nil
+	}
+	if key == "up" || key == "ctrl+k" {
+		m.commandCursor--
+		if m.commandCursor < 0 {
+			m.commandCursor = 0
+		}
+		return m, nil
+	}
 	if key == "backspace" || key == "ctrl+h" {
 		if len(m.commandInput) > 0 {
 			m.commandInput = m.commandInput[:len(m.commandInput)-1]
 		}
+		m.commandCursor = 0
 		return m, nil
 	}
 	// Accept printable single characters (no spaces)
 	if len(key) == 1 && key != " " {
 		m.commandInput += key
+		m.commandCursor = 0
 	}
 	return m, nil
 }
@@ -1211,15 +1247,27 @@ func (m Model) executeCommand(cmd viCommand) (tea.Model, tea.Cmd) {
 	m.mode = m.prevMode
 	m.commandInput = ""
 
-	// Map command name to the appropriate body.
-	var body string
 	switch cmd.Name {
 	case "ap":
-		body = "atlantis plan"
+		return m, tea.Batch(m.startStatus("commenting…"), commentCmd(m.app, pr, "atlantis plan"))
 	case "aa":
-		body = "atlantis apply"
-	default:
-		return m, nil
+		return m, tea.Batch(m.startStatus("commenting…"), commentCmd(m.app, pr, "atlantis apply"))
+	case "au":
+		return m, tea.Batch(m.startStatus("commenting…"), commentCmd(m.app, pr, "atlantis unlock"))
+	case "draft":
+		action := "marking ready…"
+		if !pr.Draft {
+			action = "marking draft…"
+		}
+		return m, tea.Batch(m.startStatus(action), toggleDraftCmd(m.app, pr))
+	case "close":
+		return m, tea.Batch(m.startStatus("closing…"), closePRCmd(m.app, pr, ""))
+	case "update":
+		return m, tea.Batch(m.startStatus("updating branch…"), updateBranchCmd(m.app, pr))
+	case "block":
+		return m, tea.Batch(m.startStatus("requesting changes…"), requestChangesCmd(m.app, pr, ""))
+	case "merge":
+		return m, tea.Batch(m.startStatus("merging…"), mergePRCmd(m.app, pr))
 	}
-	return m, tea.Batch(m.startStatus("commenting…"), commentCmd(m.app, pr, body))
+	return m, nil
 }

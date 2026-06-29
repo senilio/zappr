@@ -80,8 +80,9 @@ type Model struct {
 	diffEnabled        bool
 	summaryMode        SummaryMode
 
-	commandInput string    // typed input after ":"
-	pendingCmd   viCommand // command awaiting confirmation
+	commandInput  string    // typed input after ":"
+	pendingCmd    viCommand // command awaiting confirmation
+	commandCursor int       // selected index in command palette list
 
 	aiAnalyzing bool // true while AI analysis is in-flight
 }
@@ -322,6 +323,56 @@ func commentCmd(app *app.App, pr model.PullRequest, body string) tea.Cmd {
 		defer cancel()
 		err := app.Comment(ctx, pr.Repo, pr.Number, body)
 		return actionMsg{message: fmt.Sprintf("commented on %s#%d", pr.Repo, pr.Number), err: err}
+	}
+}
+
+func toggleDraftCmd(app *app.App, pr model.PullRequest) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		newDraft := !pr.Draft
+		err := app.ToggleDraft(ctx, pr.Repo, pr.Number, newDraft)
+		action := "marked ready"
+		if newDraft {
+			action = "marked draft"
+		}
+		return actionMsg{message: fmt.Sprintf("%s %s#%d", action, pr.Repo, pr.Number), err: err}
+	}
+}
+
+func closePRCmd(app *app.App, pr model.PullRequest, comment string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		err := app.ClosePR(ctx, pr.Repo, pr.Number, comment)
+		return actionMsg{message: fmt.Sprintf("closed %s#%d", pr.Repo, pr.Number), err: err}
+	}
+}
+
+func updateBranchCmd(app *app.App, pr model.PullRequest) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		err := app.UpdateBranch(ctx, pr.Repo, pr.Number)
+		return actionMsg{message: fmt.Sprintf("updated branch for %s#%d", pr.Repo, pr.Number), err: err}
+	}
+}
+
+func requestChangesCmd(app *app.App, pr model.PullRequest, body string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		err := app.RequestChanges(ctx, pr.Repo, pr.Number, body)
+		return actionMsg{message: fmt.Sprintf("requested changes on %s#%d", pr.Repo, pr.Number), err: err}
+	}
+}
+
+func mergePRCmd(a *app.App, pr model.PullRequest) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		err := a.MergePR(ctx, pr.Repo, pr.Number)
+		return actionMsg{message: fmt.Sprintf("merged %s#%d", pr.Repo, pr.Number), err: err}
 	}
 }
 

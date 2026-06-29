@@ -117,6 +117,46 @@ func (p *GHProvider) Comment(ctx context.Context, repo string, number int, body 
 	return err
 }
 
+func (p *GHProvider) ToggleDraft(ctx context.Context, repo string, number int, isDraft bool) error {
+	if isDraft {
+		_, err := p.run(ctx, "pr", "edit", strconv.Itoa(number), "--repo", repo, "--draft")
+		return err
+	}
+	_, err := p.run(ctx, "pr", "ready", strconv.Itoa(number), "--repo", repo)
+	return err
+}
+
+func (p *GHProvider) ClosePR(ctx context.Context, repo string, number int, comment string) error {
+	if strings.TrimSpace(comment) != "" {
+		if err := p.Comment(ctx, repo, number, comment); err != nil {
+			return err
+		}
+	}
+	_, err := p.run(ctx, "pr", "close", strconv.Itoa(number), "--repo", repo)
+	return err
+}
+
+func (p *GHProvider) UpdateBranch(ctx context.Context, repo string, number int) error {
+	_, err := p.run(ctx, "pr", "update-branch", strconv.Itoa(number), "--repo", repo)
+	return err
+}
+
+func (p *GHProvider) RequestChanges(ctx context.Context, repo string, number int, body string) error {
+	args := []string{"pr", "review", strconv.Itoa(number), "--repo", repo, "--request-changes"}
+	if strings.TrimSpace(body) != "" {
+		args = append(args, "--body", body)
+	} else {
+		args = append(args, "--body", "Changes requested.")
+	}
+	_, err := p.run(ctx, args...)
+	return err
+}
+
+func (p *GHProvider) MergePR(ctx context.Context, repo string, number int) error {
+	_, err := p.run(ctx, "pr", "merge", strconv.Itoa(number), "--repo", repo, "--squash", "--delete-branch")
+	return err
+}
+
 func (p *GHProvider) getDetails(ctx context.Context, repo string, number int) ([]model.ChangedFile, []model.PRCommit, []model.PRComment, error) {
 	out, err := p.run(ctx, "pr", "view", strconv.Itoa(number), "--repo", repo, "--json", "files,commits,comments")
 	if err != nil {

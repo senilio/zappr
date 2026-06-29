@@ -62,27 +62,41 @@ r            refresh (inbox); re-run AI analysis (detail/diff)
 v            toggle diff pane
 V            open full diff in external pager (delta or less)
 s            toggle side-by-side diff
-1/2/3        summary pane: files / commits / comments
-[/]          previous / next file or commit in summary/diff
+1/2/3/4      summary pane: files / commits / comments / Atlantis plan
+n/p or [/]   previous / next file or commit in summary/diff
+f            filters / settings
+o            open PR in browser
 ?            help
 :            command palette (vim-style colon commands)
 esc          back / cancel
 q            quit
 ```
 
-The summary pane starts on changed files and can switch to commits or PR
-conversation comments with `1`, `2`, and `3`. Long lines are hard-truncated in
-all panes; diffs use horizontal scrolling instead of wrapping.
+The summary pane starts on changed files and can switch to commits, PR
+conversation comments, or Atlantis plan output with `1`, `2`, `3`, and `4`.
+Long lines are hard-truncated in all panes; diffs use horizontal scrolling
+instead of wrapping. Keyboard shortcuts are always available via `?`.
 
 ### Command palette
 
 Press `:` to open the command palette. Type a command prefix to filter; press
 `Enter` on an exact match to execute.
 
-| Command | Action |
-|---------|--------|
-| `:ap`   | Comment `atlantis plan` on selected PR |
-| `:aa`   | Comment `atlantis apply` on selected PR (prompts for confirmation) |
+| Command  | Action |
+|----------|--------|
+| `:ap`    | Comment `atlantis plan` on selected PR |
+| `:aa`    | Comment `atlantis apply` on selected PR (prompts for confirmation) |
+| `:au`    | Comment `atlantis unlock` on selected PR |
+| `:draft` | Toggle PR draft status (draft ↔ ready for review) |
+| `:close` | Close PR (prompts for confirmation) |
+| `:update`| Update PR branch with base branch (prompts for confirmation) |
+| `:block` | Request changes on PR to block merge (prompts for confirmation) |
+| `:merge` | Merge active PR via squash and delete branch (prompts for confirmation) |
+
+### Mouse
+
+Click an Inbox item to select it. Click the Summary or Diff pane to move focus
+to that pane (panes change focus on click; item selection is Inbox-only).
 
 ## AI Review
 
