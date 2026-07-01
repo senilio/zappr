@@ -153,6 +153,7 @@ Keys:
   j/k        move / scroll
   tab        cycle pane focus
   o          open PR in browser
+  C          copy PR URL
   f          filters / sort settings
   enter      inspect PR
   v          toggle diff pane (load/hide diff)
@@ -179,19 +180,6 @@ func (m Model) layoutView() string {
 	bodyHeight := max(4, m.height-chromeLines)
 	fit := func(s string) string { return fitScreen(s, m.width, m.height) }
 
-	if m.mode == ModeConfirmApprove {
-		return fit(lipgloss.JoinVertical(lipgloss.Left, header, m.centerModal(m.approvePanel(), bodyHeight)))
-	}
-	if m.mode == ModeComment {
-		return fit(lipgloss.JoinVertical(lipgloss.Left, header, m.centerModal(m.commentPanel(), bodyHeight)))
-	}
-	if m.mode == ModeHelp {
-		return fit(lipgloss.JoinVertical(lipgloss.Left, header, m.centerModal(m.helpPanel(), bodyHeight)))
-	}
-	if m.mode == ModeSettings {
-		return fit(lipgloss.JoinVertical(lipgloss.Left, header, m.centerModal(m.settingsPanel(), bodyHeight)))
-	}
-
 	var body string
 	if m.width >= minWideWidth {
 		body = m.wideLayout(bodyHeight)
@@ -201,8 +189,22 @@ func (m Model) layoutView() string {
 		body = m.compactLayout(bodyHeight)
 	}
 
-	if m.mode == ModeCommand || m.mode == ModeConfirmCommand {
-		modal := m.renderCommandModal()
+	// Modal modes overlay a centered box over the dimmed body layout (matching
+	// the command palette), rather than rendering over an empty black backdrop.
+	var modal string
+	switch {
+	case m.mode == ModeConfirmApprove:
+		modal = m.renderModalBox(m.approvePanel())
+	case m.mode == ModeComment:
+		modal = m.renderModalBox(m.commentPanel())
+	case m.mode == ModeHelp:
+		modal = m.renderModalBox(m.helpPanel())
+	case m.mode == ModeSettings:
+		modal = m.renderModalBox(m.settingsPanel())
+	case m.mode == ModeCommand || m.mode == ModeConfirmCommand:
+		modal = m.renderCommandModal()
+	}
+	if modal != "" {
 		body = overlayModal(body, modal, m.width, bodyHeight, m.selectedInboxPreserveRanges(bodyHeight))
 	}
 
@@ -429,7 +431,7 @@ func (m Model) footerView() string {
 			keys = []shortcut{{"v", "diff"}, {"a", "approve"}, {"c", "comment"}, {"r", "AI review"}, {"esc", "inbox"}}
 		}
 	default:
-		keys = []shortcut{{"f", "filter"}, {"o", "open"}, {"v", "diff"}, {"a", "approve"}, {"c", "comment"}, {"r", "refresh"}}
+		keys = []shortcut{{"f", "filter"}, {"o", "open"}, {"C", "copy URL"}, {"v", "diff"}, {"a", "approve"}, {"c", "comment"}, {"r", "refresh"}}
 	}
 	return railView(m.theme.Styles.Footer.Width(m.width).Render(m.footerShortcuts(keys)), m.width)
 }
@@ -1266,11 +1268,13 @@ func leftTruncatePath(path string, maxW int) string {
 	return "…" + last[len(last)-(maxW-1):]
 }
 
-func (m Model) centerModal(content string, height int) string {
+// renderModalBox renders a centered modal box (border + padding) without
+// placing it on a backdrop. It is composited over the dimmed body layout by
+// overlayModal, matching the command palette's dimmed-background presentation.
+func (m Model) renderModalBox(content string) string {
 	width := min(72, max(32, m.width-4))
 	style := m.theme.Styles.Focused.Width(width).Padding(1, 2)
-	rendered := style.Render(content)
-	return lipgloss.Place(m.width, height, lipgloss.Center, lipgloss.Center, rendered)
+	return style.Render(content)
 }
 
 func (m Model) approvePanel() string {

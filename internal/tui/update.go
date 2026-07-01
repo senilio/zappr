@@ -21,13 +21,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.aiAnalyzing = false
 		if msg.err != nil {
 			m.error = msg.err.Error()
-			m.allPRs = m.app.Inbox(m.sortMode)
+			m.allPRs = m.app.InboxRepo(m.repo, m.sortMode)
 			m.applyPRSettings()
 			return m, m.finishStatus("error: "+msg.err.Error(), true)
 		}
 		m.error = ""
 		m.message = "refreshed"
-		m.allPRs = msg.prs
+		// Always treat a successful refresh as the authoritative PR list. Use a
+		// non-nil empty slice when there are zero PRs so applyPRSettings does
+		// not fall back to the previous (now stale) list and keep showing a PR
+		// that was merged/closed externally.
+		if msg.prs == nil {
+			m.allPRs = []model.PullRequest{}
+		} else {
+			m.allPRs = msg.prs
+		}
 		m.applyPRSettings()
 		m.lastFetch = timeNow()
 		if m.selected >= len(m.prs) {
@@ -35,6 +43,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.selected < 0 {
 			m.selected = 0
+		}
+		// If the queue is now empty (e.g. the last PR was merged/closed
+		// externally), drop back to the Inbox view and focus so the UI does
+		// not stay stuck in a detail/diff mode for a PR that no longer exists.
+		if len(m.prs) == 0 {
+			m.mode = ModeInbox
+			m.focus = FocusInbox
+			m.resizeViewports()
 		}
 		var cmds []tea.Cmd
 		if m.statusActive {
@@ -364,6 +380,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "o":
 		if pr, ok := m.current(); ok {
 			return m, openPRURLCmd(prURL(pr))
+		}
+	case "C":
+		if m.focus == FocusInbox {
+			if pr, ok := m.current(); ok {
+				return m, tea.Batch(m.finishStatus("copied URL", false), copyPRURLCmd(prURL(pr)))
+			}
 		}
 	case "f":
 		m.prevMode = m.mode
@@ -819,6 +841,33 @@ func openPRURLCmd(url string) tea.Cmd {
 		}
 		return pagerMsg{message: "opened PR in browser"}
 	})
+}
+
+func copyPRURLCmd(url string) tea.Cmd {
+	if url == "" {
+		return nil
+	}
+	return func() tea.Msg {
+		var cmd *exec.Cmd
+		switch runtime.GOOS {
+		case "darwin":
+			cmd = exec.Command("pbcopy")
+		case "windows":
+			cmd = exec.Command("clip")
+		default:
+			// Linux: try xclip first, fall back to xsel.
+			if _, err := exec.LookPath("xclip"); err == nil {
+				cmd = exec.Command("xclip", "-selection", "clipboard")
+			} else {
+				cmd = exec.Command("xsel", "--clipboard", "--input")
+			}
+		}
+		cmd.Stdin = strings.NewReader(url)
+		if err := cmd.Run(); err != nil {
+			return actionMsg{message: "copy failed: " + err.Error(), err: err}
+		}
+		return actionMsg{message: "copied URL"}
+	}
 }
 
 func prURL(pr model.PullRequest) string {

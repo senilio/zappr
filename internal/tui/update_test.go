@@ -72,6 +72,28 @@ func TestSettingsCanCycleSortMode(t *testing.T) {
 	}
 }
 
+func TestShiftCCopiesPRURL(t *testing.T) {
+	m := modelWithPRs([]model.PullRequest{{
+		Number: 1,
+		Repo:   "org/repo",
+		URL:    "https://github.com/org/repo/pull/1",
+	}}, 0)
+	m.focus = FocusInbox
+
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("C")})
+	m = next.(Model)
+
+	if cmd == nil {
+		t.Fatal("Shift+C should return a command")
+	}
+	if !m.statusActive {
+		t.Fatal("statusActive should be true after Shift+C")
+	}
+	if m.statusText != "copied URL" {
+		t.Fatalf("statusText = %q, want %q", m.statusText, "copied URL")
+	}
+}
+
 func TestOKeyOpensPRURLInsteadOfSorting(t *testing.T) {
 	m := modelWithPRs([]model.PullRequest{{Number: 1, Repo: "org/repo", URL: "https://github.com/org/repo/pull/1"}}, 0)
 	m.sortMode = app.SortUpdated
@@ -314,6 +336,61 @@ func TestMouseClickSummaryFocusesPane(t *testing.T) {
 	}
 	if m.mode != ModeDetail {
 		t.Fatalf("mode = %v, want ModeDetail", m.mode)
+	}
+}
+
+// TestRefreshEmptyQueueResetsToInbox verifies that when the last PR is merged or
+// closed externally and a refresh returns zero PRs, the UI drops back to the
+// Inbox view/focus instead of staying stuck in a detail/diff mode for a PR that
+// no longer exists (which made pane clicks appear dead).
+func TestRefreshEmptyQueueResetsToInbox(t *testing.T) {
+	m := modelWithPRs([]model.PullRequest{
+		{Number: 1, Repo: "org/repo", Title: "last"},
+	}, 0)
+	m.width = 120
+	m.height = 30
+	m.mode = ModeDiff
+	m.focus = FocusDiff
+	m.diffEnabled = true
+	m.resizeViewports()
+
+	next, _ := m.Update(refreshMsg{prs: nil})
+	m = next.(Model)
+
+	if len(m.prs) != 0 {
+		t.Fatalf("prs len = %d, want 0", len(m.prs))
+	}
+	if m.mode != ModeInbox {
+		t.Fatalf("mode = %v, want ModeInbox after queue emptied", m.mode)
+	}
+	if m.focus != FocusInbox {
+		t.Fatalf("focus = %v, want FocusInbox after queue emptied", m.focus)
+	}
+}
+
+// TestMouseClickWideLayoutEmptyQueueChangesFocus verifies that in the wide
+// 3-pane layout with an empty queue, clicking the Summary and Diff panes still
+// moves focus to that pane (focus change only; no PR selection required).
+func TestMouseClickWideLayoutEmptyQueueChangesFocus(t *testing.T) {
+	m := minimalModel()
+	m.prs = nil
+	m.allPRs = nil
+	m.width = 120
+	m.height = 30
+	m.mode = ModeInbox
+	m.focus = FocusInbox
+	m.resizeViewports()
+
+	// Click the summary pane (lower-left in wide inbox-focused layout).
+	m = clickMouse(m, 2, 24)
+	if m.focus != FocusSummary {
+		t.Fatalf("summary click: focus = %v, want FocusSummary", m.focus)
+	}
+
+	// Click the diff pane (right column).
+	m = clickMouse(m, 90, 5)
+	if m.focus != FocusDiff {
+		t.Fatalf("diff click: focus = %v, want FocusDiff", m.focus)
 	}
 }
 
