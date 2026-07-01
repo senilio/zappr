@@ -41,6 +41,16 @@ func (s *MemoryStore) List() ([]model.PullRequest, error) {
 	return out, nil
 }
 
+func (s *MemoryStore) ListRepo(repo string) ([]model.PullRequest, error) {
+	out := make([]model.PullRequest, 0, len(s.prs))
+	for _, pr := range s.prs {
+		if pr.Repo == repo {
+			out = append(out, pr)
+		}
+	}
+	return out, nil
+}
+
 func (s *MemoryStore) PruneRepo(repo string, openNumbers map[int]bool) error {
 	for key, pr := range s.prs {
 		if pr.Repo == repo && !openNumbers[pr.Number] {

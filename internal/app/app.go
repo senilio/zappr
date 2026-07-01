@@ -82,11 +82,24 @@ func (a *App) Refresh(ctx context.Context, repo string) ([]model.PullRequest, er
 	if err := a.Cache.PruneRepo(repo, openNumbers); err != nil {
 		return nil, err
 	}
-	return a.Inbox(SortUpdated), nil
+	return a.InboxRepo(repo, SortUpdated), nil
 }
 
 func (a *App) Inbox(sortMode SortMode) []model.PullRequest {
 	prs, err := a.Cache.List()
+	if err != nil {
+		return nil
+	}
+	SortPullRequests(prs, sortMode)
+	return prs
+}
+
+// InboxRepo returns cached PRs scoped to a single repository. The TUI is always
+// bound to one active repo, so it must not surface stale PRs left in the shared
+// cache by other repositories (e.g. a repo with zero open PRs would otherwise
+// keep showing a previously-viewed PR from another repo).
+func (a *App) InboxRepo(repo string, sortMode SortMode) []model.PullRequest {
+	prs, err := a.Cache.ListRepo(repo)
 	if err != nil {
 		return nil
 	}

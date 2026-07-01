@@ -118,3 +118,44 @@ func TestSQLiteStorePruneRepo(t *testing.T) {
 		}
 	}
 }
+
+func TestSQLiteStoreListRepoScopesToRepo(t *testing.T) {
+	store, err := OpenSQLite(filepath.Join(t.TempDir(), "zappr.db"))
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	defer store.Close()
+
+	for _, pr := range []model.PullRequest{
+		{Repo: "owner/repo", Number: 1, Title: "a", Triage: model.Triage{Risk: model.RiskSafe}},
+		{Repo: "owner/repo", Number: 2, Title: "b", Triage: model.Triage{Risk: model.RiskSafe}},
+		{Repo: "other/repo", Number: 9, Title: "leftover", Triage: model.Triage{Risk: model.RiskSafe}},
+	} {
+		if err := store.Put(pr); err != nil {
+			t.Fatalf("Put: %v", err)
+		}
+	}
+
+	// A repo with PRs returns only its own.
+	prs, err := store.ListRepo("owner/repo")
+	if err != nil {
+		t.Fatalf("ListRepo: %v", err)
+	}
+	if len(prs) != 2 {
+		t.Fatalf("ListRepo(owner/repo) len = %d, want 2", len(prs))
+	}
+	for _, pr := range prs {
+		if pr.Repo != "owner/repo" {
+			t.Fatalf("ListRepo returned foreign repo %s", pr.Repo)
+		}
+	}
+
+	// A repo with zero PRs must not surface other repos' stale rows.
+	empty, err := store.ListRepo("fresh/repo")
+	if err != nil {
+		t.Fatalf("ListRepo empty: %v", err)
+	}
+	if len(empty) != 0 {
+		t.Fatalf("ListRepo(fresh/repo) len = %d, want 0 (stale cross-repo PRs leaked)", len(empty))
+	}
+}

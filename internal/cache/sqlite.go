@@ -87,6 +87,30 @@ func (s *SQLiteStore) List() ([]model.PullRequest, error) {
 	return prs, rows.Err()
 }
 
+func (s *SQLiteStore) ListRepo(repo string) ([]model.PullRequest, error) {
+	rows, err := s.db.Query(`select data, skipped from pull_requests where repo = ? order by updated_at desc`, repo)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var prs []model.PullRequest
+	for rows.Next() {
+		var data string
+		var skipped int
+		if err := rows.Scan(&data, &skipped); err != nil {
+			return nil, err
+		}
+		var pr model.PullRequest
+		if err := json.Unmarshal([]byte(data), &pr); err != nil {
+			return nil, err
+		}
+		pr.Skipped = skipped != 0
+		prs = append(prs, pr)
+	}
+	return prs, rows.Err()
+}
+
 func (s *SQLiteStore) PruneRepo(repo string, openNumbers map[int]bool) error {
 	rows, err := s.db.Query(`select number from pull_requests where repo = ?`, repo)
 	if err != nil {
