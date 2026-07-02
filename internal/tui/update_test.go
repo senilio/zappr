@@ -1099,6 +1099,32 @@ func TestDiffContentNoLeakedNonSGREscapes(t *testing.T) {
 	}
 }
 
+func TestColorschemePicker(t *testing.T) {
+	m := modelWithPRs([]model.PullRequest{{Number: 1, Repo: "org/repo"}}, 0)
+
+	// Open via :colorscheme executeCommand
+	cmd := viCommand{Name: "colorscheme"}
+	next, _ := m.executeCommand(cmd)
+	m = next.(Model)
+	if m.mode != ModeColorscheme {
+		t.Fatalf("mode = %v, want ModeColorscheme", m.mode)
+	}
+
+	// j moves cursor down
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	m = next.(Model)
+	if m.colorschemeIndex != 1 {
+		t.Fatalf("colorschemeIndex = %d, want 1 after j", m.colorschemeIndex)
+	}
+
+	// esc reverts and closes
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEscape})
+	m = next.(Model)
+	if m.mode == ModeColorscheme {
+		t.Fatal("mode should not be ModeColorscheme after esc")
+	}
+}
+
 func lipWidthOfFirstLine(s string) int {
 	line := strings.SplitN(s, "\n", 2)[0]
 	return lipgloss.Width(stripANSI(line))

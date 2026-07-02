@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/senilio/zappr/internal/model"
+	uitheme "github.com/senilio/zappr/internal/tui/theme"
 )
 
 const minWideWidth = 110
@@ -36,6 +37,8 @@ func (m Model) View() string {
 		return m.settingsView()
 	case ModeCommand, ModeConfirmCommand:
 		return m.commandView()
+	case ModeColorscheme:
+		return m.layoutView()
 	default:
 		return m.inboxView()
 	}
@@ -167,6 +170,7 @@ Keys:
   shift+a    approve (no confirmation)
   c          comment
   :          vim-style commands (:ap :aa)
+  :colorscheme  pick color preset
   ? esc      toggle help / back
   q          quit`
 }
@@ -201,6 +205,8 @@ func (m Model) layoutView() string {
 		modal = m.renderModalBox(m.helpPanel())
 	case m.mode == ModeSettings:
 		modal = m.renderModalBox(m.settingsPanel())
+	case m.mode == ModeColorscheme:
+		modal = m.renderModalBox(m.colorschemePanel())
 	case m.mode == ModeCommand || m.mode == ModeConfirmCommand:
 		modal = m.renderCommandModal()
 	}
@@ -1387,6 +1393,33 @@ func (m Model) settingsPanel() string {
 
 	b.WriteString("\n")
 	b.WriteString(s.Muted.Render("j/k select  enter/space toggle  esc close"))
+	return b.String()
+}
+
+func (m Model) colorschemePanel() string {
+	s := m.theme.Styles
+	palettes := uitheme.AllPalettes()
+	var b strings.Builder
+	b.WriteString(s.Title.Render("Color scheme"))
+	b.WriteString("\n\n")
+	for i, p := range palettes {
+		cursor := "  "
+		lineStyle := s.Muted
+		if i == m.colorschemeIndex {
+			cursor = "› "
+			lineStyle = s.TitleStrong
+		}
+		suffix := ""
+		if strings.EqualFold(p.Name, m.cfg.Theme) || (m.cfg.Theme == "" && strings.EqualFold(p.Name, "dark")) {
+			suffix = s.Muted.Render("  (active)")
+		}
+		b.WriteString(cursor)
+		b.WriteString(lineStyle.Render(p.Name))
+		b.WriteString(suffix)
+		b.WriteString("\n")
+	}
+	b.WriteString("\n")
+	b.WriteString(s.Muted.Render("j/k move  enter select  esc cancel"))
 	return b.String()
 }
 

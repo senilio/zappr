@@ -55,9 +55,21 @@ type Styles struct {
 }
 
 func Default() Theme {
+	return DefaultWithName("")
+}
+
+func DefaultWithName(name string) Theme {
 	profile := termenv.ColorProfile()
 	noColor := profile == termenv.Ascii
-	palette := DarkDefault()
+	var palette Palette
+	if name != "" {
+		palette = PaletteByName(name)
+	} else if noColor {
+		palette = DarkANSI()
+	} else {
+		palette = DarkDefault()
+	}
+	// Always use ANSI fallback for truly ascii-only terminals regardless of named choice.
 	if noColor {
 		palette = DarkANSI()
 	}
@@ -152,6 +164,100 @@ func DarkANSI() Palette {
 		Panel:   lipgloss.AdaptiveColor{Light: "0", Dark: "0"},
 		Error:   lipgloss.AdaptiveColor{Light: "1", Dark: "1"},
 	}
+}
+
+func NordPalette() Palette {
+	return Palette{
+		Name:    "nord",
+		Safe:    lipgloss.AdaptiveColor{Light: "#4CAF7D", Dark: "#a3be8c"},
+		Review:  lipgloss.AdaptiveColor{Light: "#B8860B", Dark: "#ebcb8b"},
+		Block:   lipgloss.AdaptiveColor{Light: "#BF616A", Dark: "#bf616a"},
+		Pending: lipgloss.AdaptiveColor{Light: "#5E81AC", Dark: "#81a1c1"},
+		Muted:   lipgloss.AdaptiveColor{Light: "#7B8EA8", Dark: "#4c566a"},
+		Focus:   lipgloss.AdaptiveColor{Light: "#5E81AC", Dark: "#88c0d0"},
+		Text:    lipgloss.AdaptiveColor{Light: "#2E3440", Dark: "#eceff4"},
+		Subtle:  lipgloss.AdaptiveColor{Light: "#3B4252", Dark: "#d8dee9"},
+		Border:  lipgloss.AdaptiveColor{Light: "#BBC3D4", Dark: "#3b4252"},
+		Panel:   lipgloss.AdaptiveColor{Light: "#ECEFF4", Dark: "#2e3440"},
+		Error:   lipgloss.AdaptiveColor{Light: "#BF616A", Dark: "#bf616a"},
+	}
+}
+
+func GruvboxPalette() Palette {
+	return Palette{
+		Name:    "gruvbox",
+		Safe:    lipgloss.AdaptiveColor{Light: "#79740E", Dark: "#b8bb26"},
+		Review:  lipgloss.AdaptiveColor{Light: "#B57614", Dark: "#fabd2f"},
+		Block:   lipgloss.AdaptiveColor{Light: "#CC241D", Dark: "#fb4934"},
+		Pending: lipgloss.AdaptiveColor{Light: "#076678", Dark: "#83a598"},
+		Muted:   lipgloss.AdaptiveColor{Light: "#928374", Dark: "#928374"},
+		Focus:   lipgloss.AdaptiveColor{Light: "#8F3F71", Dark: "#d3869b"},
+		Text:    lipgloss.AdaptiveColor{Light: "#3C3836", Dark: "#ebdbb2"},
+		Subtle:  lipgloss.AdaptiveColor{Light: "#504945", Dark: "#d5c4a1"},
+		Border:  lipgloss.AdaptiveColor{Light: "#D5C4A1", Dark: "#504945"},
+		Panel:   lipgloss.AdaptiveColor{Light: "#FBF1C7", Dark: "#282828"},
+		Error:   lipgloss.AdaptiveColor{Light: "#CC241D", Dark: "#fb4934"},
+	}
+}
+
+func CatppuccinPalette() Palette {
+	return Palette{
+		Name:    "catppuccin",
+		Safe:    lipgloss.AdaptiveColor{Light: "#40A02B", Dark: "#a6e3a1"},
+		Review:  lipgloss.AdaptiveColor{Light: "#DF8E1D", Dark: "#f9e2af"},
+		Block:   lipgloss.AdaptiveColor{Light: "#D20F39", Dark: "#f38ba8"},
+		Pending: lipgloss.AdaptiveColor{Light: "#1E66F5", Dark: "#89b4fa"},
+		Muted:   lipgloss.AdaptiveColor{Light: "#8C8FA1", Dark: "#585b70"},
+		Focus:   lipgloss.AdaptiveColor{Light: "#7287FD", Dark: "#cba6f7"},
+		Text:    lipgloss.AdaptiveColor{Light: "#4C4F69", Dark: "#cdd6f4"},
+		Subtle:  lipgloss.AdaptiveColor{Light: "#5C5F77", Dark: "#bac2de"},
+		Border:  lipgloss.AdaptiveColor{Light: "#CCD0DA", Dark: "#313244"},
+		Panel:   lipgloss.AdaptiveColor{Light: "#EFF1F5", Dark: "#1e1e2e"},
+		Error:   lipgloss.AdaptiveColor{Light: "#D20F39", Dark: "#f38ba8"},
+	}
+}
+
+func EverforestPalette() Palette {
+	return Palette{
+		Name:    "everforest",
+		Safe:    lipgloss.AdaptiveColor{Light: "#8DA101", Dark: "#a7c080"},
+		Review:  lipgloss.AdaptiveColor{Light: "#DFA000", Dark: "#dbbc7f"},
+		Block:   lipgloss.AdaptiveColor{Light: "#F85552", Dark: "#e67e80"},
+		Pending: lipgloss.AdaptiveColor{Light: "#3A94C5", Dark: "#7fbbb3"},
+		Muted:   lipgloss.AdaptiveColor{Light: "#939F91", Dark: "#859289"},
+		Focus:   lipgloss.AdaptiveColor{Light: "#DF69BA", Dark: "#d699b6"},
+		Text:    lipgloss.AdaptiveColor{Light: "#5C6A72", Dark: "#d3c6aa"},
+		Subtle:  lipgloss.AdaptiveColor{Light: "#708089", Dark: "#9da9a0"},
+		Border:  lipgloss.AdaptiveColor{Light: "#D8CAAC", Dark: "#4f5b58"},
+		Panel:   lipgloss.AdaptiveColor{Light: "#FDF6E3", Dark: "#2d3b30"},
+		Error:   lipgloss.AdaptiveColor{Light: "#F85552", Dark: "#e67e80"},
+	}
+}
+
+// allPalettes is the ordered registry of built-in color palettes.
+var allPalettes = []Palette{
+	DarkDefault(),
+	NordPalette(),
+	GruvboxPalette(),
+	CatppuccinPalette(),
+	EverforestPalette(),
+	DarkANSI(),
+}
+
+// AllPalettes returns all registered palettes in display order.
+func AllPalettes() []Palette {
+	return allPalettes
+}
+
+// PaletteByName returns the palette matching name (case-insensitive), or DarkDefault() if not found.
+func PaletteByName(name string) Palette {
+	name = strings.ToLower(strings.TrimSpace(name))
+	for _, p := range allPalettes {
+		if strings.ToLower(p.Name) == name {
+			return p
+		}
+	}
+	return DarkDefault()
 }
 
 func (t Theme) RiskBadge(r model.Risk) string {

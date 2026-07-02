@@ -12,6 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/senilio/zappr/internal/app"
 	"github.com/senilio/zappr/internal/model"
+	uitheme "github.com/senilio/zappr/internal/tui/theme"
 )
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -306,6 +307,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleCommandKey(key)
 	case ModeConfirmCommand:
 		return m.handleConfirmCommandKey(key)
+	case ModeColorscheme:
+		return m.handleColorschemeKey(key)
 	case ModeHelp:
 		if key == "esc" || key == "?" || key == "enter" {
 			m.mode = m.prevMode
@@ -660,12 +663,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.mode = ModeComment
 		}
 	case ":":
-		if _, ok := m.current(); ok {
-			m.commandInput = ""
-			m.commandCursor = 0
-			m.prevMode = m.mode
-			m.mode = ModeCommand
-		}
+		m.commandInput = ""
+		m.commandCursor = 0
+		m.prevMode = m.mode
+		m.mode = ModeCommand
 	}
 	return m, nil
 }
@@ -1182,6 +1183,35 @@ func draftFilterMessage(hideDrafts bool) string {
 	return "drafts: shown"
 }
 
+func (m Model) handleColorschemeKey(key string) (tea.Model, tea.Cmd) {
+	palettes := uitheme.AllPalettes()
+	switch key {
+	case "esc", "q":
+		// Revert to original theme (re-resolve from saved config).
+		m.theme = uitheme.DefaultWithName(m.cfg.Theme)
+		m.mode = m.prevMode
+		return m, nil
+	case "j", "down":
+		if m.colorschemeIndex < len(palettes)-1 {
+			m.colorschemeIndex++
+			m.theme = uitheme.New(palettes[m.colorschemeIndex], m.theme.Profile, m.theme.NoColor)
+		}
+	case "k", "up":
+		if m.colorschemeIndex > 0 {
+			m.colorschemeIndex--
+			m.theme = uitheme.New(palettes[m.colorschemeIndex], m.theme.Profile, m.theme.NoColor)
+		}
+	case "enter", " ":
+		// Confirm: save to config.
+		chosen := palettes[m.colorschemeIndex]
+		m.cfg.Theme = chosen.Name
+		m.theme = uitheme.New(chosen, m.theme.Profile, m.theme.NoColor)
+		m.mode = m.prevMode
+		return m, tea.Batch(m.finishStatus("theme: "+chosen.Name, false), saveThemeCmd(m.cfg, chosen.Name))
+	}
+	return m, nil
+}
+
 func (m Model) handleCommentKey(key string) (tea.Model, tea.Cmd) {
 	if key == "esc" {
 		m.mode = ModeDetail
@@ -1287,6 +1317,21 @@ func (m Model) handleConfirmCommandKey(key string) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) executeCommand(cmd viCommand) (tea.Model, tea.Cmd) {
+	// Commands that do not require a selected PR.
+	if cmd.Name == "colorscheme" {
+		m.commandInput = ""
+		palettes := uitheme.AllPalettes()
+		m.colorschemeIndex = 0
+		for i, p := range palettes {
+			if strings.EqualFold(p.Name, m.theme.Palette.Name) {
+				m.colorschemeIndex = i
+				break
+			}
+		}
+		m.mode = ModeColorscheme
+		return m, nil
+	}
+
 	pr, ok := m.current()
 	if !ok {
 		m.mode = m.prevMode

@@ -13,6 +13,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/senilio/zappr/internal/app"
+	"github.com/senilio/zappr/internal/config"
 	"github.com/senilio/zappr/internal/model"
 	uitheme "github.com/senilio/zappr/internal/tui/theme"
 )
@@ -29,45 +30,48 @@ const (
 	ModeSettings
 	ModeCommand
 	ModeConfirmCommand
+	ModeColorscheme
 )
 
 type Model struct {
-	app            *app.App
-	repo           string
-	allPRs         []model.PullRequest
-	prs            []model.PullRequest
-	selected       int
-	sortMode       app.SortMode
-	hideDrafts     bool
-	settingsCursor int
-	focus          Focus
-	mode           Mode
-	loading        bool
-	error          string
-	message        string
-	diff           string
-	rawDiff        string
-	diffFiles      []diffFile // raw per-file bodies (for file switching + V pager)
-	renderedFiles  []diffFile // rendered (delta/fallback) per-file bodies
-	diffMode       DiffMode
-	fileContent    string
-	fileContentKey string
-	fileIndex      int
-	commitIndex    int
-	sideBySide     bool
-	comment        string
-	diffXOffset    int
-	summaryXOffset int
-	lastFetch      time.Time
-	pollEvery      time.Duration
-	width          int
-	height         int
-	theme          uitheme.Theme
-	aiEnabled      bool
-	prevMode       Mode
-	inboxVP        viewport.Model
-	summaryVP      viewport.Model
-	diffVP         viewport.Model
+	app              *app.App
+	repo             string
+	allPRs           []model.PullRequest
+	prs              []model.PullRequest
+	selected         int
+	sortMode         app.SortMode
+	hideDrafts       bool
+	settingsCursor   int
+	colorschemeIndex int // selected index in colorscheme picker
+	focus            Focus
+	mode             Mode
+	loading          bool
+	error            string
+	message          string
+	diff             string
+	rawDiff          string
+	diffFiles        []diffFile // raw per-file bodies (for file switching + V pager)
+	renderedFiles    []diffFile // rendered (delta/fallback) per-file bodies
+	diffMode         DiffMode
+	fileContent      string
+	fileContentKey   string
+	fileIndex        int
+	commitIndex      int
+	sideBySide       bool
+	comment          string
+	diffXOffset      int
+	summaryXOffset   int
+	lastFetch        time.Time
+	pollEvery        time.Duration
+	width            int
+	height           int
+	theme            uitheme.Theme
+	cfg              config.Config
+	aiEnabled        bool
+	prevMode         Mode
+	inboxVP          viewport.Model
+	summaryVP        viewport.Model
+	diffVP           viewport.Model
 
 	statusActive       bool
 	statusText         string
@@ -133,7 +137,7 @@ const (
 	FocusDiff
 )
 
-func New(zappr *app.App, repo string, pollEvery time.Duration) Model {
+func New(zappr *app.App, repo string, pollEvery time.Duration, themeName string, cfg config.Config) Model {
 	if pollEvery == 0 {
 		pollEvery = 2 * time.Minute
 	}
@@ -142,7 +146,7 @@ func New(zappr *app.App, repo string, pollEvery time.Duration) Model {
 	dvp := viewport.New(0, 0)
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
-	return Model{app: zappr, repo: repo, loading: true, pollEvery: pollEvery, sortMode: app.SortUpdated, theme: uitheme.Default(), aiEnabled: zappr.AIEnabled(), inboxVP: ivp, summaryVP: vp, diffVP: dvp, statusSpinner: sp, summaryMode: SummaryModeFiles}
+	return Model{app: zappr, repo: repo, loading: true, pollEvery: pollEvery, sortMode: app.SortUpdated, theme: uitheme.DefaultWithName(themeName), cfg: cfg, aiEnabled: zappr.AIEnabled(), inboxVP: ivp, summaryVP: vp, diffVP: dvp, statusSpinner: sp, summaryMode: SummaryModeFiles}
 }
 
 func (m Model) Init() tea.Cmd {
@@ -223,6 +227,16 @@ func (m *Model) finishStatus(text string, isErr bool) tea.Cmd {
 	m.statusText = text
 	m.statusToken++
 	return dismissStatusCmd(m.statusToken, 1200*time.Millisecond)
+}
+
+func saveThemeCmd(cfg config.Config, themeName string) tea.Cmd {
+	return func() tea.Msg {
+		cfg.Theme = themeName
+		if err := config.Save(cfg); err != nil {
+			return actionMsg{message: "failed to save theme: " + err.Error(), err: err}
+		}
+		return actionMsg{message: "theme saved: " + themeName}
+	}
 }
 
 func refreshCmd(app *app.App, repo string) tea.Cmd {

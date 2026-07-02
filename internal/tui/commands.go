@@ -60,6 +60,11 @@ var allCommands = []viCommand{
 		Description:    "merge active PR (squash)",
 		RequireConfirm: true,
 	},
+	{
+		Name:           "colorscheme",
+		Description:    "pick color preset",
+		RequireConfirm: false,
+	},
 }
 
 func executeAtlantisComment(m *Model, body string) (bool, string) {

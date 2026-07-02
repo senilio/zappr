@@ -15,6 +15,7 @@ type Config struct {
 	AI      AIConfig      `yaml:"ai"`
 	Cache   CacheConfig   `yaml:"cache"`
 	Trust   TrustConfig   `yaml:"trust"`
+	Theme   string        `yaml:"theme,omitempty"`
 }
 
 type TrustConfig struct {
@@ -98,6 +99,22 @@ func (d *Duration) UnmarshalYAML(value *yaml.Node) error {
 	}
 	*d = Duration(time.Duration(ns))
 	return nil
+}
+
+// Save writes cfg back to the default config path. Overwrites the whole file.
+func Save(cfg Config) error {
+	path, err := DefaultConfigPath()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o644)
 }
 
 func Init(force bool) (string, error) {
