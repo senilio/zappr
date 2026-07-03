@@ -1,5 +1,8 @@
 # zappr
 
+[![CI](https://github.com/senilio/zappr/actions/workflows/ci.yml/badge.svg)](https://github.com/senilio/zappr/actions/workflows/ci.yml)
+[![Go](https://img.shields.io/badge/Go-1.25%2B-00ADD8?logo=go)](https://go.dev/)
+
 Terminal-first pull request inbox for fast, human-owned GitHub review triage.
 
 zappr watches open pull requests, optionally runs shell-command AI triage on demand, and lets you inspect files, commits, PR conversation comments, diffs, comment, or approve from a keyboard-driven Bubble Tea UI.
@@ -14,15 +17,33 @@ zappr watches open pull requests, optionally runs shell-command AI triage on dem
 
 ## Install
 
+### Released binary
+
 ```sh
 go install github.com/senilio/zappr/cmd/zappr@latest
 ```
 
-For local development:
+After the first public tag, `@latest` resolves to the newest released version.
+
+### Source checkout
 
 ```sh
 go run ./cmd/zappr --help
 ```
+
+Build with version metadata:
+
+```sh
+go build -ldflags "-X github.com/senilio/zappr/internal/cli.Version=$(git describe --tags --always --dirty)" ./cmd/zappr
+```
+
+### Future package manager
+
+Homebrew support not available yet; track releases or build from source.
+
+## Preview
+
+![zappr terminal mockup](docs/demo.svg)
 
 ## Requirements
 
@@ -42,12 +63,13 @@ zappr doctor
 zappr watch owner/repo        # open keyboard inbox
 zappr inbox owner/repo        # refresh and print inbox
 zappr review owner/repo#123   # analyze one PR
-zappr approve owner/repo#123  # approve PR via gh pr review
+zappr approve owner/repo#123  # user-triggered approve via gh pr review
 zappr config path             # print config path
 zappr config init             # create default config
 zappr cache status            # show local cache status
 zappr cache clear             # clear cached PRs
 zappr doctor                  # check gh, auth, cache
+zappr version                 # print version (also --version)
 ```
 
 ## TUI Keys
@@ -62,10 +84,15 @@ r            refresh (inbox); re-run AI analysis (detail/diff)
 v            toggle diff pane
 V            open full diff in external pager (delta or less)
 s            toggle side-by-side diff
+tab          cycle focus
+g/G          top / bottom of list
+shift-up/down previous / next file or commit
+x            expand selected file / diff hunks
 1/2/3/4      summary pane: files / commits / comments / Atlantis plan
-n/p or [/]   previous / next file or commit in summary/diff
+n/p, [/]     previous / next file or commit in summary/diff
 f            filters / settings
 o            open PR in browser
+C            copy PR URL
 ?            help
 :            command palette (vim-style colon commands)
 esc          back / cancel
@@ -92,21 +119,39 @@ Press `:` to open the command palette. Type a command prefix to filter; press
 | `:update`| Update PR branch with base branch (prompts for confirmation) |
 | `:block` | Request changes on PR to block merge (prompts for confirmation) |
 | `:merge` | Merge active PR via squash and delete branch (prompts for confirmation) |
+| `:colorscheme` | Change color scheme |
 
 ### Mouse
 
-Click an Inbox item to select it. Click the Summary or Diff pane to move focus
-to that pane (panes change focus on click; item selection is Inbox-only).
+Click an Inbox item to select it. Click Summary or Diff pane to move focus to
+that pane; item selection stays Inbox-only.
 
 ## AI Review
 
 AI review is opt-in and never runs automatically. Press `r` on a selected PR to
 run the configured shell command against the full PR metadata and diff.
 
+Sample config:
+
+```yaml
+ai:
+  command: "llm"
+  prompt: "Review this pull request for correctness, risk, and missing tests. Return concise bullets."
+```
+
 - AI output is advisory only.
 - Approval remains a human decision.
 - When no AI result exists, the summary pane shows `press r to run AI review`.
+- When AI is not configured, the summary pane shows `AI review not configured`.
 - AI results are persisted in SQLite; a subsequent `r` re-runs analysis.
+
+## Safety
+
+- Local-only app; data stays in `gh` CLI, local cache, and terminal.
+- GitHub actions use `gh` CLI only.
+- AI is opt-in, manual, advisory.
+- Approval stays human-owned.
+- Actions fire only from explicit key/command.
 
 ### Trusted authors
 
@@ -156,6 +201,12 @@ Environment overrides:
 |--------------------|---------------|-----------------------------------|
 | `ZAPPR_AI_COMMAND` | `ai.command`  | Shell command for AI triage       |
 | `ZAPPR_AI_PROMPT`  | `ai.prompt`   | Prompt passed to the AI command   |
+
+## Release
+
+- `go install github.com/senilio/zappr/cmd/zappr@latest` installs tagged release binary.
+- Source install with `go run ./cmd/zappr` works from checkout.
+- Release builds should set `internal/cli.Version` with `-ldflags`.
 
 ## Cache
 

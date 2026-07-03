@@ -170,7 +170,7 @@ Keys:
   shift+a    approve (no confirmation)
   c          comment
   :          vim-style commands (:ap :aa)
-  :colorscheme  pick color preset
+  :colorscheme  pick color scheme
   ? esc      toggle help / back
   q          quit`
 }
@@ -468,7 +468,7 @@ func (m Model) wideLayout(height int) string {
 		m.pane(m.titledPane(m.inboxTitle(), m.inboxScrollPct()), m.inboxPanel(leftW, inboxH), leftW, inboxH, FocusInbox),
 		m.pane(m.titledPane(m.summaryTitle(), m.summaryScrollPct()), m.summaryPanel(leftW, summaryH), leftW, summaryH, FocusSummary),
 	)
-	right := m.pane(m.titledPane("Diff / Details", m.diffScrollPct()), m.diffPanel(diffW, height), diffW, height, FocusDiff)
+	right := m.pane(m.titledPane(m.diffTitle(), m.diffScrollPct()), m.diffPanel(diffW, height), diffW, height, FocusDiff)
 	return lipgloss.JoinHorizontal(lipgloss.Top, left, strings.Repeat(" ", gap), right)
 }
 
@@ -524,7 +524,7 @@ func (m Model) mediumLayout(height int) string {
 		" ",
 		m.pane(m.titledPane(m.summaryTitle(), m.summaryScrollPct()), m.summaryPanel(m.width/2, topH), m.width/2, topH, FocusSummary),
 	)
-	bottom := m.pane(m.titledPane("Diff / Details", m.diffScrollPct()), m.diffPanel(m.width, bottomH), m.width, bottomH, FocusDiff)
+	bottom := m.pane(m.titledPane(m.diffTitle(), m.diffScrollPct()), m.diffPanel(m.width, bottomH), m.width, bottomH, FocusDiff)
 	return lipgloss.JoinVertical(lipgloss.Left, top, bottom)
 }
 
@@ -556,11 +556,22 @@ func (m Model) summaryTitle() string {
 }
 
 func (m Model) summaryModeTitle(number int, mode SummaryMode) string {
-	label := fmt.Sprintf("%d", number)
+	label := fmt.Sprintf("[%d]", number)
 	if m.summaryMode == mode {
+		label = fmt.Sprintf("[%d %s]", number, mode.String())
 		return m.theme.Styles.TitleStrong.Render(label)
 	}
 	return m.theme.Styles.Muted.Render(label)
+}
+
+func (m Model) diffTitle() string {
+	if m.summaryMode == SummaryModeCommits {
+		return "Commit diff"
+	}
+	if m.diffMode == DiffModeFile {
+		return "File"
+	}
+	return "Diff"
 }
 
 // titledPane appends a scroll percentage to a pane title when pct > 0.
@@ -904,6 +915,10 @@ func (m Model) summaryContent(pr model.PullRequest, innerW int) string {
 		b.WriteByte('\n')
 	} else if pr.Triage.AI != nil {
 		writeStyledAINotes(&b, m, pr.Triage)
+	} else if !m.aiEnabled {
+		b.WriteByte('\n')
+		b.WriteString(s.Muted.Render("AI review not configured"))
+		b.WriteByte('\n')
 	} else {
 		b.WriteByte('\n')
 		b.WriteString(s.Muted.Render("press r to run AI review"))

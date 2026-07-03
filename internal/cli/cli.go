@@ -19,9 +19,15 @@ import (
 	"github.com/senilio/zappr/internal/tui"
 )
 
+var Version = "dev"
+
 func Run(args []string) error {
 	if len(args) == 0 {
 		return usage()
+	}
+	if args[0] == "version" || args[0] == "--version" || args[0] == "-v" {
+		fmt.Printf("zappr %s\n", Version)
+		return nil
 	}
 
 	cfg, err := config.Load()
@@ -312,12 +318,13 @@ Commands:
   zappr watch owner/repo        open keyboard inbox
   zappr inbox owner/repo        print current inbox
   zappr review owner/repo#123   analyze one PR
-  zappr approve owner/repo#123  approve non-block PR via gh pr review
+  zappr approve owner/repo#123  approve PR via gh pr review
   zappr config [path|init]      inspect or create config
   zappr cache [status|clear]    inspect or clear local cache
   zappr doctor                  check gh, auth, cache
+  zappr version                 print version
 
 Keys:
-  j/k navigate  enter inspect  a approve, y confirm  c comment  r refresh  v diff  1/2/3/4 summary  ? help  q quit
+  j/k navigate  tab focus  enter inspect  a approve, y confirm  c comment  r refresh/AI review  v diff  1/2/3/4 summary  ? help  q quit
 `
 }

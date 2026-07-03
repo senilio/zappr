@@ -1023,8 +1023,37 @@ func TestSummaryHeaderShowsActiveModeAndFooterDropsShortcut(t *testing.T) {
 	if strings.Contains(view, "1/2/3/4 summary") {
 		t.Fatalf("footer still shows summary shortcut: %q", view)
 	}
-	if !strings.Contains(stripANSI(view), "Summary 1 2 3 4") {
+	if !strings.Contains(stripANSI(view), "Summary [1] [2 commits] [3] [4]") {
 		t.Fatalf("summary header missing mode numbers: %q", view)
+	}
+}
+
+func TestSummaryShowsAIUnconfiguredWhenDisabled(t *testing.T) {
+	m := modelWithPRs([]model.PullRequest{{Number: 1, Repo: "org/repo", Title: "title", Author: "author"}}, 0)
+	m.width = 100
+	m.height = 18
+	m.mode = ModeDetail
+	m.focus = FocusSummary
+	m.aiEnabled = false
+
+	if !strings.Contains(stripANSI(m.View()), "AI review not configured") {
+		t.Fatalf("summary should explain AI is not configured: %q", m.View())
+	}
+}
+
+func TestRKeyDoesNotRunAIWhenDisabled(t *testing.T) {
+	m := modelWithPRs([]model.PullRequest{{Number: 1, Repo: "org/repo", Title: "title", Author: "author"}}, 0)
+	m.mode = ModeDetail
+	m.aiEnabled = false
+
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
+	m = next.(Model)
+
+	if cmd == nil {
+		t.Fatal("r should return status command when AI is disabled")
+	}
+	if !m.statusErr || m.statusText != "AI review not configured" {
+		t.Fatalf("status = (%v, %q), want AI review not configured error", m.statusErr, m.statusText)
 	}
 }
 

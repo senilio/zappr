@@ -62,7 +62,7 @@ var allCommands = []viCommand{
 	},
 	{
 		Name:           "colorscheme",
-		Description:    "pick color preset",
+		Description:    "pick color scheme",
 		RequireConfirm: false,
 	},
 }

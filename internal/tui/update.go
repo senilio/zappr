@@ -533,6 +533,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.resizeViewports()
 	case "r":
 		if m.mode == ModeDetail || m.mode == ModeDiff {
+			if !m.aiEnabled {
+				return m, m.finishStatus("AI review not configured", true)
+			}
 			if pr, ok := m.current(); ok {
 				m.loading = true
 				m.message = "re-running analysis"
