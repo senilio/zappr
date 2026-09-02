@@ -1,12 +1,14 @@
 package tui
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/senilio/zappr/internal/app"
+	"github.com/senilio/zappr/internal/config"
 	"github.com/senilio/zappr/internal/model"
 	"github.com/senilio/zappr/internal/tui/theme"
 )
@@ -69,6 +71,36 @@ func TestSettingsCanCycleSortMode(t *testing.T) {
 	}
 	if m.prs[0].Number != 2 {
 		t.Fatalf("prs = %#v, want sorted by number descending", m.prs)
+	}
+}
+
+func TestSettingsSortModePersistsToConfig(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(t.TempDir(), "config"))
+	m := modelWithPRs([]model.PullRequest{{Number: 2}, {Number: 1}}, 0)
+	m.mode = ModeSettings
+	m.settingsCursor = 1
+
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	m = next.(Model)
+	if cmd == nil {
+		t.Fatal("cycling sort mode should return a save command")
+	}
+	cmd()
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+	if cfg.Sort != app.SortNumber.String() {
+		t.Fatalf("cfg.Sort = %q, want %q", cfg.Sort, app.SortNumber.String())
+	}
+}
+
+func TestNewLoadsSortModeFromConfig(t *testing.T) {
+	zappr := app.New(nil, nil, nil)
+	m := New(zappr, "org/repo", 0, "", config.Config{Sort: "number"})
+	if m.sortMode != app.SortNumber {
+		t.Fatalf("sortMode = %s, want number", m.sortMode)
 	}
 }
 
@@ -365,6 +397,179 @@ func TestRefreshEmptyQueueResetsToInbox(t *testing.T) {
 	}
 	if m.focus != FocusInbox {
 		t.Fatalf("focus = %v, want FocusInbox after queue emptied", m.focus)
+	}
+}
+
+func TestRefreshPRUpdatesOnlyMatchingPR(t *testing.T) {
+	m := modelWithPRs([]model.PullRequest{
+		{Number: 1, Repo: "org/repo", Title: "first"},
+		{Number: 2, Repo: "org/repo", Title: "second"},
+	}, 1)
+	m.mode = ModeDetail
+	m.focus = FocusSummary
+
+	next, _ := m.Update(refreshPRMsg{pr: model.PullRequest{Number: 2, Repo: "org/repo", Title: "second updated"}})
+	m = next.(Model)
+
+	if len(m.prs) != 2 {
+		t.Fatalf("prs len = %d, want 2", len(m.prs))
+	}
+	titles := map[int]string{}
+	for _, pr := range m.prs {
+		titles[pr.Number] = pr.Title
+	}
+	if titles[1] != "first" {
+		t.Fatalf("first title = %q, want unchanged", titles[1])
+	}
+	if titles[2] != "second updated" {
+		t.Fatalf("second title = %q, want updated", titles[2])
+	}
+	if pr, ok := m.current(); !ok || pr.Number != 2 {
+		t.Fatalf("current = %#v/%v, want PR #2 preserved", pr, ok)
+	}
+	if m.mode != ModeDetail || m.focus != FocusSummary {
+		t.Fatalf("mode/focus = %v/%v, want detail/summary preserved", m.mode, m.focus)
+	}
+}
+
+func TestRefreshPRRemovesClosedPR(t *testing.T) {
+	m := modelWithPRs([]model.PullRequest{
+		{Number: 1, Repo: "org/repo", Title: "first"},
+		{Number: 2, Repo: "org/repo", Title: "second"},
+	}, 1)
+	m.mode = ModeDetail
+	m.focus = FocusSummary
+
+	next, _ := m.Update(refreshPRMsg{repo: "org/repo", number: 2, err: app.ErrPRNotOpen})
+	m = next.(Model)
+
+	if len(m.prs) != 1 || m.prs[0].Number != 1 {
+		t.Fatalf("prs = %#v, want only PR #1", m.prs)
+	}
+	if m.mode != ModeDetail || m.focus != FocusSummary {
+		t.Fatalf("mode/focus = %v/%v, want detail/summary preserved", m.mode, m.focus)
+	}
+}
+
+func TestRefreshPRHeadChangeClearsDiffState(t *testing.T) {
+	m := modelWithPRs([]model.PullRequest{{Number: 1, Repo: "org/repo", Title: "first", HeadRefOID: "old"}}, 0)
+	m.diffEnabled = true
+	m.diff = "old rendered"
+	m.rawDiff = "old raw"
+	m.diffFiles = []diffFile{{Path: "old.go", Body: "raw"}}
+	m.renderedFiles = []diffFile{{Path: "old.go", Body: "rendered"}}
+	m.diffMode = DiffModeFile
+	m.fileContent = "old content"
+	m.fileContentKey = "old-file"
+	m.fileIndex = 1
+	m.commitIndex = 1
+	m.diffLoadKey = "org/repo#1@old"
+	m.commitDiffKey = "commit"
+	m.renderedCommitDiff = "old commit"
+	m.diffXOffset = 5
+	m.summaryXOffset = 3
+	m.syncDiffVP()
+
+	next, _ := m.Update(refreshPRMsg{pr: model.PullRequest{Number: 1, Repo: "org/repo", Title: "first", HeadRefOID: "new"}})
+	m = next.(Model)
+
+	if m.diff != "" || m.rawDiff != "" || len(m.diffFiles) != 0 || len(m.renderedFiles) != 0 {
+		t.Fatalf("diff state not cleared: diff=%q raw=%q files=%d rendered=%d", m.diff, m.rawDiff, len(m.diffFiles), len(m.renderedFiles))
+	}
+	if m.fileContent != "" || m.fileContentKey != "" || m.commitDiffKey != "" || m.renderedCommitDiff != "" {
+		t.Fatalf("loaded detail state not cleared")
+	}
+	if m.diffLoadKey != "org/repo#1@new" {
+		t.Fatalf("diffLoadKey = %q, want new head fetch key", m.diffLoadKey)
+	}
+	if m.diffMode != DiffModeHunks || m.fileIndex != 0 || m.commitIndex != 0 || m.diffXOffset != 0 || m.summaryXOffset != 0 {
+		t.Fatalf("view indexes not reset")
+	}
+}
+
+func TestRefreshHeadChangeClearsDiffState(t *testing.T) {
+	m := modelWithPRs([]model.PullRequest{{Number: 1, Repo: "org/repo", Title: "first", HeadRefOID: "old"}}, 0)
+	m.diffEnabled = true
+	m.diff = "old rendered"
+	m.rawDiff = "old raw"
+	m.diffFiles = []diffFile{{Path: "old.go", Body: "raw"}}
+	m.renderedFiles = []diffFile{{Path: "old.go", Body: "rendered"}}
+	m.diffMode = DiffModeFile
+	m.fileContent = "old content"
+	m.fileContentKey = "old-file"
+	m.fileIndex = 1
+	m.commitIndex = 1
+	m.diffLoadKey = "org/repo#1@old"
+	m.commitDiffKey = "commit"
+	m.renderedCommitDiff = "old commit"
+	m.diffXOffset = 5
+	m.summaryXOffset = 3
+	m.syncDiffVP()
+
+	next, _ := m.Update(refreshMsg{prs: []model.PullRequest{{Number: 1, Repo: "org/repo", Title: "first", HeadRefOID: "new"}}})
+	m = next.(Model)
+
+	if m.diff != "" || m.rawDiff != "" || len(m.diffFiles) != 0 || len(m.renderedFiles) != 0 {
+		t.Fatalf("diff state not cleared: diff=%q raw=%q files=%d rendered=%d", m.diff, m.rawDiff, len(m.diffFiles), len(m.renderedFiles))
+	}
+	if m.fileContent != "" || m.fileContentKey != "" || m.commitDiffKey != "" || m.renderedCommitDiff != "" {
+		t.Fatalf("loaded detail state not cleared")
+	}
+	if m.diffLoadKey != "org/repo#1@new" {
+		t.Fatalf("diffLoadKey = %q, want new head fetch key", m.diffLoadKey)
+	}
+	if m.diffMode != DiffModeHunks || m.fileIndex != 0 || m.commitIndex != 0 || m.diffXOffset != 0 || m.summaryXOffset != 0 {
+		t.Fatalf("view indexes not reset")
+	}
+}
+
+func TestDiffMsgIgnoresStaleHeadResult(t *testing.T) {
+	m := modelWithPRs([]model.PullRequest{{Number: 1, Repo: "org/repo", Title: "first", HeadRefOID: "new"}}, 0)
+	m.diffEnabled = true
+	m.diffLoadKey = "org/repo#1@new"
+
+	next, _ := m.Update(diffMsg{repo: "org/repo", number: 1, key: "org/repo#1@old", raw: "old raw", rendered: "old rendered"})
+	m = next.(Model)
+
+	if m.diff != "" || m.rawDiff != "" {
+		t.Fatalf("stale diff applied: diff=%q raw=%q", m.diff, m.rawDiff)
+	}
+}
+
+func TestTickPollsSelectedPRMostIntervals(t *testing.T) {
+	m := modelWithPRs([]model.PullRequest{{Number: 1, Repo: "org/repo", Title: "first"}}, 0)
+	m.loading = false
+
+	next, cmd := m.Update(tickMsg{})
+	m = next.(Model)
+
+	if cmd == nil {
+		t.Fatal("tick should schedule polling commands")
+	}
+	if !m.loading {
+		t.Fatal("tick should mark model loading")
+	}
+	if m.message != "polling PR" {
+		t.Fatalf("message = %q, want polling PR", m.message)
+	}
+}
+
+func TestTickPollsInboxPeriodically(t *testing.T) {
+	m := modelWithPRs([]model.PullRequest{{Number: 1, Repo: "org/repo", Title: "first"}}, 0)
+	m.loading = false
+	m.pollCount = 4
+
+	next, cmd := m.Update(tickMsg{})
+	m = next.(Model)
+
+	if cmd == nil {
+		t.Fatal("tick should schedule polling commands")
+	}
+	if !m.loading {
+		t.Fatal("tick should mark model loading")
+	}
+	if m.message != "polling inbox" {
+		t.Fatalf("message = %q, want polling inbox", m.message)
 	}
 }
 
@@ -715,6 +920,33 @@ func TestCommandOverlayPreservesSelectedInboxColors(t *testing.T) {
 	}
 }
 
+func TestApprovalViewUsesModalOverlayWhenSized(t *testing.T) {
+	m := modelWithPRs([]model.PullRequest{{
+		Number:   1,
+		Repo:     "org/repo",
+		Title:    "selected title",
+		Author:   "author",
+		CIStatus: "passing",
+	}}, 0)
+	m.width = 100
+	m.height = 20
+	m.theme = theme.Default()
+	m.mode = ModeConfirmApprove
+	m.focus = FocusInbox
+	m.resizeViewports()
+
+	view := stripANSI(m.View())
+	if !strings.Contains(view, "selected title") || !strings.Contains(view, "Inbox (1/1)") {
+		t.Fatalf("approval view should render over inbox layout: %q", view)
+	}
+	if strings.Contains(view, "Press y to approve") {
+		t.Fatalf("approval view should not use legacy full-screen prompt: %q", view)
+	}
+	if !strings.Contains(view, "y approve  n/esc cancel") {
+		t.Fatalf("approval view missing modal controls: %q", view)
+	}
+}
+
 func TestAtlantisApplyWarningForUnsafePR(t *testing.T) {
 	m := modelWithPRs([]model.PullRequest{{
 		Number:         1,
@@ -1041,7 +1273,7 @@ func TestSummaryShowsAIUnconfiguredWhenDisabled(t *testing.T) {
 	}
 }
 
-func TestRKeyDoesNotRunAIWhenDisabled(t *testing.T) {
+func TestRKeyRefreshesSelectedPRWhenAIDisabled(t *testing.T) {
 	m := modelWithPRs([]model.PullRequest{{Number: 1, Repo: "org/repo", Title: "title", Author: "author"}}, 0)
 	m.mode = ModeDetail
 	m.aiEnabled = false
@@ -1050,10 +1282,51 @@ func TestRKeyDoesNotRunAIWhenDisabled(t *testing.T) {
 	m = next.(Model)
 
 	if cmd == nil {
-		t.Fatal("r should return status command when AI is disabled")
+		t.Fatal("r should return selected refresh command")
 	}
-	if !m.statusErr || m.statusText != "AI review not configured" {
-		t.Fatalf("status = (%v, %q), want AI review not configured error", m.statusErr, m.statusText)
+	if m.statusErr || m.statusText != "refreshing PR…" {
+		t.Fatalf("status = (%v, %q), want refreshing PR", m.statusErr, m.statusText)
+	}
+}
+
+func TestAICommandRunsAnalysisWhenEnabled(t *testing.T) {
+	m := modelWithPRs([]model.PullRequest{{Number: 1, Repo: "org/repo", Title: "title", Author: "author"}}, 0)
+	m.mode = ModeCommand
+	m.prevMode = ModeDetail
+	m.commandInput = "ai"
+	m.aiEnabled = true
+
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+
+	if cmd == nil {
+		t.Fatal(":ai should return analysis command")
+	}
+	if !m.loading || !m.aiAnalyzing {
+		t.Fatalf("loading/aiAnalyzing = %v/%v, want true/true", m.loading, m.aiAnalyzing)
+	}
+	if m.statusText != "re-running analysis…" {
+		t.Fatalf("statusText = %q, want re-running analysis", m.statusText)
+	}
+}
+
+func TestRefreshAllCommandRefreshesInbox(t *testing.T) {
+	m := modelWithPRs([]model.PullRequest{{Number: 1, Repo: "org/repo", Title: "title", Author: "author"}}, 0)
+	m.mode = ModeCommand
+	m.prevMode = ModeDetail
+	m.commandInput = "refresh-all"
+
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+
+	if cmd == nil {
+		t.Fatal(":refresh-all should return refresh command")
+	}
+	if !m.loading || m.message != "refreshing" {
+		t.Fatalf("loading/message = %v/%q, want true/refreshing", m.loading, m.message)
+	}
+	if m.statusText != "refreshing…" {
+		t.Fatalf("statusText = %q, want refreshing", m.statusText)
 	}
 }
 

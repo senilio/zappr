@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"os/exec"
 	"runtime"
@@ -35,6 +36,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.prs == nil {
 			m.allPRs = []model.PullRequest{}
 		} else {
+			m.clearDiffIfCurrentHeadChanged(msg.prs)
 			m.allPRs = msg.prs
 		}
 		m.applyPRSettings()
@@ -62,6 +64,41 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Sync summary viewport content so TotalLineCount is accurate for
 		// the scroll percentage indicator.
+		m.syncSummaryVP()
+		return m, tea.Batch(cmds...)
+
+	case refreshPRMsg:
+		m.loading = false
+		if msg.err != nil {
+			if errors.Is(msg.err, app.ErrPRNotOpen) {
+				m.error = ""
+				m.message = "PR closed"
+				m.removeCachedPR(msg.repo, msg.number)
+				m.applyPRSettings()
+				m.lastFetch = timeNow()
+				if len(m.prs) == 0 {
+					m.mode = ModeInbox
+					m.focus = FocusInbox
+					m.resizeViewports()
+				}
+				m.syncSummaryVP()
+				return m, m.finishStatus("PR closed", false)
+			}
+			m.error = msg.err.Error()
+			return m, m.finishStatus("error: "+msg.err.Error(), true)
+		}
+		m.error = ""
+		m.message = "refreshed PR"
+		m.updateCachedPR(msg.pr)
+		m.applyPRSettings()
+		m.lastFetch = timeNow()
+		var cmds []tea.Cmd
+		if m.statusActive {
+			cmds = append(cmds, m.finishStatus("refreshed PR", false))
+		}
+		if cmd := m.autoDiffCmd(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 		m.syncSummaryVP()
 		return m, tea.Batch(cmds...)
 
@@ -94,7 +131,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = false
 		// Ignore stale diff results that no longer match the selected PR.
 		if pr, ok := m.current(); ok {
-			if msg.repo != pr.Repo || msg.number != pr.Number {
+			if msg.repo != pr.Repo || msg.number != pr.Number || msg.key != prRefreshKey(pr) {
 				return m, nil
 			}
 		} else {
@@ -162,7 +199,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tickCmd(m.pollEvery)
 		}
 		m.loading = true
-		m.message = "polling"
+		m.pollCount++
+		if pr, ok := m.current(); ok && m.pollCount%5 != 0 {
+			m.message = "polling PR"
+			return m, tea.Batch(refreshPRCmd(m.app, pr), tickCmd(m.pollEvery))
+		}
+		m.message = "polling inbox"
 		return m, tea.Batch(refreshCmd(m.app, m.repo), tickCmd(m.pollEvery))
 
 	case uiTickMsg:
@@ -532,17 +574,15 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.focus = FocusInbox
 		m.resizeViewports()
 	case "r":
-		if m.mode == ModeDetail || m.mode == ModeDiff {
-			if !m.aiEnabled {
-				return m, m.finishStatus("AI review not configured", true)
-			}
-			if pr, ok := m.current(); ok {
-				m.loading = true
-				m.message = "re-running analysis"
-				m.aiAnalyzing = true
-				return m, tea.Batch(m.startStatus("re-running analysis…"), analyzeCmd(m.app, pr))
-			}
+		if pr, ok := m.current(); ok {
+			m.loading = true
+			m.message = "refreshing PR"
+			return m, tea.Batch(m.startStatus("refreshing PR…"), refreshPRCmd(m.app, pr))
 		}
+		m.loading = true
+		m.message = "refreshing"
+		return m, tea.Batch(m.startStatus("refreshing…"), refreshCmd(m.app, m.repo))
+	case "R":
 		m.loading = true
 		m.message = "refreshing"
 		return m, tea.Batch(m.startStatus("refreshing…"), refreshCmd(m.app, m.repo))
@@ -620,7 +660,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			pr, _ := m.current()
 			mv := Model{width: m.width, height: m.height, theme: m.theme, focus: m.focus, prs: m.prs, selected: m.selected}
 			diffInnerW := mv.paneInnerWidth(mv.diffPaneOuterWidth(), FocusDiff)
-			return m, renderDiffCmd(m.rawDiff, pr.Repo, pr.Number, diffRenderWidth(diffInnerW), m.sideBySide)
+			return m, renderDiffCmd(m.rawDiff, pr.Repo, pr.Number, prRefreshKey(pr), diffRenderWidth(diffInnerW), m.sideBySide)
 		}
 	case "x":
 		if !m.diffEnabled {
@@ -691,6 +731,71 @@ func (m Model) handleApproveKey(key string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m *Model) updateCachedPR(pr model.PullRequest) {
+	for i := range m.allPRs {
+		if m.allPRs[i].Repo == pr.Repo && m.allPRs[i].Number == pr.Number {
+			if m.allPRs[i].HeadRefOID != pr.HeadRefOID {
+				m.clearLoadedDiffState()
+			}
+			m.allPRs[i] = pr
+			return
+		}
+	}
+	m.allPRs = append(m.allPRs, pr)
+}
+
+func (m *Model) clearDiffIfCurrentHeadChanged(prs []model.PullRequest) {
+	current, ok := m.current()
+	if !ok {
+		return
+	}
+	for _, pr := range prs {
+		if pr.Repo == current.Repo && pr.Number == current.Number {
+			if pr.HeadRefOID != current.HeadRefOID {
+				m.clearLoadedDiffState()
+			}
+			return
+		}
+	}
+}
+
+func (m *Model) removeCachedPR(repo string, number int) {
+	for i := range m.allPRs {
+		if m.allPRs[i].Repo == repo && m.allPRs[i].Number == number {
+			m.allPRs = append(m.allPRs[:i], m.allPRs[i+1:]...)
+			return
+		}
+	}
+}
+
+func (m *Model) clearLoadedDiffState() {
+	m.diff = ""
+	m.rawDiff = ""
+	m.diffFiles = nil
+	m.renderedFiles = nil
+	m.diffMode = DiffModeHunks
+	m.fileContent = ""
+	m.fileContentKey = ""
+	m.fileIndex = 0
+	m.commitIndex = 0
+	m.diffLoadKey = ""
+	m.commitDiffKey = ""
+	m.renderedCommitDiff = ""
+	m.diffXOffset = 0
+	m.summaryXOffset = 0
+	m.summaryVP.GotoTop()
+	m.diffVP.GotoTop()
+	m.diffVP.SetContent("")
+}
+
+func prRefreshKey(pr model.PullRequest) string {
+	key := pr.Repo + "#" + strconv.Itoa(pr.Number)
+	if pr.HeadRefOID != "" {
+		key += "@" + pr.HeadRefOID
+	}
+	return key
+}
+
 // autoDiffCmd fetches the diff for the currently selected PR if diff is
 // enabled and the diff has not already been loaded. It guards against
 // duplicate fetches for the same PR.
@@ -702,7 +807,7 @@ func (m *Model) autoDiffCmd() tea.Cmd {
 	if !ok {
 		return nil
 	}
-	key := pr.Repo + "#" + strconv.Itoa(pr.Number)
+	key := prRefreshKey(pr)
 	if m.diffLoadKey == key {
 		return nil
 	}
@@ -889,23 +994,8 @@ func shellQuote(s string) string {
 }
 
 func (m *Model) resetPRViewState() {
-	m.diff = ""
-	m.rawDiff = ""
-	m.diffFiles = nil
-	m.renderedFiles = nil
-	m.diffMode = DiffModeHunks
-	m.fileContent = ""
-	m.fileContentKey = ""
-	m.fileIndex = 0
-	m.commitIndex = 0
-	m.diffLoadKey = ""
-	m.commitDiffKey = ""
-	m.renderedCommitDiff = ""
-	m.diffXOffset = 0
-	m.summaryXOffset = 0
+	m.clearLoadedDiffState()
 	m.inboxVP.GotoTop()
-	m.summaryVP.GotoTop()
-	m.diffVP.GotoTop()
 	m.syncSummaryVP()
 	m.syncDiffVP()
 }
@@ -1073,7 +1163,7 @@ func diffRenderWidth(visibleWidth int) int {
 	return max(visibleWidth*100, 10000)
 }
 
-func (m *Model) cycleSortMode() {
+func (m *Model) cycleSortMode() tea.Cmd {
 	current := 0
 	if pr, ok := m.current(); ok {
 		current = pr.Number
@@ -1081,15 +1171,15 @@ func (m *Model) cycleSortMode() {
 	m.sortMode = m.sortMode.Next()
 	m.applyPRSettings()
 	m.message = "sort: " + m.sortMode.String()
-	if current == 0 {
-		return
-	}
-	for i, pr := range m.prs {
-		if pr.Number == current {
-			m.selected = i
-			return
+	if current != 0 {
+		for i, pr := range m.prs {
+			if pr.Number == current {
+				m.selected = i
+				break
+			}
 		}
 	}
+	return saveSortCmd(m.cfg, m.sortMode)
 }
 
 func (m *Model) applyPRSettings() {
@@ -1165,7 +1255,7 @@ func (m Model) handleSettingsKey(key string) (tea.Model, tea.Cmd) {
 			m.applyPRSettings()
 			m.message = draftFilterMessage(m.hideDrafts)
 		} else {
-			m.cycleSortMode()
+			return m, m.cycleSortMode()
 		}
 	case "left", "h":
 		if m.settingsCursor == 0 {
@@ -1173,7 +1263,7 @@ func (m Model) handleSettingsKey(key string) (tea.Model, tea.Cmd) {
 			m.applyPRSettings()
 			m.message = draftFilterMessage(m.hideDrafts)
 		} else {
-			m.cycleSortMode()
+			return m, m.cycleSortMode()
 		}
 	}
 	return m, nil
@@ -1334,6 +1424,13 @@ func (m Model) executeCommand(cmd viCommand) (tea.Model, tea.Cmd) {
 		m.mode = ModeColorscheme
 		return m, nil
 	}
+	if cmd.Name == "refresh-all" {
+		m.mode = m.prevMode
+		m.commandInput = ""
+		m.loading = true
+		m.message = "refreshing"
+		return m, tea.Batch(m.startStatus("refreshing…"), refreshCmd(m.app, m.repo))
+	}
 
 	pr, ok := m.current()
 	if !ok {
@@ -1345,6 +1442,14 @@ func (m Model) executeCommand(cmd viCommand) (tea.Model, tea.Cmd) {
 	m.commandInput = ""
 
 	switch cmd.Name {
+	case "ai":
+		if !m.aiEnabled {
+			return m, m.finishStatus("AI review not configured", true)
+		}
+		m.loading = true
+		m.message = "re-running analysis"
+		m.aiAnalyzing = true
+		return m, tea.Batch(m.startStatus("re-running analysis…"), analyzeCmd(m.app, pr))
 	case "ap":
 		return m, tea.Batch(m.startStatus("commenting…"), commentCmd(m.app, pr, "atlantis plan"))
 	case "aa":

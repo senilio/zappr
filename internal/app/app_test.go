@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -25,6 +26,21 @@ func TestSortPullRequestsDefaultsToUpdatedDesc(t *testing.T) {
 func TestSortPullRequestsCyclesModes(t *testing.T) {
 	if SortUpdated.Next() != SortNumber || SortNumber.Next() != SortUpdated {
 		t.Fatalf("unexpected sort cycle")
+	}
+}
+
+func TestParseSortModeRoundTrips(t *testing.T) {
+	if ParseSortMode(SortUpdated.String()) != SortUpdated {
+		t.Fatalf("ParseSortMode(%q) != SortUpdated", SortUpdated.String())
+	}
+	if ParseSortMode(SortNumber.String()) != SortNumber {
+		t.Fatalf("ParseSortMode(%q) != SortNumber", SortNumber.String())
+	}
+	if ParseSortMode("") != SortUpdated {
+		t.Fatalf("ParseSortMode(\"\") should default to SortUpdated")
+	}
+	if ParseSortMode("garbage") != SortUpdated {
+		t.Fatalf("ParseSortMode(garbage) should default to SortUpdated")
 	}
 }
 
@@ -72,6 +88,65 @@ func TestRefreshPreservesAITriage(t *testing.T) {
 	}
 	if prs[0].Triage.AI.Summary != "looks fine" {
 		t.Fatalf("AI summary = %q, want %q", prs[0].Triage.AI.Summary, "looks fine")
+	}
+}
+
+func TestRefreshPRPreservesAITriage(t *testing.T) {
+	store := cache.NewMemoryStore()
+	aiResult := &model.AITriage{Summary: "looks fine"}
+	if err := store.Put(model.PullRequest{
+		Repo:   "owner/repo",
+		Number: 1,
+		Title:  "cached",
+		Triage: model.Triage{Risk: model.RiskSafe, AI: aiResult},
+	}); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	provider := fakeGitHub{pr: model.PullRequest{Repo: "owner/repo", Number: 1, Title: "fresh"}}
+	zappr := New(provider, ai.NoopProvider{}, store)
+
+	pr, err := zappr.RefreshPR(context.Background(), "owner/repo", 1)
+	if err != nil {
+		t.Fatalf("RefreshPR: %v", err)
+	}
+
+	if pr.Title != "fresh" {
+		t.Fatalf("Title = %q, want fresh", pr.Title)
+	}
+	if pr.Triage.AI == nil || pr.Triage.AI.Summary != "looks fine" {
+		t.Fatalf("AI triage = %#v, want preserved summary", pr.Triage.AI)
+	}
+	cached, err := store.Get("owner/repo", 1)
+	if err != nil {
+		t.Fatalf("Get cached: %v", err)
+	}
+	if cached.Title != "fresh" {
+		t.Fatalf("cached title = %q, want fresh", cached.Title)
+	}
+}
+
+func TestRefreshPRPrunesClosedPR(t *testing.T) {
+	store := cache.NewMemoryStore()
+	for _, pr := range []model.PullRequest{
+		{Repo: "owner/repo", Number: 1, Title: "closed"},
+		{Repo: "owner/repo", Number: 2, Title: "open"},
+	} {
+		if err := store.Put(pr); err != nil {
+			t.Fatalf("Put: %v", err)
+		}
+	}
+	provider := fakeGitHub{pr: model.PullRequest{Repo: "owner/repo", Number: 1, Title: "closed", State: "CLOSED"}}
+	zappr := New(provider, ai.NoopProvider{}, store)
+
+	_, err := zappr.RefreshPR(context.Background(), "owner/repo", 1)
+	if !errors.Is(err, ErrPRNotOpen) {
+		t.Fatalf("RefreshPR err = %v, want ErrPRNotOpen", err)
+	}
+	if _, err := store.Get("owner/repo", 1); err == nil {
+		t.Fatal("closed PR remains cached")
+	}
+	if _, err := store.Get("owner/repo", 2); err != nil {
+		t.Fatalf("open cached PR missing: %v", err)
 	}
 }
 

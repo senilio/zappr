@@ -61,6 +61,16 @@ var allCommands = []viCommand{
 		RequireConfirm: true,
 	},
 	{
+		Name:           "ai",
+		Description:    "run AI review on selected PR",
+		RequireConfirm: false,
+	},
+	{
+		Name:           "refresh-all",
+		Description:    "refresh full inbox",
+		RequireConfirm: false,
+	},
+	{
 		Name:           "colorscheme",
 		Description:    "pick color scheme",
 		RequireConfirm: false,

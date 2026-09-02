@@ -114,6 +114,10 @@ func (m Model) diffView() string {
 }
 
 func (m Model) approveView() string {
+	if m.width > 0 {
+		return m.layoutView()
+	}
+
 	pr, ok := m.current()
 	if !ok {
 		return m.inboxView()
@@ -165,11 +169,12 @@ Keys:
   shift+up/down  prev/next file
   s          side-by-side diff
   x          expand selected file / diff hunks
-  r          refresh (inbox) / re-run AI analysis (detail)
+  r          refresh selected PR
+  R          refresh inbox
   a then y   approve
   shift+a    approve (no confirmation)
   c          comment
-  :          vim-style commands (:ap :aa)
+  :          vim-style commands (:ai :refresh-all :ap :aa)
   :colorscheme  pick color scheme
   ? esc      toggle help / back
   q          quit`

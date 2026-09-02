@@ -63,6 +63,7 @@ type Model struct {
 	summaryXOffset   int
 	lastFetch        time.Time
 	pollEvery        time.Duration
+	pollCount        int
 	width            int
 	height           int
 	theme            uitheme.Theme
@@ -146,7 +147,7 @@ func New(zappr *app.App, repo string, pollEvery time.Duration, themeName string,
 	dvp := viewport.New(0, 0)
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
-	return Model{app: zappr, repo: repo, loading: true, pollEvery: pollEvery, sortMode: app.SortUpdated, theme: uitheme.DefaultWithName(themeName), cfg: cfg, aiEnabled: zappr.AIEnabled(), inboxVP: ivp, summaryVP: vp, diffVP: dvp, statusSpinner: sp, summaryMode: SummaryModeFiles}
+	return Model{app: zappr, repo: repo, loading: true, pollEvery: pollEvery, sortMode: app.ParseSortMode(cfg.Sort), theme: uitheme.DefaultWithName(themeName), cfg: cfg, aiEnabled: zappr.AIEnabled(), inboxVP: ivp, summaryVP: vp, diffVP: dvp, statusSpinner: sp, summaryMode: SummaryModeFiles}
 }
 
 func (m Model) Init() tea.Cmd {
@@ -158,6 +159,13 @@ type refreshMsg struct {
 	err error
 }
 
+type refreshPRMsg struct {
+	repo   string
+	number int
+	pr     model.PullRequest
+	err    error
+}
+
 type diffMsg struct {
 	repo          string
 	number        int
@@ -165,6 +173,7 @@ type diffMsg struct {
 	rendered      string
 	files         []diffFile
 	renderedFiles []diffFile
+	key           string
 	err           error
 }
 
@@ -239,12 +248,31 @@ func saveThemeCmd(cfg config.Config, themeName string) tea.Cmd {
 	}
 }
 
+func saveSortCmd(cfg config.Config, sortMode app.SortMode) tea.Cmd {
+	return func() tea.Msg {
+		cfg.Sort = sortMode.String()
+		if err := config.Save(cfg); err != nil {
+			return actionMsg{message: "failed to save sort: " + err.Error(), err: err}
+		}
+		return nil
+	}
+}
+
 func refreshCmd(app *app.App, repo string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 		defer cancel()
 		prs, err := app.Refresh(ctx, repo)
 		return refreshMsg{prs: prs, err: err}
+	}
+}
+
+func refreshPRCmd(app *app.App, pr model.PullRequest) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		fresh, err := app.RefreshPR(ctx, pr.Repo, pr.Number)
+		return refreshPRMsg{repo: pr.Repo, number: pr.Number, pr: fresh, err: err}
 	}
 }
 
@@ -268,11 +296,12 @@ func tickCmd(interval time.Duration) tea.Cmd {
 
 func diffCmd(app *app.App, pr model.PullRequest, width int) tea.Cmd {
 	return func() tea.Msg {
+		key := prRefreshKey(pr)
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		diff, err := app.GitHub.GetDiff(ctx, pr.Repo, pr.Number)
 		if err != nil {
-			return diffMsg{err: err}
+			return diffMsg{repo: pr.Repo, number: pr.Number, key: key, err: err}
 		}
 		// Split on the raw diff so that the "diff --git" markers are intact.
 		// Rendering (delta) rewrites those headers so splitting rendered output
@@ -280,7 +309,7 @@ func diffCmd(app *app.App, pr model.PullRequest, width int) tea.Cmd {
 		files := splitDiffFiles(diff)
 		rendered, err := renderDiff(ctx, diff, width, false)
 		renderedFiles := renderDiffFiles(ctx, files, width, false)
-		return diffMsg{repo: pr.Repo, number: pr.Number, raw: diff, rendered: rendered, files: files, renderedFiles: renderedFiles, err: err}
+		return diffMsg{repo: pr.Repo, number: pr.Number, key: key, raw: diff, rendered: rendered, files: files, renderedFiles: renderedFiles, err: err}
 	}
 }
 
@@ -310,14 +339,14 @@ func fileContentCmd(ghProvider interface {
 	}
 }
 
-func renderDiffCmd(diff string, repo string, number int, width int, sideBySide bool) tea.Cmd {
+func renderDiffCmd(diff string, repo string, number int, key string, width int, sideBySide bool) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		rendered, err := renderDiff(ctx, diff, width, sideBySide)
 		files := splitDiffFiles(diff)
 		renderedFiles := renderDiffFiles(ctx, files, width, sideBySide)
-		return diffMsg{repo: repo, number: number, raw: diff, rendered: rendered, files: files, renderedFiles: renderedFiles, err: err}
+		return diffMsg{repo: repo, number: number, key: key, raw: diff, rendered: rendered, files: files, renderedFiles: renderedFiles, err: err}
 	}
 }
 

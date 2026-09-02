@@ -23,7 +23,7 @@ func NewGHProvider() *GHProvider {
 }
 
 func (p *GHProvider) ListOpenPRs(ctx context.Context, repo string) ([]model.PullRequest, error) {
-	out, err := p.run(ctx, "pr", "list", "--repo", repo, "--state", "open", "--json", "number,title,author,url,labels,additions,deletions,changedFiles,isDraft,headRefOid,statusCheckRollup,reviewDecision,updatedAt")
+	out, err := p.run(ctx, "pr", "list", "--repo", repo, "--state", "open", "--json", "number,title,author,url,labels,additions,deletions,changedFiles,isDraft,state,headRefOid,statusCheckRollup,reviewDecision,updatedAt")
 	if err != nil {
 		return nil, err
 	}
@@ -52,7 +52,7 @@ func (p *GHProvider) ListOpenPRs(ctx context.Context, repo string) ([]model.Pull
 }
 
 func (p *GHProvider) GetPR(ctx context.Context, repo string, number int) (model.PullRequest, error) {
-	out, err := p.run(ctx, "pr", "view", strconv.Itoa(number), "--repo", repo, "--json", "number,title,author,url,labels,additions,deletions,changedFiles,isDraft,headRefOid,statusCheckRollup,reviewDecision,files,commits,comments,updatedAt")
+	out, err := p.run(ctx, "pr", "view", strconv.Itoa(number), "--repo", repo, "--json", "number,title,author,url,labels,additions,deletions,changedFiles,isDraft,state,headRefOid,statusCheckRollup,reviewDecision,files,commits,comments,updatedAt")
 	if err != nil {
 		return model.PullRequest{}, err
 	}
@@ -210,6 +210,7 @@ type ghPR struct {
 	Deletions         int             `json:"deletions"`
 	ChangedFiles      int             `json:"changedFiles"`
 	Draft             bool            `json:"isDraft"`
+	State             string          `json:"state"`
 	StatusCheckRollup json.RawMessage `json:"statusCheckRollup"`
 	ReviewDecision    string          `json:"reviewDecision"`
 	HeadRefOID        string          `json:"headRefOid"`
@@ -281,6 +282,7 @@ func (p ghPR) toModel(repo string) model.PullRequest {
 		CIStatus:       statusFromRollup(p.StatusCheckRollup),
 		ReviewDecision: p.ReviewDecision,
 		Draft:          p.Draft,
+		State:          p.State,
 		HeadRefOID:     p.HeadRefOID,
 		UpdatedAt:      parseTime(p.UpdatedAt),
 		Commits:        toModelCommits(p.Commits),

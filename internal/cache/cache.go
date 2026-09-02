@@ -5,6 +5,7 @@ import "github.com/senilio/zappr/internal/model"
 type Store interface {
 	Put(model.PullRequest) error
 	Get(repo string, number int) (model.PullRequest, error)
+	Delete(repo string, number int) error
 	List() ([]model.PullRequest, error)
 	ListRepo(repo string) ([]model.PullRequest, error)
 	PruneRepo(repo string, openNumbers map[int]bool) error

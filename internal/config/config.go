@@ -16,6 +16,7 @@ type Config struct {
 	Cache   CacheConfig   `yaml:"cache"`
 	Trust   TrustConfig   `yaml:"trust"`
 	Theme   string        `yaml:"theme,omitempty"`
+	Sort    string        `yaml:"sort,omitempty"`
 }
 
 type TrustConfig struct {

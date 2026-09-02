@@ -63,6 +63,11 @@ func (s *SQLiteStore) Get(repo string, number int) (model.PullRequest, error) {
 	return s.get(repo, number)
 }
 
+func (s *SQLiteStore) Delete(repo string, number int) error {
+	_, err := s.db.Exec(`delete from pull_requests where repo = ? and number = ?`, repo, number)
+	return err
+}
+
 func (s *SQLiteStore) List() ([]model.PullRequest, error) {
 	rows, err := s.db.Query(`select data, skipped from pull_requests order by updated_at desc`)
 	if err != nil {

@@ -2,7 +2,9 @@ package app
 
 import (
 	"context"
+	"errors"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/senilio/zappr/internal/ai"
@@ -10,6 +12,8 @@ import (
 	"github.com/senilio/zappr/internal/github"
 	"github.com/senilio/zappr/internal/model"
 )
+
+var ErrPRNotOpen = errors.New("pull request is not open")
 
 type SortMode int
 
@@ -30,6 +34,17 @@ func (m SortMode) String() string {
 func (m SortMode) Next() SortMode {
 	switch m {
 	case SortUpdated:
+		return SortNumber
+	default:
+		return SortUpdated
+	}
+}
+
+// ParseSortMode converts a persisted string (as produced by SortMode.String)
+// back into a SortMode. Unknown or empty values default to SortUpdated.
+func ParseSortMode(s string) SortMode {
+	switch s {
+	case "number":
 		return SortNumber
 	default:
 		return SortUpdated
@@ -83,6 +98,26 @@ func (a *App) Refresh(ctx context.Context, repo string) ([]model.PullRequest, er
 		return nil, err
 	}
 	return a.InboxRepo(repo, SortUpdated), nil
+}
+
+func (a *App) RefreshPR(ctx context.Context, repo string, number int) (model.PullRequest, error) {
+	pr, err := a.GitHub.GetPR(ctx, repo, number)
+	if err != nil {
+		return model.PullRequest{}, err
+	}
+	if pr.State != "" && !strings.EqualFold(pr.State, "OPEN") {
+		if err := a.Cache.Delete(repo, number); err != nil {
+			return model.PullRequest{}, err
+		}
+		return model.PullRequest{}, ErrPRNotOpen
+	}
+	if cached, err := a.Cache.Get(pr.Repo, pr.Number); err == nil && cached.Triage.AI != nil {
+		pr.Triage.AI = cached.Triage.AI
+	}
+	if err := a.Cache.Put(pr); err != nil {
+		return model.PullRequest{}, err
+	}
+	return pr, nil
 }
 
 func (a *App) Inbox(sortMode SortMode) []model.PullRequest {

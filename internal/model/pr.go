@@ -65,6 +65,7 @@ type PullRequest struct {
 	CIStatus       string
 	ReviewDecision string
 	Draft          bool
+	State          string
 	HeadRefOID     string
 	UpdatedAt      time.Time
 	Diff           string

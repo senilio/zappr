@@ -33,6 +33,11 @@ func (s *MemoryStore) Get(repo string, number int) (model.PullRequest, error) {
 	return pr, nil
 }
 
+func (s *MemoryStore) Delete(repo string, number int) error {
+	delete(s.prs, cacheKey(repo, number))
+	return nil
+}
+
 func (s *MemoryStore) List() ([]model.PullRequest, error) {
 	out := make([]model.PullRequest, 0, len(s.prs))
 	for _, pr := range s.prs {
