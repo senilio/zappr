@@ -1,11 +1,83 @@
 package cache
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/senilio/zappr/internal/model"
 )
+
+func TestOpenSQLitePrivateModes(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "cache")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir cache: %v", err)
+	}
+	path := filepath.Join(dir, "zappr.db")
+	store, err := OpenSQLite(path)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	defer store.Close()
+
+	if mode := sqliteFileMode(t, dir); mode != 0o700 {
+		t.Fatalf("cache directory mode = %o, want 700", mode)
+	}
+	if mode := sqliteFileMode(t, path); mode != 0o600 {
+		t.Fatalf("database mode = %o, want 600", mode)
+	}
+	if err := store.Put(model.PullRequest{Repo: "owner/repo", Number: 1, Title: "T", Triage: model.Triage{Risk: model.RiskSafe}}); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	sidecars := []string{path + "-wal", path + "-shm"}
+	for _, sidecar := range sidecars {
+		if _, err := os.Stat(sidecar); os.IsNotExist(err) {
+			t.Skipf("SQLite did not create %s", filepath.Base(sidecar))
+		} else if err != nil {
+			t.Fatalf("stat %s: %v", sidecar, err)
+		}
+		if mode := sqliteFileMode(t, sidecar); mode != 0o600 {
+			t.Fatalf("%s mode = %o, want 600", filepath.Base(sidecar), mode)
+		}
+	}
+
+	if err := os.Chmod(dir, 0o755); err != nil {
+		t.Fatalf("chmod cache directory: %v", err)
+	}
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatalf("chmod database: %v", err)
+	}
+	for _, sidecar := range sidecars {
+		if err := os.Chmod(sidecar, 0o644); err != nil {
+			t.Fatalf("chmod %s: %v", filepath.Base(sidecar), err)
+		}
+	}
+	store2, err := OpenSQLite(path)
+	if err != nil {
+		t.Fatalf("OpenSQLite second: %v", err)
+	}
+	defer store2.Close()
+	if mode := sqliteFileMode(t, dir); mode != 0o700 {
+		t.Fatalf("corrected cache directory mode = %o, want 700", mode)
+	}
+	if mode := sqliteFileMode(t, path); mode != 0o600 {
+		t.Fatalf("corrected database mode = %o, want 600", mode)
+	}
+	for _, sidecar := range sidecars {
+		if mode := sqliteFileMode(t, sidecar); mode != 0o600 {
+			t.Fatalf("corrected %s mode = %o, want 600", filepath.Base(sidecar), mode)
+		}
+	}
+}
+
+func sqliteFileMode(t *testing.T, path string) os.FileMode {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat %s: %v", path, err)
+	}
+	return info.Mode().Perm()
+}
 
 func TestSQLiteStorePersistsPRs(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "zappr.db")

@@ -61,6 +61,12 @@ func Load() (Config, error) {
 	if err != nil {
 		return cfg, err
 	}
+	if err := privateDir(filepath.Dir(path)); err != nil {
+		return cfg, err
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		return cfg, err
+	}
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return cfg, fmt.Errorf("parse config %s: %w", path, err)
 	}
@@ -108,14 +114,17 @@ func Save(cfg Config) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := privateDir(filepath.Dir(path)); err != nil {
 		return err
 	}
 	data, err := yaml.Marshal(cfg)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0o644)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		return err
+	}
+	return os.Chmod(path, 0o600)
 }
 
 func Init(force bool) (string, error) {
@@ -123,21 +132,34 @@ func Init(force bool) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if err := privateDir(filepath.Dir(path)); err != nil {
+		return path, err
+	}
 	if !force {
 		if _, err := os.Stat(path); err == nil {
+			if err := os.Chmod(path, 0o600); err != nil {
+				return path, err
+			}
 			return path, fmt.Errorf("config already exists: %s", path)
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return path, err
 		}
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return path, err
-	}
 	data, err := yaml.Marshal(Default())
 	if err != nil {
 		return path, err
 	}
-	return path, os.WriteFile(path, data, 0o644)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		return path, err
+	}
+	return path, os.Chmod(path, 0o600)
+}
+
+func privateDir(path string) error {
+	if err := os.MkdirAll(path, 0o700); err != nil {
+		return err
+	}
+	return os.Chmod(path, 0o700)
 }
 
 func DefaultConfigPath() (string, error) {

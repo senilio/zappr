@@ -1,0 +1,33 @@
+version: 2
+
+builds:
+  - main: ./cmd/zappr
+    binary: zappr
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X github.com/senilio/zappr/internal/cli.Version={{ .Version }}
+
+archives:
+  - formats:
+      - tar.gz
+    name_template: "zappr_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: checksums.txt
+
+sboms:
+  - artifacts: archive
+    documents:
+      - "{{ .ArtifactName }}.sbom.json"
+
+release:
+  github:
+    owner: senilio
+    name: zappr

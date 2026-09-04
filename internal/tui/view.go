@@ -102,7 +102,7 @@ func (m Model) detailView() string {
 	for _, file := range pr.Files {
 		fmt.Fprintf(&b, "%-8s %s (+%d -%d)\n", file.Status, file.Path, file.Additions, file.Deletions)
 	}
-	b.WriteString("\na approve, y confirm  c comment  r re-run analysis  v toggle diff  V full diff pager  1/2/3/4 summary  esc inbox\n")
+	b.WriteString("\na approve, y confirm  c comment  r refresh  :ai run AI review  v toggle diff  V full diff pager  1/2/3/4 summary  esc inbox\n")
 	return b.String()
 }
 
@@ -439,7 +439,7 @@ func (m Model) footerView() string {
 		if m.summaryMode == SummaryModeCommits {
 			keys = []shortcut{{"j/k", "select"}, {"left/right", "pan"}, {"v", "diff"}, {"a", "approve"}, {"esc", "inbox"}}
 		} else {
-			keys = []shortcut{{"v", "diff"}, {"a", "approve"}, {"c", "comment"}, {"r", "AI review"}, {"esc", "inbox"}}
+			keys = []shortcut{{"v", "diff"}, {"a", "approve"}, {"c", "comment"}, {"r", "refresh"}, {"esc", "inbox"}}
 		}
 	default:
 		keys = []shortcut{{"f", "filter"}, {"o", "open"}, {"C", "copy URL"}, {"v", "diff"}, {"a", "approve"}, {"c", "comment"}, {"r", "refresh"}}
@@ -926,7 +926,7 @@ func (m Model) summaryContent(pr model.PullRequest, innerW int) string {
 		b.WriteByte('\n')
 	} else {
 		b.WriteByte('\n')
-		b.WriteString(s.Muted.Render("press r to run AI review"))
+		b.WriteString(s.Muted.Render("press :ai to run AI review"))
 		b.WriteByte('\n')
 	}
 

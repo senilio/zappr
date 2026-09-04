@@ -23,6 +23,18 @@ go test ./...
 go run ./cmd/zappr --help
 ```
 
+Run CI-equivalent validation:
+
+```sh
+test -z "$(gofmt -l .)"
+go mod tidy -diff
+go mod verify
+go vet ./...
+go test -race ./...
+go build -trimpath -ldflags "-s -w -X github.com/senilio/zappr/internal/cli.Version=ci" -o /tmp/zappr ./cmd/zappr
+/tmp/zappr version
+```
+
 Use `rtk go test ./...` if available in the environment.
 
 ## Architecture
@@ -48,7 +60,7 @@ Use `rtk go test ./...` if available in the environment.
 
 ## GitHub Actions
 
-- Approval/comment actions must use `gh pr review`.
+- Approvals and request changes use `gh pr review`; comments use `gh pr comment`.
 - Approval is permitted whenever the user chooses; zappr does not auto-gate by risk.
 - Network/auth/rate-limit failures should surface as user-readable errors.
 - `ToggleDraft`: uses `gh pr edit --draft` (to draft) or `gh pr ready` (to undraft).

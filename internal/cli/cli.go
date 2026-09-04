@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -256,22 +257,22 @@ func runQuiet(name string, args ...string) error {
 }
 
 func ensureWritable(path string) error {
-	if err := os.MkdirAll(filepathDir(path), 0o755); err != nil {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
 		return err
 	}
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return err
 	}
-	return f.Close()
-}
-
-func filepathDir(path string) string {
-	idx := strings.LastIndex(path, string(os.PathSeparator))
-	if idx < 0 {
-		return "."
+	if err := os.Chmod(path, 0o600); err != nil {
+		f.Close()
+		return err
 	}
-	return path[:idx]
+	return f.Close()
 }
 
 func requireRepo(args []string) (string, error) {
@@ -325,6 +326,6 @@ Commands:
   zappr version                 print version
 
 Keys:
-  j/k navigate  tab focus  enter inspect  a approve, y confirm  c comment  r refresh/AI review  v diff  1/2/3/4 summary  ? help  q quit
+  j/k navigate  tab focus  enter inspect  a approve, y confirm  c comment  r refresh  :ai AI review  v diff  1/2/3/4 summary  ? help  q quit
 `
 }

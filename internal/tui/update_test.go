@@ -1273,6 +1273,26 @@ func TestSummaryShowsAIUnconfiguredWhenDisabled(t *testing.T) {
 	}
 }
 
+func TestAIReviewHintsUseAICommand(t *testing.T) {
+	m := modelWithPRs([]model.PullRequest{{Number: 1, Repo: "org/repo", Title: "title", Author: "author"}}, 0)
+	m.width = 100
+	m.height = 18
+	m.mode = ModeDetail
+	m.focus = FocusSummary
+	m.aiEnabled = true
+
+	if got := stripANSI(m.footerView()); strings.Contains(got, "AI review") || !strings.Contains(got, "refresh") {
+		t.Fatalf("footer AI shortcut = %q, want refresh", got)
+	}
+	if got := stripANSI(m.summaryPanel(m.width, m.height)); !strings.Contains(got, "press :ai to run AI review") {
+		t.Fatalf("summary AI hint = %q, want :ai command", got)
+	}
+	m.width = 0
+	if got := m.detailView(); !strings.Contains(got, "r refresh  :ai run AI review") {
+		t.Fatalf("fallback detail hint = %q, want refresh and :ai commands", got)
+	}
+}
+
 func TestRKeyRefreshesSelectedPRWhenAIDisabled(t *testing.T) {
 	m := modelWithPRs([]model.PullRequest{{Number: 1, Repo: "org/repo", Title: "title", Author: "author"}}, 0)
 	m.mode = ModeDetail

@@ -21,7 +21,11 @@ func OpenSQLite(path string) (*SQLiteStore, error) {
 	if path == "" {
 		return nil, fmt.Errorf("cache path is required")
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, err
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
 		return nil, err
 	}
 	db, err := sql.Open("sqlite", path)
@@ -32,6 +36,12 @@ func OpenSQLite(path string) (*SQLiteStore, error) {
 	if err := store.migrate(); err != nil {
 		db.Close()
 		return nil, err
+	}
+	for _, file := range []string{path, path + "-wal", path + "-shm"} {
+		if err := os.Chmod(file, 0o600); err != nil && !os.IsNotExist(err) {
+			db.Close()
+			return nil, err
+		}
 	}
 	return store, nil
 }

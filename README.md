@@ -17,13 +17,24 @@ zappr watches open pull requests, optionally runs shell-command AI triage on dem
 
 ## Install
 
-### Released binary
+### Prebuilt binaries
+
+Download the Darwin or Linux archive and `checksums.txt` from the GitHub
+Release, then verify the downloaded archive before extracting it:
+
+```sh
+shasum -a 256 -c checksums.txt --ignore-missing
+tar -xzf zappr_VERSION_OS_ARCH.tar.gz
+```
+
+### Tagged source install
 
 ```sh
 go install github.com/senilio/zappr/cmd/zappr@latest
 ```
 
-After the first public tag, `@latest` resolves to the newest released version.
+This builds the latest tagged source version; it does not download a GitHub
+Release binary.
 
 ### Source checkout
 
@@ -80,7 +91,8 @@ enter        inspect selected PR
 a            start approval; y confirms
 A            approve immediately (no confirmation)
 c            comment on selected PR
-r            refresh (inbox); re-run AI analysis (detail/diff)
+r            refresh selected PR (or inbox when none is selected)
+R            refresh full inbox
 v            toggle diff pane
 V            open full diff in external pager (delta or less)
 s            toggle side-by-side diff
@@ -119,6 +131,8 @@ Press `:` to open the command palette. Type a command prefix to filter; press
 | `:update`| Update PR branch with base branch (prompts for confirmation) |
 | `:block` | Request changes on PR to block merge (prompts for confirmation) |
 | `:merge` | Merge active PR via squash and delete branch (prompts for confirmation) |
+| `:ai` | Run manual AI review on selected PR |
+| `:refresh-all` | Refresh full inbox |
 | `:colorscheme` | Change color scheme |
 
 ### Mouse
@@ -128,22 +142,26 @@ that pane; item selection stays Inbox-only.
 
 ## AI Review
 
-AI review is opt-in and never runs automatically. Press `r` on a selected PR to
-run the configured shell command against the full PR metadata and diff.
+AI review is opt-in and never runs automatically. Run `:ai` on a selected PR
+to invoke the configured shell command. `r` refreshes PR data only.
 
 Sample config:
 
 ```yaml
 ai:
   command: "llm"
-  prompt: "Review this pull request for correctness, risk, and missing tests. Return concise bullets."
+  prompt: |
+    Return a JSON object with this schema:
+    {"summary":"...","risk_notes":["..."],"suggested_focus":["..."],"comment_drafts":["..."]}
 ```
 
 - AI output is advisory only.
 - Approval remains a human decision.
-- When no AI result exists, the summary pane shows `press r to run AI review`.
-- When AI is not configured, the summary pane shows `AI review not configured`.
-- AI results are persisted in SQLite; a subsequent `r` re-runs analysis.
+- The configured command receives PR JSON on standard input and `ZAPPR_AI_PROMPT`
+  from `ai.prompt` when that setting is non-empty.
+- When no AI result exists, use `:ai` to request analysis.
+- When AI is not configured, the summary pane reports that it is unavailable.
+- AI results are persisted in SQLite; a subsequent `:ai` re-runs analysis.
 
 ## Safety
 
@@ -199,14 +217,22 @@ Environment overrides:
 
 | Variable           | Config field  | Description                       |
 |--------------------|---------------|-----------------------------------|
-| `ZAPPR_AI_COMMAND` | `ai.command`  | Shell command for AI triage       |
-| `ZAPPR_AI_PROMPT`  | `ai.prompt`   | Prompt passed to the AI command   |
+| `ZAPPR_AI_COMMAND` | `ai.command`  | Overrides the shell command for AI triage |
+| `ZAPPR_AI_PROMPT`  | N/A           | Child-command variable. An `ai.prompt` value replaces any inherited value; does not alter configuration |
 
 ## Release
 
-- `go install github.com/senilio/zappr/cmd/zappr@latest` installs tagged release binary.
-- Source install with `go run ./cmd/zappr` works from checkout.
-- Release builds should set `internal/cli.Version` with `-ldflags`.
+GitHub Releases contain prebuilt Darwin and Linux archives, `checksums.txt`,
+SBOM documents, and build provenance. Download the archive for your platform
+and verify it against `checksums.txt` before extracting it.
+
+Maintainers update `CHANGELOG.md`, create an annotated `vX.Y.Z` tag, and push
+the tag to publish release artifacts:
+
+```sh
+git tag -a vX.Y.Z -m "vX.Y.Z"
+git push origin vX.Y.Z
+```
 
 ## Cache
 
