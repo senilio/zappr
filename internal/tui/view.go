@@ -150,7 +150,7 @@ func (m Model) settingsView() string {
 	if m.width > 0 {
 		return m.layoutView()
 	}
-	return m.settingsPanel() + "\nesc back  q quit\n"
+	return fmt.Sprintf("%s\n%s back  %s quit\n", m.settingsPanel(), m.actionAlias("settings-close"), m.actionAlias("quit"))
 }
 
 func (m Model) helpPanel() string {
@@ -241,9 +241,13 @@ func (m Model) layoutView() string {
 
 // renderCommandModal renders the command palette box (border + padding + content).
 func (m Model) renderCommandModal() string {
-	width := min(60, max(32, m.width-8))
+	width := m.commandModalWidth()
 	style := m.theme.Styles.Focused.Width(width).Padding(1, 2)
 	return style.Render(m.commandPanel())
+}
+
+func (m Model) commandModalWidth() int {
+	return min(60, max(32, m.width-8))
 }
 
 // overlayModal composites a modal box centered over a dimmed background.
@@ -1347,7 +1351,7 @@ func (m Model) commentPanel() string {
 	if !ok {
 		return "no PR selected"
 	}
-	return fmt.Sprintf("Comment on %s #%d\n\n%s\n\nenter submit  esc cancel", pr.Repo, pr.Number, m.comment)
+	return fmt.Sprintf("Comment on %s #%d\n\n%s\n\n%s submit  %s cancel", pr.Repo, pr.Number, m.comment, m.actionAlias("comment-submit"), m.actionAlias("comment-cancel"))
 }
 
 func (m Model) commandView() string {
@@ -1370,13 +1374,14 @@ func (m Model) commandPanel() string {
 		if action, ok := m.actions.exactCommand(m.commandInput); ok && action.ID == m.pendingAction.ID {
 			name = ":" + m.commandInput
 		}
+		name = truncateANSIWidth(name, max(1, m.commandModalWidth()-ansi.StringWidth(fmt.Sprintf("Run  on %s #%d?", pr.Repo, pr.Number))))
 		fmt.Fprintf(&b, "Run %s on %s #%d?\n\n", name, pr.Repo, pr.Number)
 		if m.pendingAction.ID == "atlantis-apply" && (!reviewApproved(pr.ReviewDecision) || !ciPassing(pr.CIStatus)) {
 			b.WriteString(s.Error.Render("Warning: applying before PR is approved and CI is passing.") + "\n")
 			b.WriteString(s.Muted.Render("Approval: ") + m.theme.ReviewStatus(pr.ReviewDecision) + "\n")
 			b.WriteString(s.Muted.Render("CI: ") + m.theme.CIStatus(pr.CIStatus) + "\n\n")
 		}
-		b.WriteString("y confirm  n/esc cancel")
+		b.WriteString(m.actionAlias("command-confirm") + " confirm  " + m.actionAlias("command-cancel-confirmation") + " cancel")
 		return b.String()
 	}
 

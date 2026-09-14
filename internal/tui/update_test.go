@@ -355,6 +355,43 @@ func TestKeyOnlyActionConfirmation(t *testing.T) {
 	}
 }
 
+func TestCustomCommentConfirmationEscapesAndTruncatesPreview(t *testing.T) {
+	cfg := config.Default()
+	comment := "first line\n" + strings.Repeat("long ", 40)
+	cfg.Actions["hello"] = config.ActionConfig{Keys: []string{"H"}, Comment: comment}
+	m, _ := configuredModel(t, cfg, true)
+	m.width = 40
+	m = updateKey(m, "H")
+
+	panel := stripANSI(m.commandPanel())
+	if !strings.Contains(panel, `first line\n`) || strings.Contains(panel, strings.Repeat("long ", 40)) {
+		t.Fatalf("confirmation preview = %q", panel)
+	}
+}
+
+func TestModalHintsUseConfiguredActions(t *testing.T) {
+	cfg := config.Default()
+	cfg.Actions["comment-submit"] = config.ActionConfig{Keys: []string{"S"}}
+	cfg.Actions["comment-cancel"] = config.ActionConfig{Keys: []string{"X"}}
+	cfg.Actions["command-confirm"] = config.ActionConfig{Keys: []string{"Y"}}
+	cfg.Actions["command-cancel-confirmation"] = config.ActionConfig{Keys: []string{"N"}}
+	cfg.Actions["settings-close"] = config.ActionConfig{Keys: []string{"B"}}
+	cfg.Actions["quit"] = config.ActionConfig{Keys: []string{"Q"}}
+	m, _ := configuredModel(t, cfg, true)
+
+	if panel := stripANSI(m.commentPanel()); !strings.Contains(panel, "S submit  X cancel") || strings.Contains(panel, "enter submit") {
+		t.Fatalf("comment hint = %q", panel)
+	}
+	m.pendingAction, _ = m.actions.actionByID("hello")
+	m.mode = ModeConfirmCommand
+	if panel := stripANSI(m.commandPanel()); !strings.Contains(panel, "Y confirm  N cancel") || strings.Contains(panel, "y confirm") {
+		t.Fatalf("confirmation hint = %q", panel)
+	}
+	if view := stripANSI(m.settingsView()); !strings.Contains(view, "B back  Q quit") || strings.Contains(view, "esc back") {
+		t.Fatalf("settings hint = %q", view)
+	}
+}
+
 func TestSettingsSavePreservesActions(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(t.TempDir(), "config"))
 	cfg := config.Default()
