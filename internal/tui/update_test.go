@@ -319,6 +319,83 @@ func TestConfiguredBuiltinActionUsesRemappedCommand(t *testing.T) {
 	}
 }
 
+func TestConfiguredActionHelp(t *testing.T) {
+	cfg := config.Default()
+	cfg.Actions["hello"] = config.ActionConfig{Keys: []string{"H"}, Commands: []string{"hello"}, Comment: "hello world"}
+	m, _ := configuredModel(t, cfg, true)
+
+	panel := stripANSI(m.helpPanel())
+	for _, want := range []string{"H", ":hello", "hello world", "[confirm]"} {
+		if !strings.Contains(panel, want) {
+			t.Fatalf("help = %q, missing %q", panel, want)
+		}
+	}
+}
+
+func TestPaletteOmitsKeyOnlyActions(t *testing.T) {
+	cfg := config.Default()
+	cfg.Actions["hello"] = config.ActionConfig{Keys: []string{"H"}, Comment: "hello world"}
+	m, _ := configuredModel(t, cfg, true)
+	m.mode = ModeCommand
+
+	if panel := stripANSI(m.commandPanel()); strings.Contains(panel, "hello world") || strings.Contains(panel, ": ") {
+		t.Fatalf("palette = %q, should omit key-only actions", panel)
+	}
+}
+
+func TestKeyOnlyActionConfirmation(t *testing.T) {
+	cfg := config.Default()
+	cfg.Actions["hello"] = config.ActionConfig{Keys: []string{"H"}, Comment: "hello"}
+	m, _ := configuredModel(t, cfg, true)
+	m = updateKey(m, "H")
+
+	panel := stripANSI(m.commandPanel())
+	if !strings.Contains(panel, "Run hello on org/repo #1?") || strings.Contains(panel, "Run : on") {
+		t.Fatalf("confirmation = %q", panel)
+	}
+}
+
+func TestSettingsSavePreservesActions(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(t.TempDir(), "config"))
+	cfg := config.Default()
+	cfg.Actions["hello"] = config.ActionConfig{Keys: []string{"H"}, Comment: "hello world"}
+	m, _ := configuredModel(t, cfg, true)
+	m.settingsCursor = 1
+	if cmd := m.cycleSortMode(); cmd != nil {
+		cmd()
+	}
+	m.mode = ModeColorscheme
+	m.colorschemeIndex = 1
+	_, cmd := m.handleColorschemeKey("enter")
+	if cmd == nil {
+		t.Fatal("confirming a theme should return a save command")
+	}
+	for _, command := range cmd().(tea.BatchMsg) {
+		command()
+	}
+
+	got, err := config.Load()
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+	if got.Sort != app.SortNumber.String() || got.Actions["hello"].Comment != "hello world" {
+		t.Fatalf("saved config = %#v, want sort and hello action", got)
+	}
+}
+
+func TestHeaderUsesConfiguredActions(t *testing.T) {
+	cfg := config.Default()
+	cfg.Actions["help"] = config.ActionConfig{Keys: []string{"H"}}
+	cfg.Actions["quit"] = config.ActionConfig{Keys: []string{"Q"}}
+	m, _ := configuredModel(t, cfg, true)
+	m.width = 100
+
+	header := stripANSI(m.headerView())
+	if !strings.Contains(header, "H help") || !strings.Contains(header, "Q quit") || strings.Contains(header, "? help") || strings.Contains(header, "q quit") {
+		t.Fatalf("header = %q", header)
+	}
+}
+
 func TestShiftCCopiesPRURL(t *testing.T) {
 	m := modelWithPRs([]model.PullRequest{{
 		Number: 1,

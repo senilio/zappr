@@ -213,6 +213,57 @@ trust:
   authors: []
 ```
 
+### TUI actions
+
+`zappr config init` creates `$XDG_CONFIG_HOME/zappr/config.yaml` (or
+`~/.config/zappr/config.yaml`). The generated file includes every built-in
+action. Add only the fields to change; each action overlays its built-in
+`keys` and `commands` independently. An empty list clears that field.
+
+```yaml
+actions:
+  help:
+    keys: [H]
+  ai-review:
+    commands: [review]
+  hello:
+    keys: [H]
+    commands: [hello]
+    comment: |-
+      Hello from zappr.
+    confirm: false
+```
+
+Built-in IDs: `quit`, `help`, `summary-files`, `summary-commits`,
+`summary-comments`, `summary-atlantis`, `focus-next`, `focus-prev`, `go-top`,
+`go-bottom`, `open-pr`, `copy-pr-url`, `settings`, `move-down`, `move-up`,
+`pan-left`, `pan-right`, `page-down`, `page-up`, `next-item`, `prev-item`,
+`inspect-pr`, `back-to-inbox`, `refresh-pr`, `refresh-inbox`, `toggle-diff`,
+`open-diff-pager`, `next-file`, `prev-file`, `toggle-side-by-side`,
+`toggle-file-content`, `approve-with-confirmation`, `approve-immediately`,
+`write-comment`, `command-palette`, `help-close`, `diff-close`,
+`approve-confirm`, `approve-cancel`, `settings-close`, `settings-next`,
+`settings-prev`, `settings-toggle`, `colorscheme-cancel`, `colorscheme-next`,
+`colorscheme-prev`, `colorscheme-confirm`, `comment-cancel`, `comment-submit`,
+`comment-backspace`, `command-cancel`, `command-submit`, `command-next`,
+`command-prev`, `command-backspace`, `command-confirm`,
+`command-cancel-confirmation`, `atlantis-plan`, `atlantis-apply`,
+`atlantis-unlock`, `toggle-draft`, `close-pr`, `update-branch`,
+`request-changes`, `merge-pr`, `ai-review`, and `colorscheme`.
+
+Custom IDs use lowercase letters, digits, and hyphens. They require `comment`
+and at least one `keys` or `commands` entry. Custom actions only post their
+static `comment` on the selected PR; they cannot run shell commands or replace
+built-in behavior. `confirm` defaults to true for custom actions.
+
+Keys conflict only within the same UI context. Command aliases are global,
+case-insensitive, and must be unique. Commands use letters, digits, and
+hyphens, and run from the palette as `:alias` (enter a prefix and select a
+match if needed).
+
+zappr rewrites the entire YAML file when saving theme or sort settings. YAML
+comments, formatting, and field ordering are not preserved.
+
 Environment overrides:
 
 | Variable           | Config field  | Description                       |

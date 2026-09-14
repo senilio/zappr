@@ -243,19 +243,17 @@ func (m *Model) finishStatus(text string, isErr bool) tea.Cmd {
 	return dismissStatusCmd(m.statusToken, 1200*time.Millisecond)
 }
 
-func saveThemeCmd(cfg config.Config, themeName string) tea.Cmd {
+func saveThemeCmd(cfg config.Config) tea.Cmd {
 	return func() tea.Msg {
-		cfg.Theme = themeName
 		if err := config.Save(cfg); err != nil {
 			return actionMsg{message: "failed to save theme: " + err.Error(), err: err}
 		}
-		return actionMsg{message: "theme saved: " + themeName}
+		return actionMsg{message: "theme saved: " + cfg.Theme}
 	}
 }
 
-func saveSortCmd(cfg config.Config, sortMode app.SortMode) tea.Cmd {
+func saveSortCmd(cfg config.Config) tea.Cmd {
 	return func() tea.Msg {
-		cfg.Sort = sortMode.String()
 		if err := config.Save(cfg); err != nil {
 			return actionMsg{message: "failed to save sort: " + err.Error(), err: err}
 		}

@@ -143,7 +143,7 @@ func (m Model) helpView() string {
 	if m.width > 0 {
 		return m.layoutView()
 	}
-	return helpText() + "\nesc back  q quit\n"
+	return m.helpPanel() + "\n"
 }
 
 func (m Model) settingsView() string {
@@ -153,35 +153,52 @@ func (m Model) settingsView() string {
 	return m.settingsPanel() + "\nesc back  q quit\n"
 }
 
-func helpText() string {
-	return `zappr help
-
-Keys:
-  j/k        move / scroll
-  tab        cycle pane focus
-  o          open PR in browser
-  C          copy PR URL
-  f          filters / sort settings
-  enter      inspect PR
-  v          toggle diff pane (load/hide diff)
-  V          open full diff pager
-  1/2/3/4    summary: files / commits / comments / atlantis
-  shift+up/down  prev/next file
-  s          side-by-side diff
-  x          expand selected file / diff hunks
-  r          refresh selected PR
-  R          refresh inbox
-  a then y   approve
-  shift+a    approve (no confirmation)
-  c          comment
-  :          vim-style commands (:ai :refresh-all :ap :aa)
-  :colorscheme  pick color scheme
-  ? esc      toggle help / back
-  q          quit`
+func (m Model) helpPanel() string {
+	var b strings.Builder
+	b.WriteString("zappr help\n")
+	for _, group := range []struct {
+		title string
+		match func(tuiAction) bool
+	}{
+		{"Keys", func(action tuiAction) bool { return action.Context == actionContextNormal && len(action.Keys) > 0 }},
+		{"Modal keys", func(action tuiAction) bool { return action.Context != actionContextNormal && len(action.Keys) > 0 }},
+		{"Commands", func(action tuiAction) bool { return len(action.Commands) > 0 }},
+	} {
+		b.WriteString("\n" + group.title + ":\n")
+		for _, action := range m.actions.actions {
+			if !group.match(action) {
+				continue
+			}
+			b.WriteString(m.actionHelpLine(action))
+			b.WriteByte('\n')
+		}
+	}
+	return strings.TrimSuffix(b.String(), "\n")
 }
 
-func (m Model) helpPanel() string {
-	return helpText()
+func (m Model) actionHelpLine(action tuiAction) string {
+	aliases := truncateANSIWidth(actionAliases(action), 18)
+	label := actionDisplayLabel(action)
+	if action.Confirmation != confirmationNone {
+		label += " [confirm]"
+	}
+	width := min(66, m.width-10) - 22
+	if m.width <= 0 {
+		width = len(label)
+	}
+	return fmt.Sprintf("  %-18s %s", aliases, truncateANSIWidth(label, max(1, width)))
+}
+
+func actionAliases(action tuiAction) string {
+	aliases := append([]string(nil), action.Keys...)
+	for _, command := range action.Commands {
+		aliases = append(aliases, ":"+command)
+	}
+	return strings.Join(aliases, "/")
+}
+
+func actionDisplayLabel(action tuiAction) string {
+	return strings.NewReplacer("\n", `\n`, "\r", `\r`, "\t", `\t`).Replace(action.Label)
 }
 
 func (m Model) layoutView() string {
@@ -421,10 +438,18 @@ func (m Model) headerView() string {
 		parts = append(parts, m.theme.Styles.Error.Render(m.error))
 	}
 	left := strings.Join(parts, " ")
-	right := m.footerShortcuts([]shortcut{{"?", "help"}, {"q", "quit"}})
+	right := m.footerShortcuts([]shortcut{{m.actionAlias("help"), "help"}, {m.actionAlias("quit"), "quit"}})
 	gap := max(1, m.width-lipgloss.Width(left)-lipgloss.Width(right)-2)
 	line := left + strings.Repeat(" ", gap) + right
 	return railView(m.theme.Styles.Header.Width(m.width).Render(line), m.width)
+}
+
+func (m Model) actionAlias(id string) string {
+	action, ok := m.actions.actionByID(id)
+	if !ok || len(action.Keys) == 0 {
+		return ""
+	}
+	return strings.Join(action.Keys, "/")
 }
 
 func (m Model) footerView() string {
@@ -1341,7 +1366,11 @@ func (m Model) commandPanel() string {
 		if !ok {
 			return "no PR selected"
 		}
-		fmt.Fprintf(&b, "Run %s on %s #%d?\n\n", m.pendingAction.Label, pr.Repo, pr.Number)
+		name := actionDisplayLabel(m.pendingAction)
+		if action, ok := m.actions.exactCommand(m.commandInput); ok && action.ID == m.pendingAction.ID {
+			name = ":" + m.commandInput
+		}
+		fmt.Fprintf(&b, "Run %s on %s #%d?\n\n", name, pr.Repo, pr.Number)
 		if m.pendingAction.ID == "atlantis-apply" && (!reviewApproved(pr.ReviewDecision) || !ciPassing(pr.CIStatus)) {
 			b.WriteString(s.Error.Render("Warning: applying before PR is approved and CI is passing.") + "\n")
 			b.WriteString(s.Muted.Render("Approval: ") + m.theme.ReviewStatus(pr.ReviewDecision) + "\n")
@@ -1359,12 +1388,10 @@ func (m Model) commandPanel() string {
 		b.WriteString(s.Muted.Render("no matching commands"))
 	} else {
 		for i, action := range matches {
-			name := ""
-			if len(action.Commands) > 0 {
-				name = action.Commands[0]
-			}
+			name := truncateANSIWidth(action.Commands[0], 18)
 			nameStyled := s.TitleStrong.Render(":" + name)
-			descStyled := s.Muted.Render(action.Label)
+			width := min(48, m.width-12) - len(name) - 14
+			descStyled := s.Muted.Render(truncateANSIWidth(actionDisplayLabel(action), max(1, width)))
 			confirmMark := ""
 			if action.Confirmation != confirmationNone {
 				confirmMark = s.Muted.Render(" [confirm]")

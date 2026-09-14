@@ -1251,6 +1251,7 @@ func (m *Model) cycleSortMode() tea.Cmd {
 		current = pr.Number
 	}
 	m.sortMode = m.sortMode.Next()
+	m.cfg.Sort = m.sortMode.String()
 	m.applyPRSettings()
 	m.message = "sort: " + m.sortMode.String()
 	if current != 0 {
@@ -1261,7 +1262,7 @@ func (m *Model) cycleSortMode() tea.Cmd {
 			}
 		}
 	}
-	return saveSortCmd(m.cfg, m.sortMode)
+	return saveSortCmd(m.cfg)
 }
 
 func (m *Model) applyPRSettings() {
@@ -1382,7 +1383,7 @@ func (m Model) handleColorschemeKey(key string) (tea.Model, tea.Cmd) {
 		m.cfg.Theme = chosen.Name
 		m.theme = uitheme.New(chosen, m.theme.Profile, m.theme.NoColor)
 		m.mode = m.prevMode
-		return m, tea.Batch(m.finishStatus("theme: "+chosen.Name, false), saveThemeCmd(m.cfg, chosen.Name))
+		return m, tea.Batch(m.finishStatus("theme: "+chosen.Name, false), saveThemeCmd(m.cfg))
 	}
 	return m, nil
 }
@@ -1437,6 +1438,7 @@ func (m Model) handleCommandKey(key string) (tea.Model, tea.Cmd) {
 				idx = len(matches) - 1
 			}
 			command = matches[idx]
+			m.commandInput = command.Commands[0]
 			ok = true
 		}
 		if !ok {
