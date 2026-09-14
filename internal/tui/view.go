@@ -78,7 +78,7 @@ func (m Model) inboxView() string {
 		}
 		fmt.Fprintf(&b, "%s\n", line)
 	}
-	b.WriteString("\nj/k navigate  enter inspect  a approve, y confirm  c comment  r refresh  v toggle diff  1/2/3/4 summary\n")
+	fmt.Fprintf(&b, "\n%s/%s navigate  %s inspect  %s approve, %s confirm  %s comment  %s refresh  %s toggle diff  %s/%s/%s/%s summary\n", m.actionAlias("move-down"), m.actionAlias("move-up"), m.actionAlias("inspect-pr"), m.actionAlias("approve-with-confirmation"), m.actionAlias("approve-confirm"), m.actionAlias("write-comment"), m.actionAlias("refresh-pr"), m.actionAlias("toggle-diff"), m.actionAlias("summary-files"), m.actionAlias("summary-commits"), m.actionAlias("summary-comments"), m.actionAlias("summary-atlantis"))
 	return b.String()
 }
 
@@ -102,7 +102,7 @@ func (m Model) detailView() string {
 	for _, file := range pr.Files {
 		fmt.Fprintf(&b, "%-8s %s (+%d -%d)\n", file.Status, file.Path, file.Additions, file.Deletions)
 	}
-	b.WriteString("\na approve, y confirm  c comment  r refresh  :ai run AI review  v toggle diff  V full diff pager  1/2/3/4 summary  esc inbox\n")
+	fmt.Fprintf(&b, "\n%s approve, %s confirm  %s comment  %s refresh  %s run AI review  %s toggle diff  %s full diff pager  %s/%s/%s/%s summary  %s inbox\n", m.actionAlias("approve-with-confirmation"), m.actionAlias("approve-confirm"), m.actionAlias("write-comment"), m.actionAlias("refresh-pr"), m.actionCommandAlias("ai-review"), m.actionAlias("toggle-diff"), m.actionAlias("open-diff-pager"), m.actionAlias("summary-files"), m.actionAlias("summary-commits"), m.actionAlias("summary-comments"), m.actionAlias("summary-atlantis"), m.actionAlias("back-to-inbox"))
 	return b.String()
 }
 
@@ -110,7 +110,7 @@ func (m Model) diffView() string {
 	if m.width > 0 {
 		return m.layoutView()
 	}
-	return m.diff + "\n\nesc/enter back  q quit\n"
+	return fmt.Sprintf("%s\n\n%s back  %s quit\n", m.diff, m.actionAlias("diff-close"), m.actionAlias("quit"))
 }
 
 func (m Model) approveView() string {
@@ -127,7 +127,7 @@ func (m Model) approveView() string {
 	if pr.Triage.AI != nil {
 		writeAINotes(&b, pr.Triage)
 	}
-	b.WriteString("\nPress y to approve via gh pr review --approve, n/esc to cancel.\n")
+	fmt.Fprintf(&b, "\nPress %s to approve via gh pr review --approve, %s to cancel.\n", m.actionAlias("approve-confirm"), m.actionAlias("approve-cancel"))
 	return b.String()
 }
 
@@ -136,7 +136,7 @@ func (m Model) commentView() string {
 	if !ok {
 		return m.inboxView()
 	}
-	return fmt.Sprintf("Comment on %s #%d\n\n%s\n\nenter submit  esc cancel\n", pr.Repo, pr.Number, m.comment)
+	return fmt.Sprintf("Comment on %s #%d\n\n%s\n\n%s submit  %s cancel\n", pr.Repo, pr.Number, m.comment, m.actionAlias("comment-submit"), m.actionAlias("comment-cancel"))
 }
 
 func (m Model) helpView() string {
@@ -453,7 +453,15 @@ func (m Model) actionAlias(id string) string {
 	if !ok || len(action.Keys) == 0 {
 		return ""
 	}
-	return strings.Join(action.Keys, "/")
+	return truncateANSIWidth(strings.Join(action.Keys, "/"), 18)
+}
+
+func (m Model) actionCommandAlias(id string) string {
+	action, ok := m.actions.actionByID(id)
+	if !ok || len(action.Commands) == 0 {
+		return ""
+	}
+	return truncateANSIWidth(":"+strings.Join(action.Commands, "/:"), 18)
 }
 
 func (m Model) footerView() string {
@@ -1342,7 +1350,7 @@ func (m Model) approvePanel() string {
 	if pr.Triage.AI != nil {
 		writeStyledAINotes(&b, m, pr.Triage)
 	}
-	b.WriteString("\ny approve  n/esc cancel")
+	b.WriteString("\n" + m.actionAlias("approve-confirm") + " approve  " + m.actionAlias("approve-cancel") + " cancel")
 	return b.String()
 }
 
@@ -1358,7 +1366,7 @@ func (m Model) commandView() string {
 	if m.width > 0 {
 		return m.layoutView()
 	}
-	return fmt.Sprintf(":%s\n\nenter execute  esc cancel\n", m.commandInput)
+	return fmt.Sprintf(":%s\n\n%s execute  %s cancel\n", m.commandInput, m.actionAlias("command-submit"), m.actionAlias("command-cancel"))
 }
 
 func (m Model) commandPanel() string {
@@ -1411,7 +1419,7 @@ func (m Model) commandPanel() string {
 	}
 
 	b.WriteString("\n")
-	b.WriteString(s.Muted.Render("enter execute  esc cancel"))
+	b.WriteString(s.Muted.Render(m.actionAlias("command-submit") + " execute  " + m.actionAlias("command-cancel") + " cancel"))
 	return b.String()
 }
 
@@ -1447,7 +1455,7 @@ func (m Model) settingsPanel() string {
 	}
 
 	b.WriteString("\n")
-	b.WriteString(s.Muted.Render("j/k select  enter/space toggle  esc close"))
+	b.WriteString(s.Muted.Render(m.actionAlias("settings-next") + "/" + m.actionAlias("settings-prev") + " select  " + m.actionAlias("settings-toggle") + " toggle  " + m.actionAlias("settings-close") + " close"))
 	return b.String()
 }
 
@@ -1474,7 +1482,7 @@ func (m Model) colorschemePanel() string {
 		b.WriteString("\n")
 	}
 	b.WriteString("\n")
-	b.WriteString(s.Muted.Render("j/k move  enter select  esc cancel"))
+	b.WriteString(s.Muted.Render(m.actionAlias("colorscheme-next") + "/" + m.actionAlias("colorscheme-prev") + " move  " + m.actionAlias("colorscheme-confirm") + " select  " + m.actionAlias("colorscheme-cancel") + " cancel"))
 	return b.String()
 }
 

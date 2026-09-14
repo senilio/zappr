@@ -392,6 +392,61 @@ func TestModalHintsUseConfiguredActions(t *testing.T) {
 	}
 }
 
+func TestRemainingModalAndFallbackHintsUseConfiguredActions(t *testing.T) {
+	cfg := config.Default()
+	cfg.Actions["approve-confirm"] = config.ActionConfig{Keys: []string{"Y"}}
+	cfg.Actions["approve-cancel"] = config.ActionConfig{Keys: []string{"N"}}
+	cfg.Actions["comment-submit"] = config.ActionConfig{Keys: []string{"S"}}
+	cfg.Actions["comment-cancel"] = config.ActionConfig{Keys: []string{"X"}}
+	cfg.Actions["command-submit"] = config.ActionConfig{Keys: []string{"E"}}
+	cfg.Actions["command-cancel"] = config.ActionConfig{Keys: []string{"C"}}
+	cfg.Actions["settings-next"] = config.ActionConfig{Keys: []string{"J"}}
+	cfg.Actions["settings-prev"] = config.ActionConfig{Keys: []string{"K"}}
+	cfg.Actions["settings-toggle"] = config.ActionConfig{Keys: []string{"T"}}
+	cfg.Actions["settings-close"] = config.ActionConfig{Keys: []string{"B"}}
+	cfg.Actions["colorscheme-next"] = config.ActionConfig{Keys: []string{"J"}}
+	cfg.Actions["colorscheme-prev"] = config.ActionConfig{Keys: []string{"K"}}
+	cfg.Actions["colorscheme-confirm"] = config.ActionConfig{Keys: []string{"S"}}
+	cfg.Actions["colorscheme-cancel"] = config.ActionConfig{Keys: []string{"X"}}
+	m, _ := configuredModel(t, cfg, true)
+
+	if panel := stripANSI(m.approvePanel()); !strings.Contains(panel, "Y approve  N cancel") {
+		t.Fatalf("approve hint = %q", panel)
+	}
+	if view := stripANSI(m.approveView()); !strings.Contains(view, "Y to approve") || !strings.Contains(view, "N to cancel") {
+		t.Fatalf("approve fallback = %q", view)
+	}
+	if view := stripANSI(m.commentView()); !strings.Contains(view, "S submit  X cancel") {
+		t.Fatalf("comment fallback = %q", view)
+	}
+	m.mode = ModeCommand
+	if panel := stripANSI(m.commandPanel()); !strings.Contains(panel, "E execute  C cancel") {
+		t.Fatalf("command hint = %q", panel)
+	}
+	if view := stripANSI(m.commandView()); !strings.Contains(view, "E execute  C cancel") {
+		t.Fatalf("command fallback = %q", view)
+	}
+	if panel := stripANSI(m.settingsPanel()); !strings.Contains(panel, "J/K select  T toggle  B close") {
+		t.Fatalf("settings hint = %q", panel)
+	}
+	if panel := stripANSI(m.colorschemePanel()); !strings.Contains(panel, "J/K move  S select  X cancel") {
+		t.Fatalf("colorscheme hint = %q", panel)
+	}
+}
+
+func TestModalHintsTruncateLongConfiguredAliases(t *testing.T) {
+	cfg := config.Default()
+	longKey := strings.Repeat("x", 80)
+	cfg.Actions["command-submit"] = config.ActionConfig{Keys: []string{longKey}}
+	m, _ := configuredModel(t, cfg, true)
+	m.width = 40
+	m.mode = ModeCommand
+
+	if panel := stripANSI(m.commandPanel()); strings.Contains(panel, longKey) {
+		t.Fatalf("command hint = %q, contains untruncated alias", panel)
+	}
+}
+
 func TestSettingsSavePreservesActions(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(t.TempDir(), "config"))
 	cfg := config.Default()
@@ -1331,7 +1386,7 @@ func TestApprovalViewUsesModalOverlayWhenSized(t *testing.T) {
 	if strings.Contains(view, "Press y to approve") {
 		t.Fatalf("approval view should not use legacy full-screen prompt: %q", view)
 	}
-	if !strings.Contains(view, "y approve  n/esc cancel") {
+	if !strings.Contains(view, m.actionAlias("approve-confirm")+" approve  "+m.actionAlias("approve-cancel")+" cancel") {
 		t.Fatalf("approval view missing modal controls: %q", view)
 	}
 }
