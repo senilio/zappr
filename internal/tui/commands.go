@@ -220,54 +220,6 @@ func (r actionRegistry) exactCommand(input string) (tuiAction, bool) {
 	return action, ok
 }
 
-// viCommand keeps the existing palette execution path working until it is
-// routed through actionRegistry in the next change.
-type viCommand struct {
-	Name           string
-	Description    string
-	RequireConfirm bool
-}
-
-var allCommands = legacyCommands()
-
-func legacyCommands() []viCommand {
-	defaults := config.DefaultActions()
-	var commands []viCommand
-	for _, action := range actionDescriptors {
-		for _, name := range defaults[action.ID].Commands {
-			commands = append(commands, viCommand{Name: name, Description: action.Label, RequireConfirm: action.Confirmation == confirmationMandatory})
-		}
-	}
-	return commands
-}
-
-// matchingCommands returns commands whose Name starts with prefix (case-insensitive).
-func matchingCommands(prefix string) []viCommand {
-	prefix = strings.ToLower(prefix)
-	var out []viCommand
-	for _, cmd := range allCommands {
-		if strings.HasPrefix(strings.ToLower(cmd.Name), prefix) {
-			out = append(out, cmd)
-		}
-	}
-	return out
-}
-
-// exactCommand returns the single command whose Name exactly matches input, or false.
-func exactCommand(input string) (viCommand, bool) {
-	input = strings.ToLower(strings.TrimSpace(input))
-	for _, cmd := range allCommands {
-		if strings.ToLower(cmd.Name) == input {
-			return cmd, true
-		}
-	}
-	return viCommand{}, false
-}
-
-func isAtlantisApply(cmd viCommand) bool {
-	return strings.EqualFold(cmd.Name, "aa")
-}
-
 func ciPassing(status string) bool {
 	switch strings.ToLower(strings.TrimSpace(status)) {
 	case "passing", "success":

@@ -352,31 +352,113 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case ModeColorscheme:
 		return m.handleColorschemeKey(key)
 	case ModeHelp:
-		if key == "esc" || key == "?" || key == "enter" {
+		if action, ok := m.actions.actionForKey(actionContextHelp, key); ok && action.ID == "help-close" {
 			m.mode = m.prevMode
 		}
 		return m, nil
 	case ModeSettings:
 		return m.handleSettingsKey(key)
-	case ModeDiff:
-		if key == "esc" || key == "enter" || key == "v" {
-			m.diffEnabled = false
-			m.mode = ModeDetail
-			m.focus = FocusSummary
-			return m, nil
+	}
+
+	context := actionContextNormal
+	if m.mode == ModeDiff {
+		context = actionContextDiff
+	}
+	action, ok := m.actions.actionForKey(context, key)
+	if !ok && context == actionContextDiff {
+		action, ok = m.actions.actionForKey(actionContextNormal, key)
+	}
+	if !ok {
+		return m, nil
+	}
+	return m.triggerAction(action)
+}
+
+func (m Model) triggerAction(action tuiAction) (tea.Model, tea.Cmd) {
+	if action.RequiresPR {
+		if _, ok := m.current(); !ok {
+			return m, m.finishStatus("no PR selected", true)
 		}
 	}
+	if action.Confirmation != confirmationNone {
+		if action.ID == "approve-with-confirmation" {
+			m.mode = ModeConfirmApprove
+			return m, nil
+		}
+		m.pendingAction = action
+		m.mode = ModeConfirmCommand
+		return m, nil
+	}
+	return m.executeAction(action)
+}
 
-	if key == "q" || key == "ctrl+c" {
+func (m Model) executeAction(action tuiAction) (tea.Model, tea.Cmd) {
+	if action.ID == "quit" {
 		return m, tea.Quit
 	}
-
-	if key == "?" {
+	if action.ID == "help" {
 		m.prevMode = m.mode
 		m.mode = ModeHelp
 		return m, nil
 	}
-	if m.setSummaryMode(key) {
+	if action.ID == "diff-close" {
+		m.diffEnabled = false
+		m.mode = ModeDetail
+		m.focus = FocusSummary
+		return m, nil
+	}
+	fromCommand := m.mode == ModeCommand || m.mode == ModeConfirmCommand
+	if fromCommand {
+		m.mode = m.prevMode
+		m.commandInput = ""
+	}
+	if action.ID == "colorscheme" {
+		palettes := uitheme.AllPalettes()
+		m.colorschemeIndex = 0
+		for i, p := range palettes {
+			if strings.EqualFold(p.Name, m.theme.Palette.Name) {
+				m.colorschemeIndex = i
+				break
+			}
+		}
+		m.mode = ModeColorscheme
+		return m, nil
+	}
+	pr, _ := m.current()
+	if action.Comment != "" {
+		return m, tea.Batch(m.startStatus("commenting…"), commentCmd(m.app, pr, action.Comment))
+	}
+	switch action.ID {
+	case "ai-review":
+		if !m.aiEnabled {
+			return m, m.finishStatus("AI review not configured", true)
+		}
+		m.loading = true
+		m.message = "re-running analysis"
+		m.aiAnalyzing = true
+		return m, tea.Batch(m.startStatus("re-running analysis…"), analyzeCmd(m.app, pr))
+	case "atlantis-plan":
+		return m, tea.Batch(m.startStatus("commenting…"), commentCmd(m.app, pr, "atlantis plan"))
+	case "atlantis-apply":
+		return m, tea.Batch(m.startStatus("commenting…"), commentCmd(m.app, pr, "atlantis apply"))
+	case "atlantis-unlock":
+		return m, tea.Batch(m.startStatus("commenting…"), commentCmd(m.app, pr, "atlantis unlock"))
+	case "toggle-draft":
+		status := "marking ready…"
+		if !pr.Draft {
+			status = "marking draft…"
+		}
+		return m, tea.Batch(m.startStatus(status), toggleDraftCmd(m.app, pr))
+	case "close-pr":
+		return m, tea.Batch(m.startStatus("closing…"), closePRCmd(m.app, pr, ""))
+	case "update-branch":
+		return m, tea.Batch(m.startStatus("updating branch…"), updateBranchCmd(m.app, pr))
+	case "request-changes":
+		return m, tea.Batch(m.startStatus("requesting changes…"), requestChangesCmd(m.app, pr, ""))
+	case "merge-pr":
+		return m, tea.Batch(m.startStatus("merging…"), mergePRCmd(m.app, pr))
+	}
+	if m.setSummaryMode(action.ID) {
 		m.summaryVP.GotoTop()
 		m.commitIndex = 0
 		m.summaryXOffset = 0
@@ -390,12 +472,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	switch key {
-	case "tab":
+	switch action.ID {
+	case "focus-next":
 		m.nextFocus()
-	case "shift+tab":
+	case "focus-prev":
 		m.prevFocus()
-	case "g":
+	case "go-top":
 		switch m.focus {
 		case FocusSummary:
 			m.summaryVP.GotoTop()
@@ -408,7 +490,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, m.autoDiffCmd()
 			}
 		}
-	case "G":
+	case "go-bottom":
 		switch m.focus {
 		case FocusSummary:
 			m.summaryVP.GotoBottom()
@@ -422,21 +504,21 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, m.autoDiffCmd()
 			}
 		}
-	case "o":
+	case "open-pr":
 		if pr, ok := m.current(); ok {
 			return m, openPRURLCmd(prURL(pr))
 		}
-	case "C":
+	case "copy-pr-url":
 		if m.focus == FocusInbox {
 			if pr, ok := m.current(); ok {
 				return m, tea.Batch(m.finishStatus("copied URL", false), copyPRURLCmd(prURL(pr)))
 			}
 		}
-	case "f":
+	case "settings":
 		m.prevMode = m.mode
 		m.mode = ModeSettings
 		m.settingsCursor = 0
-	case "j", "down":
+	case "move-down":
 		switch m.focus {
 		case FocusSummary:
 			if m.summaryMode == SummaryModeCommits {
@@ -466,7 +548,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, m.autoDiffCmd()
 			}
 		}
-	case "k", "up":
+	case "move-up":
 		switch m.focus {
 		case FocusSummary:
 			if m.summaryMode == SummaryModeCommits {
@@ -496,19 +578,19 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, m.autoDiffCmd()
 			}
 		}
-	case "left":
+	case "pan-left":
 		if m.focus == FocusDiff {
 			m.diffXOffset = max(0, m.diffXOffset-max(1, m.diffVP.Width/2))
 		} else if m.focus == FocusSummary && m.summaryMode == SummaryModeCommits {
 			m.summaryXOffset = max(0, m.summaryXOffset-max(1, m.summaryVP.Width/2))
 		}
-	case "right":
+	case "pan-right":
 		if m.focus == FocusDiff {
 			m.diffXOffset = min(m.maxDiffXOffset(), m.diffXOffset+max(1, m.diffVP.Width/2))
 		} else if m.focus == FocusSummary && m.summaryMode == SummaryModeCommits {
 			m.summaryXOffset = m.summaryXOffset + max(1, m.summaryVP.Width/2)
 		}
-	case "pgdown", " ":
+	case "page-down":
 		switch m.focus {
 		case FocusSummary:
 			m.summaryVP.ViewDown()
@@ -517,7 +599,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case FocusInbox:
 			m.inboxVP.ViewDown()
 		}
-	case "pgup":
+	case "page-up":
 		switch m.focus {
 		case FocusSummary:
 			m.summaryVP.ViewUp()
@@ -526,7 +608,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case FocusInbox:
 			m.inboxVP.ViewUp()
 		}
-	case "shift+down":
+	case "next-item":
 		if m.summaryMode == SummaryModeCommits {
 			if pr, ok := m.current(); ok && m.commitIndex < len(pr.Commits)-1 {
 				m.commitIndex++
@@ -547,7 +629,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.syncSummaryVP()
 			m.syncSummaryVPScroll()
 		}
-	case "shift+up":
+	case "prev-item":
 		if m.summaryMode == SummaryModeCommits {
 			if m.commitIndex > 0 {
 				m.commitIndex--
@@ -562,18 +644,18 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.syncSummaryVP()
 			m.syncSummaryVPScroll()
 		}
-	case "enter":
+	case "inspect-pr":
 		if _, ok := m.current(); ok {
 			m.mode = ModeDetail
 			m.focus = FocusSummary
 			m.resizeViewports()
 			return m, m.autoDiffCmd()
 		}
-	case "esc":
+	case "back-to-inbox":
 		m.mode = ModeInbox
 		m.focus = FocusInbox
 		m.resizeViewports()
-	case "r":
+	case "refresh-pr":
 		if pr, ok := m.current(); ok {
 			m.loading = true
 			m.message = "refreshing PR"
@@ -582,11 +664,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.loading = true
 		m.message = "refreshing"
 		return m, tea.Batch(m.startStatus("refreshing…"), refreshCmd(m.app, m.repo))
-	case "R":
+	case "refresh-inbox":
 		m.loading = true
 		m.message = "refreshing"
 		return m, tea.Batch(m.startStatus("refreshing…"), refreshCmd(m.app, m.repo))
-	case "v":
+	case "toggle-diff":
 		if m.width > 0 && m.width < minMediumWidth {
 			// Narrow: toggle full-screen diff mode.
 			if m.diffEnabled {
@@ -628,11 +710,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.focus = FocusSummary
 		}
 		return m, nil
-	case "V":
+	case "open-diff-pager":
 		if pr, ok := m.current(); ok {
 			return m, openDiffPagerCmd(pr.Repo, pr.Number)
 		}
-	case "n", "]":
+	case "next-file":
 		if len(m.diffFiles) > 0 && m.fileIndex < len(m.diffFiles)-1 {
 			m.fileIndex++
 			m.diffVP.GotoTop()
@@ -646,7 +728,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.syncSummaryVP()
 			m.syncSummaryVPScroll()
 		}
-	case "p", "[":
+	case "prev-file":
 		if m.fileIndex > 0 {
 			m.fileIndex--
 			m.diffVP.GotoTop()
@@ -654,7 +736,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.syncSummaryVP()
 			m.syncSummaryVPScroll()
 		}
-	case "s":
+	case "toggle-side-by-side":
 		if m.rawDiff != "" && (m.mode == ModeDiff || m.focus == FocusDiff) {
 			m.sideBySide = !m.sideBySide
 			pr, _ := m.current()
@@ -662,7 +744,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			diffInnerW := mv.paneInnerWidth(mv.diffPaneOuterWidth(), FocusDiff)
 			return m, renderDiffCmd(m.rawDiff, pr.Repo, pr.Number, prRefreshKey(pr), diffRenderWidth(diffInnerW), m.sideBySide)
 		}
-	case "x":
+	case "toggle-file-content":
 		if !m.diffEnabled {
 			return m, nil
 		}
@@ -691,21 +773,17 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		path := pr.Files[m.fileIndex].Path
 		return m, tea.Batch(m.startStatus("fetching file…"), fileContentCmd(m.app.GitHub, pr.Repo, path, pr.HeadRefOID, key))
-	case "a":
-		if _, ok := m.current(); ok {
-			m.mode = ModeConfirmApprove
-		}
-	case "A":
+	case "approve-with-confirmation":
+		m.mode = ModeConfirmApprove
+	case "approve-immediately":
 		if pr, ok := m.current(); ok {
 			m.loading = true
 			return m, tea.Batch(m.startStatus("approving…"), approveCmd(m.app, pr))
 		}
-	case "c":
-		if _, ok := m.current(); ok {
-			m.comment = ""
-			m.mode = ModeComment
-		}
-	case ":":
+	case "write-comment":
+		m.comment = ""
+		m.mode = ModeComment
+	case "command-palette":
 		m.commandInput = ""
 		m.commandCursor = 0
 		m.prevMode = m.mode
@@ -715,11 +793,15 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleApproveKey(key string) (tea.Model, tea.Cmd) {
-	if key == "esc" || key == "n" {
+	action, ok := m.actions.actionForKey(actionContextApprove, key)
+	if !ok {
+		return m, nil
+	}
+	if action.ID == "approve-cancel" {
 		m.mode = ModeDetail
 		return m, nil
 	}
-	if key == "y" {
+	if action.ID == "approve-confirm" {
 		pr, ok := m.current()
 		if !ok {
 			m.mode = ModeInbox
@@ -1143,15 +1225,15 @@ func (m Model) maxDiffXOffset() int {
 	return max(0, longestLineWidth(m.currentDiffContent())-m.diffVP.Width)
 }
 
-func (m *Model) setSummaryMode(key string) bool {
-	switch key {
-	case "1":
+func (m *Model) setSummaryMode(actionID string) bool {
+	switch actionID {
+	case "summary-files":
 		m.summaryMode = SummaryModeFiles
-	case "2":
+	case "summary-commits":
 		m.summaryMode = SummaryModeCommits
-	case "3":
+	case "summary-comments":
 		m.summaryMode = SummaryModeComments
-	case "4":
+	case "summary-atlantis":
 		m.summaryMode = SummaryModeAtlantis
 	default:
 		return false
@@ -1237,27 +1319,23 @@ func filterPRs(prs []model.PullRequest, hideDrafts bool) []model.PullRequest {
 }
 
 func (m Model) handleSettingsKey(key string) (tea.Model, tea.Cmd) {
-	switch key {
-	case "esc", "f":
+	action, ok := m.actions.actionForKey(actionContextSettings, key)
+	if !ok {
+		return m, nil
+	}
+	switch action.ID {
+	case "settings-close":
 		m.mode = m.prevMode
 		return m, nil
-	case "j", "down":
+	case "settings-next":
 		if m.settingsCursor < 1 {
 			m.settingsCursor++
 		}
-	case "k", "up":
+	case "settings-prev":
 		if m.settingsCursor > 0 {
 			m.settingsCursor--
 		}
-	case " ", "enter", "right", "l":
-		if m.settingsCursor == 0 {
-			m.hideDrafts = !m.hideDrafts
-			m.applyPRSettings()
-			m.message = draftFilterMessage(m.hideDrafts)
-		} else {
-			return m, m.cycleSortMode()
-		}
-	case "left", "h":
+	case "settings-toggle":
 		if m.settingsCursor == 0 {
 			m.hideDrafts = !m.hideDrafts
 			m.applyPRSettings()
@@ -1278,23 +1356,27 @@ func draftFilterMessage(hideDrafts bool) string {
 
 func (m Model) handleColorschemeKey(key string) (tea.Model, tea.Cmd) {
 	palettes := uitheme.AllPalettes()
-	switch key {
-	case "esc", "q":
+	action, ok := m.actions.actionForKey(actionContextColorscheme, key)
+	if !ok {
+		return m, nil
+	}
+	switch action.ID {
+	case "colorscheme-cancel":
 		// Revert to original theme (re-resolve from saved config).
 		m.theme = uitheme.DefaultWithName(m.cfg.Theme)
 		m.mode = m.prevMode
 		return m, nil
-	case "j", "down":
+	case "colorscheme-next":
 		if m.colorschemeIndex < len(palettes)-1 {
 			m.colorschemeIndex++
 			m.theme = uitheme.New(palettes[m.colorschemeIndex], m.theme.Profile, m.theme.NoColor)
 		}
-	case "k", "up":
+	case "colorscheme-prev":
 		if m.colorschemeIndex > 0 {
 			m.colorschemeIndex--
 			m.theme = uitheme.New(palettes[m.colorschemeIndex], m.theme.Profile, m.theme.NoColor)
 		}
-	case "enter", " ":
+	case "colorscheme-confirm":
 		// Confirm: save to config.
 		chosen := palettes[m.colorschemeIndex]
 		m.cfg.Theme = chosen.Name
@@ -1306,23 +1388,24 @@ func (m Model) handleColorschemeKey(key string) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleCommentKey(key string) (tea.Model, tea.Cmd) {
-	if key == "esc" {
-		m.mode = ModeDetail
-		return m, nil
-	}
-	if key == "enter" {
-		pr, ok := m.current()
-		if !ok || m.comment == "" {
+	if action, ok := m.actions.actionForKey(actionContextComment, key); ok {
+		switch action.ID {
+		case "comment-cancel":
+			m.mode = ModeDetail
+			return m, nil
+		case "comment-submit":
+			pr, ok := m.current()
+			if !ok || m.comment == "" {
+				return m, nil
+			}
+			m.loading = true
+			return m, tea.Batch(m.startStatus("commenting…"), commentCmd(m.app, pr, m.comment))
+		case "comment-backspace":
+			if len(m.comment) > 0 {
+				m.comment = m.comment[:len(m.comment)-1]
+			}
 			return m, nil
 		}
-		m.loading = true
-		return m, tea.Batch(m.startStatus("commenting…"), commentCmd(m.app, pr, m.comment))
-	}
-	if key == "backspace" || key == "ctrl+h" {
-		if len(m.comment) > 0 {
-			m.comment = m.comment[:len(m.comment)-1]
-		}
-		return m, nil
 	}
 	if len(key) == 1 {
 		m.comment += key
@@ -1331,17 +1414,18 @@ func (m Model) handleCommentKey(key string) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleCommandKey(key string) (tea.Model, tea.Cmd) {
-	if key == "esc" {
+	action, control := m.actions.actionForKey(actionContextCommand, key)
+	if control && action.ID == "command-cancel" {
 		m.mode = m.prevMode
 		m.commandInput = ""
 		m.commandCursor = 0
 		return m, nil
 	}
-	if key == "enter" {
-		cmd, ok := exactCommand(m.commandInput)
+	if control && action.ID == "command-submit" {
+		command, ok := m.actions.exactCommand(m.commandInput)
 		if !ok {
 			// No exact match; try cursor-selected command from matching list
-			matches := matchingCommands(m.commandInput)
+			matches := m.actions.matchingCommands(m.commandInput)
 			if len(matches) == 0 {
 				return m, nil
 			}
@@ -1352,21 +1436,16 @@ func (m Model) handleCommandKey(key string) (tea.Model, tea.Cmd) {
 			if idx >= len(matches) {
 				idx = len(matches) - 1
 			}
-			cmd = matches[idx]
+			command = matches[idx]
 			ok = true
 		}
 		if !ok {
 			return m, nil
 		}
-		if cmd.RequireConfirm {
-			m.pendingCmd = cmd
-			m.mode = ModeConfirmCommand
-			return m, nil
-		}
-		return m.executeCommand(cmd)
+		return m.triggerAction(command)
 	}
-	if key == "down" || key == "ctrl+j" {
-		matches := matchingCommands(m.commandInput)
+	if control && action.ID == "command-next" {
+		matches := m.actions.matchingCommands(m.commandInput)
 		if len(matches) > 0 {
 			m.commandCursor++
 			if m.commandCursor >= len(matches) {
@@ -1375,14 +1454,14 @@ func (m Model) handleCommandKey(key string) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
-	if key == "up" || key == "ctrl+k" {
+	if control && action.ID == "command-prev" {
 		m.commandCursor--
 		if m.commandCursor < 0 {
 			m.commandCursor = 0
 		}
 		return m, nil
 	}
-	if key == "backspace" || key == "ctrl+h" {
+	if control && action.ID == "command-backspace" {
 		if len(m.commandInput) > 0 {
 			m.commandInput = m.commandInput[:len(m.commandInput)-1]
 		}
@@ -1398,78 +1477,17 @@ func (m Model) handleCommandKey(key string) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleConfirmCommandKey(key string) (tea.Model, tea.Cmd) {
-	if key == "esc" || key == "n" {
-		m.mode = m.prevMode
-		m.commandInput = ""
-		return m, nil
-	}
-	if key == "y" || key == "enter" {
-		return m.executeCommand(m.pendingCmd)
-	}
-	return m, nil
-}
-
-func (m Model) executeCommand(cmd viCommand) (tea.Model, tea.Cmd) {
-	// Commands that do not require a selected PR.
-	if cmd.Name == "colorscheme" {
-		m.commandInput = ""
-		palettes := uitheme.AllPalettes()
-		m.colorschemeIndex = 0
-		for i, p := range palettes {
-			if strings.EqualFold(p.Name, m.theme.Palette.Name) {
-				m.colorschemeIndex = i
-				break
-			}
-		}
-		m.mode = ModeColorscheme
-		return m, nil
-	}
-	if cmd.Name == "refresh-all" {
-		m.mode = m.prevMode
-		m.commandInput = ""
-		m.loading = true
-		m.message = "refreshing"
-		return m, tea.Batch(m.startStatus("refreshing…"), refreshCmd(m.app, m.repo))
-	}
-
-	pr, ok := m.current()
+	action, ok := m.actions.actionForKey(actionContextCommandConfirmation, key)
 	if !ok {
+		return m, nil
+	}
+	if action.ID == "command-cancel-confirmation" {
 		m.mode = m.prevMode
 		m.commandInput = ""
 		return m, nil
 	}
-	m.mode = m.prevMode
-	m.commandInput = ""
-
-	switch cmd.Name {
-	case "ai":
-		if !m.aiEnabled {
-			return m, m.finishStatus("AI review not configured", true)
-		}
-		m.loading = true
-		m.message = "re-running analysis"
-		m.aiAnalyzing = true
-		return m, tea.Batch(m.startStatus("re-running analysis…"), analyzeCmd(m.app, pr))
-	case "ap":
-		return m, tea.Batch(m.startStatus("commenting…"), commentCmd(m.app, pr, "atlantis plan"))
-	case "aa":
-		return m, tea.Batch(m.startStatus("commenting…"), commentCmd(m.app, pr, "atlantis apply"))
-	case "au":
-		return m, tea.Batch(m.startStatus("commenting…"), commentCmd(m.app, pr, "atlantis unlock"))
-	case "draft":
-		action := "marking ready…"
-		if !pr.Draft {
-			action = "marking draft…"
-		}
-		return m, tea.Batch(m.startStatus(action), toggleDraftCmd(m.app, pr))
-	case "close":
-		return m, tea.Batch(m.startStatus("closing…"), closePRCmd(m.app, pr, ""))
-	case "update":
-		return m, tea.Batch(m.startStatus("updating branch…"), updateBranchCmd(m.app, pr))
-	case "block":
-		return m, tea.Batch(m.startStatus("requesting changes…"), requestChangesCmd(m.app, pr, ""))
-	case "merge":
-		return m, tea.Batch(m.startStatus("merging…"), mergePRCmd(m.app, pr))
+	if action.ID == "command-confirm" {
+		return m.executeAction(m.pendingAction)
 	}
 	return m, nil
 }

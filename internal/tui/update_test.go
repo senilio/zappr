@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -12,6 +13,49 @@ import (
 	"github.com/senilio/zappr/internal/model"
 	"github.com/senilio/zappr/internal/tui/theme"
 )
+
+type commentRecordingGitHub struct {
+	comments []string
+}
+
+func (f *commentRecordingGitHub) ListOpenPRs(context.Context, string) ([]model.PullRequest, error) {
+	return nil, nil
+}
+
+func (f *commentRecordingGitHub) GetPR(context.Context, string, int) (model.PullRequest, error) {
+	return model.PullRequest{}, nil
+}
+
+func (f *commentRecordingGitHub) GetDiff(context.Context, string, int) (string, error) {
+	return "", nil
+}
+
+func (f *commentRecordingGitHub) GetCommitDiff(context.Context, string, string) (string, error) {
+	return "", nil
+}
+
+func (f *commentRecordingGitHub) GetFileContent(context.Context, string, string, string) (string, error) {
+	return "", nil
+}
+
+func (f *commentRecordingGitHub) Approve(context.Context, string, int, string) error { return nil }
+
+func (f *commentRecordingGitHub) Comment(_ context.Context, _ string, _ int, body string) error {
+	f.comments = append(f.comments, body)
+	return nil
+}
+
+func (f *commentRecordingGitHub) ToggleDraft(context.Context, string, int, bool) error { return nil }
+
+func (f *commentRecordingGitHub) ClosePR(context.Context, string, int, string) error { return nil }
+
+func (f *commentRecordingGitHub) UpdateBranch(context.Context, string, int) error { return nil }
+
+func (f *commentRecordingGitHub) RequestChanges(context.Context, string, int, string) error {
+	return nil
+}
+
+func (f *commentRecordingGitHub) MergePR(context.Context, string, int) error { return nil }
 
 func TestFilterPRsShowsDraftsByDefault(t *testing.T) {
 	prs := []model.PullRequest{
@@ -196,6 +240,85 @@ func TestActionRegistryAllowsKeysInDifferentContexts(t *testing.T) {
 	}
 }
 
+func TestConfiguredCommentAction(t *testing.T) {
+	cfg := config.Default()
+	cfg.Actions["hello"] = config.ActionConfig{Keys: []string{"H"}, Commands: []string{"hello"}, Comment: "hello world"}
+	m, provider := configuredModel(t, cfg, true)
+
+	m = updateKey(m, "H")
+	assertMode(t, m, ModeConfirmCommand)
+	m = updateKey(m, "y")
+	assertCommentBody(t, provider, "hello world")
+
+	m, provider = configuredModel(t, cfg, true)
+	m = openCommandAndType(m, "hello")
+	m = updateKey(m, "enter")
+	assertMode(t, m, ModeConfirmCommand)
+	m = updateKey(m, "y")
+	assertCommentBody(t, provider, "hello world")
+}
+
+func TestConfiguredCommentActionWithoutConfirmation(t *testing.T) {
+	cfg := config.Default()
+	confirm := false
+	cfg.Actions["hello"] = config.ActionConfig{Keys: []string{"H"}, Comment: " hello world ", Confirm: &confirm}
+	m, provider := configuredModel(t, cfg, true)
+
+	m = updateKey(m, "H")
+
+	if m.mode == ModeConfirmCommand {
+		t.Fatal("comment action should not require confirmation")
+	}
+	assertCommentBody(t, provider, " hello world ")
+}
+
+func TestConfiguredActionSupportsCommandOnlyAndKeyOnly(t *testing.T) {
+	cfg := config.Default()
+	confirm := false
+	cfg.Actions["command-comment"] = config.ActionConfig{Commands: []string{"comment-only"}, Comment: "command", Confirm: &confirm}
+	cfg.Actions["key-comment"] = config.ActionConfig{Keys: []string{"H"}, Comment: "key", Confirm: &confirm}
+	m, provider := configuredModel(t, cfg, true)
+
+	m = openCommandAndType(m, "comment-only")
+	m = updateKey(m, "enter")
+	m = updateKey(m, "H")
+
+	if got := strings.Join(provider.comments, ","); got != "command,key" {
+		t.Fatalf("comments = %q, want command,key", got)
+	}
+}
+
+func TestConfiguredActionWithoutSelectedPRShowsStatus(t *testing.T) {
+	cfg := config.Default()
+	confirm := false
+	cfg.Actions["hello"] = config.ActionConfig{Keys: []string{"H"}, Comment: "hello world", Confirm: &confirm}
+	m, provider := configuredModel(t, cfg, false)
+
+	m = updateKey(m, "H")
+
+	if !m.statusActive || m.statusText != "no PR selected" {
+		t.Fatalf("status = active:%v text:%q, want active no PR selected", m.statusActive, m.statusText)
+	}
+	if len(provider.comments) != 0 {
+		t.Fatalf("comments = %#v, want none", provider.comments)
+	}
+}
+
+func TestConfiguredBuiltinActionUsesRemappedCommand(t *testing.T) {
+	cfg := config.Default()
+	cfg.Actions["ai-review"] = config.ActionConfig{Commands: []string{"review"}}
+	m, _ := configuredModel(t, cfg, true)
+	m.aiEnabled = true
+
+	m = openCommandAndType(m, "review")
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+
+	if !m.aiAnalyzing {
+		t.Fatal(":review should run the ai-review action")
+	}
+}
+
 func TestShiftCCopiesPRURL(t *testing.T) {
 	m := modelWithPRs([]model.PullRequest{{
 		Number: 1,
@@ -297,7 +420,11 @@ func TestInboxMarksDraftPRs(t *testing.T) {
 // minimalModel returns a Model with enough state for key-handling tests,
 // without requiring a real *app.App.
 func minimalModel() Model {
-	m := Model{}
+	actions, err := newActionRegistry(config.DefaultActions())
+	if err != nil {
+		panic(err)
+	}
+	m := Model{actions: actions}
 	m.prs = []model.PullRequest{
 		{Number: 1, Repo: "org/repo", Title: "first"},
 	}
@@ -315,6 +442,62 @@ func modelWithPRs(prs []model.PullRequest, selected int) Model {
 	m.allPRs = prs
 	m.selected = selected
 	return m
+}
+
+func configuredModel(t *testing.T, cfg config.Config, selected bool) (Model, *commentRecordingGitHub) {
+	t.Helper()
+	provider := &commentRecordingGitHub{}
+	m, err := New(app.New(provider, nil, nil), "org/repo", 0, "", cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	m.mode = ModeInbox
+	m.focus = FocusInbox
+	if selected {
+		m.prs = []model.PullRequest{{Number: 1, Repo: "org/repo"}}
+		m.allPRs = m.prs
+	}
+	return m, provider
+}
+
+func updateKey(m Model, key string) Model {
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)})
+	if cmd != nil {
+		runCmd(cmd)
+	}
+	return next.(Model)
+}
+
+func runCmd(cmd tea.Cmd) {
+	if msg := cmd(); msg != nil {
+		if batch, ok := msg.(tea.BatchMsg); ok {
+			for _, command := range batch {
+				runCmd(command)
+			}
+		}
+	}
+}
+
+func openCommandAndType(m Model, input string) Model {
+	m = updateKey(m, ":")
+	for _, key := range input {
+		m = updateKey(m, string(key))
+	}
+	return m
+}
+
+func assertMode(t *testing.T, m Model, want Mode) {
+	t.Helper()
+	if m.mode != want {
+		t.Fatalf("mode = %v, want %v", m.mode, want)
+	}
+}
+
+func assertCommentBody(t *testing.T, provider *commentRecordingGitHub, want string) {
+	t.Helper()
+	if len(provider.comments) != 1 || provider.comments[0] != want {
+		t.Fatalf("comments = %#v, want %#v", provider.comments, []string{want})
+	}
 }
 
 func pressKey(m Model, key string) Model {
@@ -1049,7 +1232,7 @@ func TestAtlantisApplyWarningForUnsafePR(t *testing.T) {
 		ReviewDecision: "REVIEW_REQUIRED",
 	}}, 0)
 	m.mode = ModeConfirmCommand
-	m.pendingCmd = viCommand{Name: "aa", Description: "comment \"atlantis apply\" on selected PR", RequireConfirm: true}
+	m.pendingAction, _ = m.actions.actionByID("atlantis-apply")
 
 	panel := stripANSI(m.commandPanel())
 	if !strings.Contains(panel, "Warning: applying before PR is approved and CI is passing.") {
@@ -1516,9 +1699,9 @@ func TestDiffContentNoLeakedNonSGREscapes(t *testing.T) {
 func TestColorschemePicker(t *testing.T) {
 	m := modelWithPRs([]model.PullRequest{{Number: 1, Repo: "org/repo"}}, 0)
 
-	// Open via :colorscheme executeCommand
-	cmd := viCommand{Name: "colorscheme"}
-	next, _ := m.executeCommand(cmd)
+	// Open via the colorscheme action.
+	action, _ := m.actions.actionByID("colorscheme")
+	next, _ := m.executeAction(action)
 	m = next.(Model)
 	if m.mode != ModeColorscheme {
 		t.Fatalf("mode = %v, want ModeColorscheme", m.mode)

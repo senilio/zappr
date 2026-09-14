@@ -1341,9 +1341,8 @@ func (m Model) commandPanel() string {
 		if !ok {
 			return "no PR selected"
 		}
-		fmt.Fprintf(&b, "Run :%s on %s #%d?\n\n", m.pendingCmd.Name, pr.Repo, pr.Number)
-		fmt.Fprintf(&b, "%s\n\n", s.Muted.Render(m.pendingCmd.Description))
-		if isAtlantisApply(m.pendingCmd) && (!reviewApproved(pr.ReviewDecision) || !ciPassing(pr.CIStatus)) {
+		fmt.Fprintf(&b, "Run %s on %s #%d?\n\n", m.pendingAction.Label, pr.Repo, pr.Number)
+		if m.pendingAction.ID == "atlantis-apply" && (!reviewApproved(pr.ReviewDecision) || !ciPassing(pr.CIStatus)) {
 			b.WriteString(s.Error.Render("Warning: applying before PR is approved and CI is passing.") + "\n")
 			b.WriteString(s.Muted.Render("Approval: ") + m.theme.ReviewStatus(pr.ReviewDecision) + "\n")
 			b.WriteString(s.Muted.Render("CI: ") + m.theme.CIStatus(pr.CIStatus) + "\n\n")
@@ -1355,15 +1354,19 @@ func (m Model) commandPanel() string {
 	// Command input line with cursor.
 	fmt.Fprintf(&b, ":%s_\n\n", m.commandInput)
 
-	matches := matchingCommands(m.commandInput)
+	matches := m.actions.matchingCommands(m.commandInput)
 	if len(matches) == 0 {
 		b.WriteString(s.Muted.Render("no matching commands"))
 	} else {
-		for i, cmd := range matches {
-			nameStyled := s.TitleStrong.Render(":" + cmd.Name)
-			descStyled := s.Muted.Render(cmd.Description)
+		for i, action := range matches {
+			name := ""
+			if len(action.Commands) > 0 {
+				name = action.Commands[0]
+			}
+			nameStyled := s.TitleStrong.Render(":" + name)
+			descStyled := s.Muted.Render(action.Label)
 			confirmMark := ""
-			if cmd.RequireConfirm {
+			if action.Confirmation != confirmationNone {
 				confirmMark = s.Muted.Render(" [confirm]")
 			}
 			if i == m.commandCursor {

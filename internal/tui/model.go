@@ -87,7 +87,7 @@ type Model struct {
 	summaryMode        SummaryMode
 
 	commandInput  string    // typed input after ":"
-	pendingCmd    viCommand // command awaiting confirmation
+	pendingAction tuiAction // action awaiting confirmation
 	commandCursor int       // selected index in command palette list
 
 	aiAnalyzing bool // true while AI analysis is in-flight
