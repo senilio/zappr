@@ -68,6 +68,7 @@ type Model struct {
 	height           int
 	theme            uitheme.Theme
 	cfg              config.Config
+	actions          actionRegistry
 	aiEnabled        bool
 	prevMode         Mode
 	inboxVP          viewport.Model
@@ -138,7 +139,11 @@ const (
 	FocusDiff
 )
 
-func New(zappr *app.App, repo string, pollEvery time.Duration, themeName string, cfg config.Config) Model {
+func New(zappr *app.App, repo string, pollEvery time.Duration, themeName string, cfg config.Config) (Model, error) {
+	actions, err := newActionRegistry(cfg.Actions)
+	if err != nil {
+		return Model{}, fmt.Errorf("configure TUI actions: %w", err)
+	}
 	if pollEvery == 0 {
 		pollEvery = 2 * time.Minute
 	}
@@ -147,7 +152,7 @@ func New(zappr *app.App, repo string, pollEvery time.Duration, themeName string,
 	dvp := viewport.New(0, 0)
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
-	return Model{app: zappr, repo: repo, loading: true, pollEvery: pollEvery, sortMode: app.ParseSortMode(cfg.Sort), theme: uitheme.DefaultWithName(themeName), cfg: cfg, aiEnabled: zappr.AIEnabled(), inboxVP: ivp, summaryVP: vp, diffVP: dvp, statusSpinner: sp, summaryMode: SummaryModeFiles}
+	return Model{app: zappr, repo: repo, loading: true, pollEvery: pollEvery, sortMode: app.ParseSortMode(cfg.Sort), theme: uitheme.DefaultWithName(themeName), cfg: cfg, actions: actions, aiEnabled: zappr.AIEnabled(), inboxVP: ivp, summaryVP: vp, diffVP: dvp, statusSpinner: sp, summaryMode: SummaryModeFiles}, nil
 }
 
 func (m Model) Init() tea.Cmd {

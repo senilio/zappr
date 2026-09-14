@@ -98,9 +98,101 @@ func TestSettingsSortModePersistsToConfig(t *testing.T) {
 
 func TestNewLoadsSortModeFromConfig(t *testing.T) {
 	zappr := app.New(nil, nil, nil)
-	m := New(zappr, "org/repo", 0, "", config.Config{Sort: "number"})
+	cfg := config.Default()
+	cfg.Sort = "number"
+	m, err := New(zappr, "org/repo", 0, "", cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
 	if m.sortMode != app.SortNumber {
 		t.Fatalf("sortMode = %s, want number", m.sortMode)
+	}
+}
+
+func TestActionRegistryResolvesCustomAliases(t *testing.T) {
+	cfg := config.Default()
+	cfg.Actions["hello"] = config.ActionConfig{
+		Keys: []string{"H"}, Commands: []string{"hello"}, Comment: "hello world",
+	}
+
+	registry, err := newActionRegistry(cfg.Actions)
+	if err != nil {
+		t.Fatalf("newActionRegistry: %v", err)
+	}
+	byKey, ok := registry.actionForKey(actionContextNormal, "H")
+	if !ok || byKey.ID != "hello" {
+		t.Fatalf("actionForKey(H) = %#v, %v; want hello, true", byKey, ok)
+	}
+	byCommand, ok := registry.exactCommand("hello")
+	if !ok || byCommand.ID != byKey.ID {
+		t.Fatalf("exactCommand(hello) = %#v, %v; want hello, true", byCommand, ok)
+	}
+}
+
+func TestActionRegistryRejectsNormalKeyCollision(t *testing.T) {
+	cfg := config.Default()
+	cfg.Actions["help"] = config.ActionConfig{Keys: []string{"H"}}
+	cfg.Actions["hello"] = config.ActionConfig{Keys: []string{"H"}, Comment: "hello world"}
+
+	_, err := newActionRegistry(cfg.Actions)
+	if err == nil || !strings.Contains(err.Error(), "help") || !strings.Contains(err.Error(), "hello") {
+		t.Fatalf("newActionRegistry error = %v, want conflicting action IDs", err)
+	}
+}
+
+func TestActionRegistryRejectsCommandCollisionIgnoringCase(t *testing.T) {
+	cfg := config.Default()
+	cfg.Actions["hello"] = config.ActionConfig{Commands: []string{"AI"}, Comment: "hello world"}
+
+	_, err := newActionRegistry(cfg.Actions)
+	if err == nil || !strings.Contains(err.Error(), "ai-review") || !strings.Contains(err.Error(), "hello") {
+		t.Fatalf("newActionRegistry error = %v, want conflicting action IDs", err)
+	}
+}
+
+func TestActionRegistryRejectsTextEntryControlCollision(t *testing.T) {
+	cfg := config.Default()
+	cfg.Actions["command-cancel"] = config.ActionConfig{Keys: []string{"enter"}}
+
+	_, err := newActionRegistry(cfg.Actions)
+	if err == nil || !strings.Contains(err.Error(), "command-submit") {
+		t.Fatalf("newActionRegistry error = %v, want command-submit collision", err)
+	}
+}
+
+func TestActionRegistryRequiresQuitBinding(t *testing.T) {
+	cfg := config.Default()
+	cfg.Actions["quit"] = config.ActionConfig{}
+
+	_, err := newActionRegistry(cfg.Actions)
+	if err == nil || !strings.Contains(err.Error(), "quit") {
+		t.Fatalf("newActionRegistry error = %v, want quit binding error", err)
+	}
+}
+
+func TestNewAnnotatesActionConfigurationError(t *testing.T) {
+	cfg := config.Default()
+	cfg.Actions["quit"] = config.ActionConfig{}
+
+	_, err := New(app.New(nil, nil, nil), "org/repo", 0, "", cfg)
+	if err == nil || !strings.Contains(err.Error(), "configure TUI actions") {
+		t.Fatalf("New error = %v, want annotated action configuration error", err)
+	}
+}
+
+func TestActionRegistryAllowsKeysInDifferentContexts(t *testing.T) {
+	cfg := config.Default()
+	cfg.Actions["settings-next"] = config.ActionConfig{Keys: []string{"j"}}
+
+	registry, err := newActionRegistry(cfg.Actions)
+	if err != nil {
+		t.Fatalf("newActionRegistry: %v", err)
+	}
+	if action, ok := registry.actionForKey(actionContextNormal, "j"); !ok || action.ID != "move-down" {
+		t.Fatalf("normal j = %#v, %v; want move-down, true", action, ok)
+	}
+	if action, ok := registry.actionForKey(actionContextSettings, "j"); !ok || action.ID != "settings-next" {
+		t.Fatalf("settings j = %#v, %v; want settings-next, true", action, ok)
 	}
 }
 
