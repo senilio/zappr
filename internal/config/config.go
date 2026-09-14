@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -183,7 +184,7 @@ func Load() (Config, error) {
 	for id, override := range file.Actions {
 		action, builtin := cfg.Actions[id]
 		if !builtin {
-			if override.Comment == nil || *override.Comment == "" {
+			if override.Comment == nil || strings.TrimSpace(*override.Comment) == "" {
 				continue
 			}
 			confirmed := true

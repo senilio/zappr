@@ -167,6 +167,29 @@ func TestLoadOverlaysActionFields(t *testing.T) {
 	}
 }
 
+func TestLoadIgnoresWhitespaceOnlyCustomComment(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(t.TempDir(), "config"))
+
+	path, err := DefaultConfigPath()
+	if err != nil {
+		t.Fatalf("DefaultConfigPath: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("actions:\n  hello:\n    comment: '   '\n"), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if _, ok := cfg.Actions["hello"]; ok {
+		t.Fatal("whitespace-only custom comment created an action")
+	}
+}
+
 func TestSavePreservesActions(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(t.TempDir(), "config"))
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(t.TempDir(), "cache"))
