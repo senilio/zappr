@@ -1,10 +1,13 @@
 package cli
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/senilio/zappr/internal/config"
 )
 
 func TestEnsureWritablePrivateModes(t *testing.T) {
@@ -46,6 +49,42 @@ func TestUsageTextSeparatesRefreshAndAIReview(t *testing.T) {
 	if strings.Contains(text, "r refresh/AI review") {
 		t.Fatalf("usage text = %q, contains stale combined shortcut", text)
 	}
+}
+
+func TestConfigInitDoesNotPreloadConfig(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(t.TempDir(), "config"))
+	path, err := config.DefaultConfigPath()
+	if err != nil {
+		t.Fatalf("DefaultConfigPath: %v", err)
+	}
+	output := captureStdout(t, func() {
+		if err := Run([]string{"config", "init"}); err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+	})
+	if output != "created "+path+"\n" {
+		t.Fatalf("output = %q, want created path", output)
+	}
+}
+
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	old := os.Stdout
+	read, write, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	os.Stdout = write
+	defer func() { os.Stdout = old }()
+	fn()
+	if err := write.Close(); err != nil {
+		t.Fatalf("close stdout: %v", err)
+	}
+	output, err := io.ReadAll(read)
+	if err != nil {
+		t.Fatalf("read stdout: %v", err)
+	}
+	return string(output)
 }
 
 func writableFileMode(t *testing.T, path string) os.FileMode {

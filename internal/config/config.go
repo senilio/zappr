@@ -5,10 +5,17 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
+)
+
+var (
+	actionIDPattern     = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
+	commandAliasPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]*$`)
 )
 
 type Config struct {
@@ -183,9 +190,18 @@ func Load() (Config, error) {
 	cfg.Sort = file.Sort
 	for id, override := range file.Actions {
 		action, builtin := cfg.Actions[id]
+		if !actionIDPattern.MatchString(id) {
+			return cfg, fmt.Errorf("actions.%s: invalid action ID", id)
+		}
+		if builtin && override.Comment != nil {
+			return cfg, fmt.Errorf("actions.%s.comment: built-in action behavior cannot be changed", id)
+		}
+		if builtin && override.Confirm != nil {
+			return cfg, fmt.Errorf("actions.%s.confirm: built-in action behavior cannot be changed", id)
+		}
 		if !builtin {
 			if override.Comment == nil || strings.TrimSpace(*override.Comment) == "" {
-				continue
+				return cfg, fmt.Errorf("actions.%s.comment: custom action comment is required", id)
 			}
 			confirmed := true
 			action = ActionConfig{Comment: *override.Comment, Confirm: &confirmed}
@@ -202,6 +218,9 @@ func Load() (Config, error) {
 		}
 		cfg.Actions[id] = action
 	}
+	if err := validateActions(cfg.Actions); err != nil {
+		return cfg, err
+	}
 	if cfg.Refresh.Interval == 0 {
 		cfg.Refresh.Interval = Duration(2 * time.Minute)
 	}
@@ -212,6 +231,41 @@ func Load() (Config, error) {
 		cfg.Cache.Path, _ = DefaultCachePath()
 	}
 	return cfg, nil
+}
+
+func validateActions(actions map[string]ActionConfig) error {
+	builtins := DefaultActions()
+	ids := make([]string, 0, len(actions))
+	for id := range actions {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	commands := make(map[string]string)
+	for _, id := range ids {
+		action := actions[id]
+		if !actionIDPattern.MatchString(id) {
+			return fmt.Errorf("actions.%s: invalid action ID", id)
+		}
+		if _, builtin := builtins[id]; !builtin {
+			if strings.TrimSpace(action.Comment) == "" {
+				return fmt.Errorf("actions.%s.comment: custom action comment is required", id)
+			}
+			if len(action.Keys) == 0 && len(action.Commands) == 0 {
+				return fmt.Errorf("actions.%s: custom action requires a key or command", id)
+			}
+		}
+		for _, command := range action.Commands {
+			if !commandAliasPattern.MatchString(command) {
+				return fmt.Errorf("actions.%s.commands: invalid command alias %q", id, command)
+			}
+			alias := strings.ToLower(command)
+			if other, exists := commands[alias]; exists {
+				return fmt.Errorf("actions.%s.commands: command alias %q conflicts with %s", id, command, other)
+			}
+			commands[alias] = id
+		}
+	}
+	return nil
 }
 
 type Duration time.Duration

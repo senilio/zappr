@@ -30,6 +30,9 @@ func Run(args []string) error {
 		fmt.Printf("zappr %s\n", Version)
 		return nil
 	}
+	if args[0] == "config" {
+		return runConfig(args[1:])
+	}
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -60,8 +63,6 @@ func Run(args []string) error {
 			return err
 		}
 		return runApprove(zappr, args[1:])
-	case "config":
-		return runConfig(args[1:])
 	case "cache":
 		zappr, err := newApp(cfg)
 		if err != nil {

@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -167,26 +168,38 @@ func TestLoadOverlaysActionFields(t *testing.T) {
 	}
 }
 
-func TestLoadIgnoresWhitespaceOnlyCustomComment(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", filepath.Join(t.TempDir(), "config"))
-
-	path, err := DefaultConfigPath()
-	if err != nil {
-		t.Fatalf("DefaultConfigPath: %v", err)
+func TestLoadRejectsInvalidAction(t *testing.T) {
+	tests := []struct {
+		name string
+		yaml string
+		want string
+	}{
+		{"blank comment", "actions:\n  hello:\n    comment: '   '\n", "actions.hello.comment"},
+		{"invalid command", "actions:\n  hello:\n    keys: [H]\n    commands: [bad name]\n    comment: hello\n", "actions.hello.commands"},
+		{"conflicting command", "actions:\n  hello:\n    commands: [AI]\n    comment: hello\n", "ai-review"},
+		{"no trigger", "actions:\n  hello:\n    comment: hello\n", "actions.hello"},
+		{"leading command colon", "actions:\n  hello:\n    commands: [':hello']\n    comment: hello\n", "actions.hello.commands"},
+		{"duplicate command case", "actions:\n  hello:\n    commands: [hello]\n    comment: hello\n  goodbye:\n    commands: [HELLO]\n    comment: goodbye\n", "hello"},
+		{"builtin comment", "actions:\n  merge-pr:\n    comment: hello\n", "actions.merge-pr.comment"},
+		{"invalid id", "actions:\n  Hello:\n    keys: [H]\n    comment: hello\n", "actions.Hello"},
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	if err := os.WriteFile(path, []byte("actions:\n  hello:\n    comment: '   '\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-
-	cfg, err := Load()
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if _, ok := cfg.Actions["hello"]; ok {
-		t.Fatal("whitespace-only custom comment created an action")
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("XDG_CONFIG_HOME", filepath.Join(t.TempDir(), "config"))
+			path, err := DefaultConfigPath()
+			if err != nil {
+				t.Fatalf("DefaultConfigPath: %v", err)
+			}
+			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+				t.Fatalf("mkdir: %v", err)
+			}
+			if err := os.WriteFile(path, []byte(test.yaml), 0o600); err != nil {
+				t.Fatalf("write config: %v", err)
+			}
+			if _, err := Load(); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("Load error = %v, want containing %q", err, test.want)
+			}
+		})
 	}
 }
 
