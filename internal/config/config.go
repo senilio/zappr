@@ -11,12 +11,27 @@ import (
 )
 
 type Config struct {
-	Refresh RefreshConfig `yaml:"refresh"`
-	AI      AIConfig      `yaml:"ai"`
-	Cache   CacheConfig   `yaml:"cache"`
-	Trust   TrustConfig   `yaml:"trust"`
-	Theme   string        `yaml:"theme,omitempty"`
-	Sort    string        `yaml:"sort,omitempty"`
+	Refresh RefreshConfig           `yaml:"refresh"`
+	AI      AIConfig                `yaml:"ai"`
+	Cache   CacheConfig             `yaml:"cache"`
+	Trust   TrustConfig             `yaml:"trust"`
+	Theme   string                  `yaml:"theme,omitempty"`
+	Sort    string                  `yaml:"sort,omitempty"`
+	Actions map[string]ActionConfig `yaml:"actions"`
+}
+
+type ActionConfig struct {
+	Keys     []string `yaml:"keys,omitempty"`
+	Commands []string `yaml:"commands,omitempty"`
+	Comment  string   `yaml:"comment,omitempty"`
+	Confirm  *bool    `yaml:"confirm,omitempty"`
+}
+
+type actionOverride struct {
+	Keys     *[]string `yaml:"keys"`
+	Commands *[]string `yaml:"commands"`
+	Comment  *string   `yaml:"comment"`
+	Confirm  *bool     `yaml:"confirm"`
 }
 
 type TrustConfig struct {
@@ -45,6 +60,79 @@ func Default() Config {
 		Refresh: RefreshConfig{Interval: Duration(2 * time.Minute)},
 		AI:      AIConfig{Timeout: Duration(60 * time.Second)},
 		Cache:   CacheConfig{Path: cachePath},
+		Actions: DefaultActions(),
+	}
+}
+
+func DefaultActions() map[string]ActionConfig {
+	return map[string]ActionConfig{
+		"quit":                        {Keys: []string{"q", "ctrl+c"}},
+		"help":                        {Keys: []string{"?"}},
+		"summary-files":               {Keys: []string{"1"}},
+		"summary-commits":             {Keys: []string{"2"}},
+		"summary-comments":            {Keys: []string{"3"}},
+		"summary-atlantis":            {Keys: []string{"4"}},
+		"focus-next":                  {Keys: []string{"tab"}},
+		"focus-prev":                  {Keys: []string{"shift+tab"}},
+		"go-top":                      {Keys: []string{"g"}},
+		"go-bottom":                   {Keys: []string{"G"}},
+		"open-pr":                     {Keys: []string{"o"}},
+		"copy-pr-url":                 {Keys: []string{"C"}},
+		"settings":                    {Keys: []string{"f"}},
+		"move-down":                   {Keys: []string{"j", "down"}},
+		"move-up":                     {Keys: []string{"k", "up"}},
+		"pan-left":                    {Keys: []string{"left"}},
+		"pan-right":                   {Keys: []string{"right"}},
+		"page-down":                   {Keys: []string{"pgdown", " "}},
+		"page-up":                     {Keys: []string{"pgup"}},
+		"next-item":                   {Keys: []string{"shift+down"}},
+		"prev-item":                   {Keys: []string{"shift+up"}},
+		"inspect-pr":                  {Keys: []string{"enter"}},
+		"back-to-inbox":               {Keys: []string{"esc"}},
+		"refresh-pr":                  {Keys: []string{"r"}},
+		"refresh-inbox":               {Keys: []string{"R"}, Commands: []string{"refresh-all"}},
+		"toggle-diff":                 {Keys: []string{"v"}},
+		"open-diff-pager":             {Keys: []string{"V"}},
+		"next-file":                   {Keys: []string{"n", "]"}},
+		"prev-file":                   {Keys: []string{"p", "["}},
+		"toggle-side-by-side":         {Keys: []string{"s"}},
+		"toggle-file-content":         {Keys: []string{"x"}},
+		"approve-with-confirmation":   {Keys: []string{"a"}},
+		"approve-immediately":         {Keys: []string{"A"}},
+		"write-comment":               {Keys: []string{"c"}},
+		"command-palette":             {Keys: []string{":"}},
+		"help-close":                  {Keys: []string{"esc", "?", "enter"}},
+		"diff-close":                  {Keys: []string{"esc", "enter", "v"}},
+		"approve-confirm":             {Keys: []string{"y"}},
+		"approve-cancel":              {Keys: []string{"esc", "n"}},
+		"settings-close":              {Keys: []string{"esc", "f"}},
+		"settings-next":               {Keys: []string{"j", "down"}},
+		"settings-prev":               {Keys: []string{"k", "up"}},
+		"settings-toggle":             {Keys: []string{" ", "enter", "right", "l", "left", "h"}},
+		"colorscheme-cancel":          {Keys: []string{"esc", "q"}},
+		"colorscheme-next":            {Keys: []string{"j", "down"}},
+		"colorscheme-prev":            {Keys: []string{"k", "up"}},
+		"colorscheme-confirm":         {Keys: []string{"enter", " "}},
+		"comment-cancel":              {Keys: []string{"esc"}},
+		"comment-submit":              {Keys: []string{"enter"}},
+		"comment-backspace":           {Keys: []string{"backspace", "ctrl+h"}},
+		"command-cancel":              {Keys: []string{"esc"}},
+		"command-submit":              {Keys: []string{"enter"}},
+		"command-next":                {Keys: []string{"down", "ctrl+j"}},
+		"command-prev":                {Keys: []string{"up", "ctrl+k"}},
+		"command-backspace":           {Keys: []string{"backspace", "ctrl+h"}},
+		"command-confirm":             {Keys: []string{"y", "enter"}},
+		"command-cancel-confirmation": {Keys: []string{"esc", "n"}},
+		"atlantis-plan":               {Commands: []string{"ap"}},
+		"atlantis-apply":              {Commands: []string{"aa"}},
+		"atlantis-unlock":             {Commands: []string{"au"}},
+		"toggle-draft":                {Commands: []string{"draft"}},
+		"close-pr":                    {Commands: []string{"close"}},
+		"update-branch":               {Commands: []string{"update"}},
+		"request-changes":             {Commands: []string{"block"}},
+		"merge-pr":                    {Commands: []string{"merge"}},
+		"ai-review":                   {Commands: []string{"ai"}},
+		"colorscheme":                 {Commands: []string{"colorscheme"}},
 	}
 }
 
@@ -56,7 +144,7 @@ func Load() (Config, error) {
 	}
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return cfg, nil
+		return cfg, Save(cfg)
 	}
 	if err != nil {
 		return cfg, err
@@ -67,8 +155,51 @@ func Load() (Config, error) {
 	if err := os.Chmod(path, 0o600); err != nil {
 		return cfg, err
 	}
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	file := struct {
+		Refresh RefreshConfig             `yaml:"refresh"`
+		AI      AIConfig                  `yaml:"ai"`
+		Cache   CacheConfig               `yaml:"cache"`
+		Trust   TrustConfig               `yaml:"trust"`
+		Theme   string                    `yaml:"theme,omitempty"`
+		Sort    string                    `yaml:"sort,omitempty"`
+		Actions map[string]actionOverride `yaml:"actions"`
+	}{
+		Refresh: cfg.Refresh,
+		AI:      cfg.AI,
+		Cache:   cfg.Cache,
+		Trust:   cfg.Trust,
+		Theme:   cfg.Theme,
+		Sort:    cfg.Sort,
+	}
+	if err := yaml.Unmarshal(data, &file); err != nil {
 		return cfg, fmt.Errorf("parse config %s: %w", path, err)
+	}
+	cfg.Refresh = file.Refresh
+	cfg.AI = file.AI
+	cfg.Cache = file.Cache
+	cfg.Trust = file.Trust
+	cfg.Theme = file.Theme
+	cfg.Sort = file.Sort
+	for id, override := range file.Actions {
+		action, builtin := cfg.Actions[id]
+		if !builtin {
+			if override.Comment == nil || *override.Comment == "" {
+				continue
+			}
+			confirmed := true
+			action = ActionConfig{Comment: *override.Comment, Confirm: &confirmed}
+		}
+		if override.Keys != nil {
+			action.Keys = append([]string(nil), (*override.Keys)...)
+		}
+		if override.Commands != nil {
+			action.Commands = append([]string(nil), (*override.Commands)...)
+		}
+		if !builtin && override.Confirm != nil {
+			confirmed := *override.Confirm
+			action.Confirm = &confirmed
+		}
+		cfg.Actions[id] = action
 	}
 	if cfg.Refresh.Interval == 0 {
 		cfg.Refresh.Interval = Duration(2 * time.Minute)
