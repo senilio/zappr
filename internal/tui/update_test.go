@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -279,7 +280,8 @@ func TestConfiguredCommentActionWithoutConfirmation(t *testing.T) {
 func fullscreenDiffModel(t *testing.T, cfg config.Config) (Model, *commentRecordingGitHub) {
 	t.Helper()
 	m, provider := configuredModel(t, cfg, true)
-	m.width = 100
+	// Below minMediumWidth so the diff really is full-screen, not just a pane.
+	m.width = 60
 	m.height = 40
 	m.resizeViewports()
 	m.diffEnabled = true
@@ -363,6 +365,70 @@ func TestFullscreenDiffCloseStillWorks(t *testing.T) {
 	m = updateKey(m, "esc")
 	if m.mode != ModeDetail {
 		t.Fatalf("mode = %v, want ModeDetail after diff-close", m.mode)
+	}
+}
+
+// paneDiffModel builds a layout wide enough that the diff is only one of three
+// visible panes, with ModeDiff set the way a diff-pane click sets it.
+func paneDiffModel(t *testing.T, cfg config.Config, width int) (Model, *commentRecordingGitHub) {
+	t.Helper()
+	m, provider := configuredModel(t, cfg, true)
+	m.width = width
+	m.height = 40
+	m.resizeViewports()
+	m.diffEnabled = true
+	m.rawDiff = "diff --git a/a b/a"
+	m.diff = strings.Repeat("diff line\n", 200)
+	m.diffVP.SetContent(m.diff)
+	m.mode = ModeDiff
+	m.focus = FocusDiff
+	return m, provider
+}
+
+func TestDiffPaneClickKeepsNormalKeysAlive(t *testing.T) {
+	for _, width := range []int{120, 80} {
+		t.Run(fmt.Sprintf("width%d", width), func(t *testing.T) {
+			cfg := config.Default()
+			confirm := false
+			cfg.Actions["hello"] = config.ActionConfig{Keys: []string{"H"}, Comment: "hello", Confirm: &confirm}
+			m, provider := paneDiffModel(t, cfg, width)
+
+			// Summary-mode switching via "2".
+			m2 := updateKey(m, "2")
+			if m2.summaryMode != SummaryModeCommits {
+				t.Errorf("summaryMode = %v, want SummaryModeCommits after \"2\"", m2.summaryMode)
+			}
+
+			// Command palette opening via ":".
+			m3 := updateKey(m, ":")
+			if m3.mode != ModeCommand {
+				t.Errorf("mode = %v, want ModeCommand after \":\"", m3.mode)
+			}
+
+			// Focus cycling via "tab".
+			m4 := updateKey(m, "tab")
+			if m4.focus == FocusDiff {
+				t.Error("tab did not change focus away from diff pane")
+			}
+
+			// Approval confirmation via "a".
+			m5 := updateKey(m, "a")
+			if m5.mode != ModeConfirmApprove {
+				t.Errorf("mode = %v, want ModeConfirmApprove after \"a\"", m5.mode)
+			}
+
+			// Comment composition via "c".
+			m6 := updateKey(m, "c")
+			if m6.mode != ModeComment {
+				t.Errorf("mode = %v, want ModeComment after \"c\"", m6.mode)
+			}
+
+			// A custom unconfirmed comment action is reachable in a pane layout.
+			updateKey(m, "H")
+			if len(provider.comments) != 1 || provider.comments[0] != "hello" {
+				t.Errorf("comments = %#v, want custom action to run in pane layout", provider.comments)
+			}
+		})
 	}
 }
 

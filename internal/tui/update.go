@@ -337,6 +337,15 @@ func (m Model) handleMouseClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// isFullscreenDiff reports whether the diff occupies the whole screen rather
+// than being one pane of a multi-pane layout. Only narrow layouts render the
+// diff full-screen; at wider widths View falls through to layoutView and all
+// three panes stay visible, so normal-context keys must keep working there.
+// The width test matches the one toggle-diff uses to enter ModeDiff.
+func (m Model) isFullscreenDiff() bool {
+	return m.mode == ModeDiff && m.width > 0 && m.width < minMediumWidth
+}
+
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 
@@ -361,7 +370,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	context := actionContextNormal
-	if m.mode == ModeDiff {
+	if m.isFullscreenDiff() {
 		context = actionContextDiff
 	}
 	action, ok := m.actions.actionForKey(context, key)
