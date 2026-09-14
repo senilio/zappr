@@ -365,9 +365,6 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		context = actionContextDiff
 	}
 	action, ok := m.actions.actionForKey(context, key)
-	if !ok && context == actionContextDiff {
-		action, ok = m.actions.actionForKey(actionContextNormal, key)
-	}
 	if !ok {
 		return m, nil
 	}
@@ -1437,8 +1434,10 @@ func (m Model) handleCommandKey(key string) (tea.Model, tea.Cmd) {
 			if idx >= len(matches) {
 				idx = len(matches) - 1
 			}
-			command = matches[idx]
-			m.commandInput = command.Commands[0]
+			command = matches[idx].action
+			// Normalize the input to the alias that actually matched so the
+			// confirmation prompt names the command the user selected.
+			m.commandInput = matches[idx].alias
 			ok = true
 		}
 		if !ok {

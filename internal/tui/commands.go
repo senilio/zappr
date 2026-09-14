@@ -157,7 +157,47 @@ func newActionRegistry(configured map[string]config.ActionConfig) (actionRegistr
 			return actionRegistry{}, fmt.Errorf("action %q requires a key binding", id)
 		}
 	}
+	registry.bindDiffFallbacks()
 	return registry, nil
+}
+
+// diffFallbackActionIDs are normal-context actions that stay reachable while the
+// full-screen diff is open. They only scroll, navigate, or change how the diff is
+// rendered, so none of them mutate a pull request. Actions that write to GitHub
+// (approvals, comments, merges, custom comment actions) are deliberately absent:
+// a key press meant for the diff viewer must never trigger a remote change.
+var diffFallbackActionIDs = []string{
+	"quit", "help",
+	"go-top", "go-bottom",
+	"move-down", "move-up",
+	"pan-left", "pan-right",
+	"page-down", "page-up",
+	"next-item", "prev-item",
+	"next-file", "prev-file",
+	"toggle-side-by-side", "toggle-file-content",
+}
+
+// bindDiffFallbacks copies the allowlisted normal-context bindings into the diff
+// context. Keys already claimed by a real diff-context action (such as
+// diff-close) keep that binding, preserving the previous lookup precedence.
+func (r *actionRegistry) bindDiffFallbacks() {
+	for _, id := range diffFallbackActionIDs {
+		action, ok := r.actionByID(id)
+		if !ok {
+			continue
+		}
+		for _, key := range action.Keys {
+			keys := r.keys[actionContextDiff]
+			if keys == nil {
+				keys = make(map[string]tuiAction)
+				r.keys[actionContextDiff] = keys
+			}
+			if _, taken := keys[key]; taken {
+				continue
+			}
+			keys[key] = action
+		}
+	}
 }
 
 var essentialActionIDs = []string{
@@ -201,13 +241,21 @@ func (r actionRegistry) actionForKey(context actionContext, key string) (tuiActi
 	return action, ok
 }
 
-func (r actionRegistry) matchingCommands(prefix string) []tuiAction {
+// commandMatch pairs a matched action with the specific command alias that
+// matched the typed input, so the palette can display and confirm that alias
+// instead of always falling back to the action's first alias.
+type commandMatch struct {
+	action tuiAction
+	alias  string
+}
+
+func (r actionRegistry) matchingCommands(prefix string) []commandMatch {
 	prefix = strings.ToLower(prefix)
-	var matches []tuiAction
+	var matches []commandMatch
 	for _, action := range r.actions {
 		for _, command := range action.Commands {
 			if strings.HasPrefix(strings.ToLower(command), prefix) {
-				matches = append(matches, action)
+				matches = append(matches, commandMatch{action: action, alias: command})
 				break
 			}
 		}

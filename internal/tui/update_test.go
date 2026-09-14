@@ -15,7 +15,8 @@ import (
 )
 
 type commentRecordingGitHub struct {
-	comments []string
+	comments  []string
+	approvals int
 }
 
 func (f *commentRecordingGitHub) ListOpenPRs(context.Context, string) ([]model.PullRequest, error) {
@@ -38,7 +39,10 @@ func (f *commentRecordingGitHub) GetFileContent(context.Context, string, string,
 	return "", nil
 }
 
-func (f *commentRecordingGitHub) Approve(context.Context, string, int, string) error { return nil }
+func (f *commentRecordingGitHub) Approve(context.Context, string, int, string) error {
+	f.approvals++
+	return nil
+}
 
 func (f *commentRecordingGitHub) Comment(_ context.Context, _ string, _ int, body string) error {
 	f.comments = append(f.comments, body)
@@ -272,6 +276,96 @@ func TestConfiguredCommentActionWithoutConfirmation(t *testing.T) {
 	assertCommentBody(t, provider, " hello world ")
 }
 
+func fullscreenDiffModel(t *testing.T, cfg config.Config) (Model, *commentRecordingGitHub) {
+	t.Helper()
+	m, provider := configuredModel(t, cfg, true)
+	m.width = 100
+	m.height = 40
+	m.resizeViewports()
+	m.diffEnabled = true
+	m.rawDiff = "diff --git a/a b/a"
+	m.diff = strings.Repeat("diff line "+strings.Repeat("x", 300)+"\n", 200)
+	m.diffVP.SetContent(m.diff)
+	m.mode = ModeDiff
+	m.focus = FocusDiff
+	return m, provider
+}
+
+func TestFullscreenDiffIgnoresMutatingNormalActions(t *testing.T) {
+	cfg := config.Default()
+	confirm := false
+	cfg.Actions["hello"] = config.ActionConfig{Keys: []string{"H"}, Comment: "hello", Confirm: &confirm}
+	m, provider := fullscreenDiffModel(t, cfg)
+
+	// "A" is approve-immediately, "H" is an unconfirmed custom comment action.
+	for _, key := range []string{"A", "H"} {
+		m = updateKey(m, key)
+	}
+
+	if provider.approvals != 0 {
+		t.Errorf("approvals = %d, want 0 in fullscreen diff", provider.approvals)
+	}
+	if len(provider.comments) != 0 {
+		t.Errorf("comments = %#v, want none in fullscreen diff", provider.comments)
+	}
+	if m.mode != ModeDiff {
+		t.Errorf("mode = %v, want ModeDiff to be preserved", m.mode)
+	}
+}
+
+func TestFullscreenDiffKeepsScrollingAndNavigation(t *testing.T) {
+	cfg := config.Default()
+
+	m, _ := fullscreenDiffModel(t, cfg)
+	m = updateKey(m, "j")
+	if m.diffVP.YOffset == 0 {
+		t.Error("j did not scroll diff down in fullscreen diff")
+	}
+	m = updateKey(m, "k")
+	if m.diffVP.YOffset != 0 {
+		t.Errorf("k did not scroll diff up, YOffset = %d", m.diffVP.YOffset)
+	}
+
+	m, _ = fullscreenDiffModel(t, cfg)
+	m = updateKey(m, "G")
+	bottom := m.diffVP.YOffset
+	if bottom == 0 {
+		t.Error("G did not jump to bottom in fullscreen diff")
+	}
+	m = updateKey(m, "g")
+	if m.diffVP.YOffset != 0 {
+		t.Errorf("g did not jump to top, YOffset = %d", m.diffVP.YOffset)
+	}
+
+	m, _ = fullscreenDiffModel(t, cfg)
+	m = updateKey(m, "pgdown")
+	if m.diffVP.YOffset == 0 {
+		t.Error("pgdown did not page down in fullscreen diff")
+	}
+	m = updateKey(m, "pgup")
+	if m.diffVP.YOffset != 0 {
+		t.Errorf("pgup did not page up, YOffset = %d", m.diffVP.YOffset)
+	}
+
+	m, _ = fullscreenDiffModel(t, cfg)
+	m = updateKey(m, "right")
+	if m.diffXOffset == 0 {
+		t.Error("right did not pan diff in fullscreen diff")
+	}
+	m = updateKey(m, "left")
+	if m.diffXOffset != 0 {
+		t.Errorf("left did not pan back, diffXOffset = %d", m.diffXOffset)
+	}
+}
+
+func TestFullscreenDiffCloseStillWorks(t *testing.T) {
+	m, _ := fullscreenDiffModel(t, config.Default())
+	m = updateKey(m, "esc")
+	if m.mode != ModeDetail {
+		t.Fatalf("mode = %v, want ModeDetail after diff-close", m.mode)
+	}
+}
+
 func TestConfiguredActionSupportsCommandOnlyAndKeyOnly(t *testing.T) {
 	cfg := config.Default()
 	confirm := false
@@ -316,6 +410,71 @@ func TestConfiguredBuiltinActionUsesRemappedCommand(t *testing.T) {
 
 	if !m.aiAnalyzing {
 		t.Fatal(":review should run the ai-review action")
+	}
+}
+
+func TestSummaryTitleUsesConfiguredAliases(t *testing.T) {
+	cfg := config.Default()
+	cfg.Actions["summary-files"] = config.ActionConfig{Keys: []string{"F"}}
+	cfg.Actions["summary-commits"] = config.ActionConfig{Keys: []string{"L"}}
+	cfg.Actions["summary-comments"] = config.ActionConfig{Keys: []string{"M"}}
+	cfg.Actions["summary-atlantis"] = config.ActionConfig{Keys: []string{"Z"}}
+	m, _ := configuredModel(t, cfg, true)
+	m.summaryMode = SummaryModeFiles
+
+	title := stripANSI(m.summaryTitle())
+	if want := "Summary [F files] [L] [M] [Z]"; title != want {
+		t.Fatalf("summary title = %q, want %q", title, want)
+	}
+}
+
+func TestCommandPaletteShowsMatchedAlias(t *testing.T) {
+	cfg := config.Default()
+	confirm := false
+	cfg.Actions["hello"] = config.ActionConfig{Commands: []string{"alpha", "zulu"}, Comment: "hi", Confirm: &confirm}
+	m, _ := configuredModel(t, cfg, true)
+	m.width = 100
+	m.height = 40
+
+	m = openCommandAndType(m, "zul")
+	panel := stripANSI(m.commandPanel())
+	if !strings.Contains(panel, ":zulu") {
+		t.Errorf("palette = %q, want matched alias :zulu", panel)
+	}
+	if strings.Contains(panel, ":alpha") {
+		t.Errorf("palette = %q, should not show unmatched alias :alpha", panel)
+	}
+}
+
+func TestCommandPaletteConfirmsMatchedAlias(t *testing.T) {
+	cfg := config.Default()
+	cfg.Actions["hello"] = config.ActionConfig{Commands: []string{"alpha", "zulu"}, Comment: "hi"}
+	m, _ := configuredModel(t, cfg, true)
+	m.width = 100
+	m.height = 40
+
+	// Prefix match resolved via cursor selection.
+	m = openCommandAndType(m, "zul")
+	m = pressSpecial(m, tea.KeyEnter)
+	if m.mode != ModeConfirmCommand {
+		t.Fatalf("mode = %v, want ModeConfirmCommand", m.mode)
+	}
+	if panel := stripANSI(m.commandPanel()); !strings.Contains(panel, "Run :zulu on org/repo #1?") {
+		t.Errorf("confirmation = %q, want matched alias :zulu", panel)
+	}
+}
+
+func TestCommandPaletteConfirmsExactAlias(t *testing.T) {
+	cfg := config.Default()
+	cfg.Actions["hello"] = config.ActionConfig{Commands: []string{"alpha", "zulu"}, Comment: "hi"}
+	m, _ := configuredModel(t, cfg, true)
+	m.width = 100
+	m.height = 40
+
+	m = openCommandAndType(m, "zulu")
+	m = pressSpecial(m, tea.KeyEnter)
+	if panel := stripANSI(m.commandPanel()); !strings.Contains(panel, "Run :zulu on org/repo #1?") {
+		t.Errorf("confirmation = %q, want exact alias :zulu", panel)
 	}
 }
 

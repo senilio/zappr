@@ -589,18 +589,19 @@ func (m Model) inboxTitle() string {
 
 func (m Model) summaryTitle() string {
 	parts := []string{
-		m.summaryModeTitle(1, SummaryModeFiles),
-		m.summaryModeTitle(2, SummaryModeCommits),
-		m.summaryModeTitle(3, SummaryModeComments),
-		m.summaryModeTitle(4, SummaryModeAtlantis),
+		m.summaryModeTitle("summary-files", SummaryModeFiles),
+		m.summaryModeTitle("summary-commits", SummaryModeCommits),
+		m.summaryModeTitle("summary-comments", SummaryModeComments),
+		m.summaryModeTitle("summary-atlantis", SummaryModeAtlantis),
 	}
 	return "Summary " + strings.Join(parts, " ")
 }
 
-func (m Model) summaryModeTitle(number int, mode SummaryMode) string {
-	label := fmt.Sprintf("[%d]", number)
+func (m Model) summaryModeTitle(actionID string, mode SummaryMode) string {
+	alias := m.actionAlias(actionID)
+	label := fmt.Sprintf("[%s]", alias)
 	if m.summaryMode == mode {
-		label = fmt.Sprintf("[%d %s]", number, mode.String())
+		label = fmt.Sprintf("[%s %s]", alias, mode.String())
 		return m.theme.Styles.TitleStrong.Render(label)
 	}
 	return m.theme.Styles.Muted.Render(label)
@@ -1400,13 +1401,13 @@ func (m Model) commandPanel() string {
 	if len(matches) == 0 {
 		b.WriteString(s.Muted.Render("no matching commands"))
 	} else {
-		for i, action := range matches {
-			name := truncateANSIWidth(action.Commands[0], 18)
+		for i, match := range matches {
+			name := truncateANSIWidth(match.alias, 18)
 			nameStyled := s.TitleStrong.Render(":" + name)
 			width := min(48, m.width-12) - len(name) - 14
-			descStyled := s.Muted.Render(truncateANSIWidth(actionDisplayLabel(action), max(1, width)))
+			descStyled := s.Muted.Render(truncateANSIWidth(actionDisplayLabel(match.action), max(1, width)))
 			confirmMark := ""
-			if action.Confirmation != confirmationNone {
+			if match.action.Confirmation != confirmationNone {
 				confirmMark = s.Muted.Render(" [confirm]")
 			}
 			if i == m.commandCursor {
