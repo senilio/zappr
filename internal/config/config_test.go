@@ -272,6 +272,82 @@ func TestSavePreservesActions(t *testing.T) {
 	}
 }
 
+func TestSaveWritesActionsAsFlowMappings(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(t.TempDir(), "config"))
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(t.TempDir(), "cache"))
+
+	cfg := Default()
+	confirmed := false
+	cfg.Actions["deploy-preview"] = ActionConfig{
+		Keys:     []string{"P"},
+		Commands: []string{"preview"},
+		Comment:  "deploy preview",
+		Confirm:  &confirmed,
+	}
+	if err := Save(cfg); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	path, err := DefaultConfigPath()
+	if err != nil {
+		t.Fatalf("DefaultConfigPath: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+
+	for id := range DefaultActions() {
+		line := actionLine(string(data), id)
+		if !strings.Contains(line, "{") || !strings.Contains(line, "}") {
+			t.Fatalf("%s = %q, want one-line flow mapping", id, line)
+		}
+	}
+	if strings.Contains(string(data), "move-down:") {
+		t.Fatal("generated config contains fixed move-down action")
+	}
+	custom := actionLine(string(data), "deploy-preview")
+	last := -1
+	for _, field := range []string{"{", "keys:", "commands:", "comment:", "confirm: false", "}"} {
+		index := strings.Index(custom, field)
+		if index <= last {
+			t.Fatalf("deploy-preview = %q, want %q", custom, field)
+		}
+		last = index
+	}
+}
+
+func TestSaveRoundTripsEmptyActionAliases(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(t.TempDir(), "config"))
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(t.TempDir(), "cache"))
+
+	cfg := Default()
+	action := cfg.Actions["refresh-inbox"]
+	action.Keys = []string{}
+	cfg.Actions["refresh-inbox"] = action
+	if err := Save(cfg); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	path, err := DefaultConfigPath()
+	if err != nil {
+		t.Fatalf("DefaultConfigPath: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	if line := actionLine(string(data), "refresh-inbox"); !strings.Contains(line, "keys: []") {
+		t.Fatalf("refresh-inbox = %q, want explicit empty keys", line)
+	}
+
+	got, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if keys := got.Actions["refresh-inbox"].Keys; keys == nil || len(keys) != 0 {
+		t.Fatalf("refresh-inbox keys = %#v, want empty slice", keys)
+	}
+}
+
 func TestLoadParsesTrustAuthors(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "config")
 	t.Setenv("XDG_CONFIG_HOME", dir)
@@ -311,4 +387,13 @@ func fileMode(t *testing.T, path string) os.FileMode {
 		t.Fatalf("stat %s: %v", path, err)
 	}
 	return info.Mode().Perm()
+}
+
+func actionLine(data, id string) string {
+	for _, line := range strings.Split(data, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), id+":") {
+			return line
+		}
+	}
+	return ""
 }

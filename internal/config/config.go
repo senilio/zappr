@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -34,6 +35,43 @@ type ActionConfig struct {
 	Commands []string `yaml:"commands,omitempty"`
 	Comment  string   `yaml:"comment,omitempty"`
 	Confirm  *bool    `yaml:"confirm,omitempty"`
+}
+
+func (a ActionConfig) MarshalYAML() (any, error) {
+	node := yaml.Node{Kind: yaml.MappingNode, Style: yaml.FlowStyle}
+	if a.Keys != nil {
+		node.Content = append(node.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "keys"},
+			&yaml.Node{Kind: yaml.SequenceNode, Style: yaml.FlowStyle, Content: stringNodes(a.Keys)},
+		)
+	}
+	if a.Commands != nil {
+		node.Content = append(node.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "commands"},
+			&yaml.Node{Kind: yaml.SequenceNode, Style: yaml.FlowStyle, Content: stringNodes(a.Commands)},
+		)
+	}
+	if a.Comment != "" {
+		node.Content = append(node.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "comment"},
+			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: a.Comment},
+		)
+	}
+	if a.Confirm != nil {
+		node.Content = append(node.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "confirm"},
+			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: strconv.FormatBool(*a.Confirm)},
+		)
+	}
+	return &node, nil
+}
+
+func stringNodes(values []string) []*yaml.Node {
+	nodes := make([]*yaml.Node, len(values))
+	for i, value := range values {
+		nodes[i] = &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: value}
+	}
+	return nodes
 }
 
 type actionOverride struct {
@@ -221,10 +259,10 @@ func Load() (Config, error) {
 			action = ActionConfig{Comment: *override.Comment, Confirm: &confirmed}
 		}
 		if override.Keys != nil {
-			action.Keys = append([]string(nil), (*override.Keys)...)
+			action.Keys = append([]string{}, (*override.Keys)...)
 		}
 		if override.Commands != nil {
-			action.Commands = append([]string(nil), (*override.Commands)...)
+			action.Commands = append([]string{}, (*override.Commands)...)
 		}
 		if !builtin && override.Confirm != nil {
 			confirmed := *override.Confirm
