@@ -125,6 +125,56 @@ func TestLoadCreatesConfig(t *testing.T) {
 	}
 }
 
+func TestActionDefaultsSeparateFixedActions(t *testing.T) {
+	if _, ok := DefaultActions()["move-down"]; ok {
+		t.Fatal("move-down must be fixed")
+	}
+	if got := FixedActions()["move-down"].Keys; !reflect.DeepEqual(got, []string{"j", "down"}) {
+		t.Fatalf("fixed move-down keys = %v", got)
+	}
+}
+
+func TestLoadLegacyFixedActions(t *testing.T) {
+	tests := []struct {
+		name string
+		yaml string
+		want string
+	}{
+		{"exact move-down", "actions:\n  move-down:\n    keys: [j, down]\n", ""},
+		{"changed move-down key", "actions:\n  move-down:\n    keys: [J, down]\n", "actions.move-down is now built in; remove it from config"},
+		{"added help command", "actions:\n  help:\n    commands: [help]\n", "actions.help is now built in; remove it from config"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("XDG_CONFIG_HOME", filepath.Join(t.TempDir(), "config"))
+			path, err := DefaultConfigPath()
+			if err != nil {
+				t.Fatalf("DefaultConfigPath: %v", err)
+			}
+			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+				t.Fatalf("mkdir: %v", err)
+			}
+			if err := os.WriteFile(path, []byte(test.yaml), 0o600); err != nil {
+				t.Fatalf("write config: %v", err)
+			}
+
+			cfg, err := Load()
+			if test.want != "" {
+				if err == nil || !strings.Contains(err.Error(), test.want) {
+					t.Fatalf("Load error = %v, want containing %q", err, test.want)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if _, ok := cfg.Actions["move-down"]; ok {
+				t.Fatal("legacy move-down must not be configurable")
+			}
+		})
+	}
+}
+
 func TestLoadOverlaysActionFields(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "config")
 	t.Setenv("XDG_CONFIG_HOME", dir)

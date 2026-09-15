@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"sort"
 	"strings"
@@ -74,6 +75,33 @@ func Default() Config {
 
 func DefaultActions() map[string]ActionConfig {
 	return map[string]ActionConfig{
+		"open-pr":                   {Keys: []string{"o"}},
+		"copy-pr-url":               {Keys: []string{"C"}},
+		"refresh-pr":                {Keys: []string{"r"}},
+		"refresh-inbox":             {Keys: []string{"R"}, Commands: []string{"refresh-all"}},
+		"toggle-diff":               {Keys: []string{"v"}},
+		"open-diff-pager":           {Keys: []string{"V"}},
+		"next-file":                 {Keys: []string{"n", "]"}},
+		"prev-file":                 {Keys: []string{"p", "["}},
+		"toggle-side-by-side":       {Keys: []string{"s"}},
+		"toggle-file-content":       {Keys: []string{"x"}},
+		"approve-with-confirmation": {Keys: []string{"a"}},
+		"approve-immediately":       {Keys: []string{"A"}},
+		"write-comment":             {Keys: []string{"c"}},
+		"atlantis-plan":             {Commands: []string{"ap"}},
+		"atlantis-apply":            {Commands: []string{"aa"}},
+		"atlantis-unlock":           {Commands: []string{"au"}},
+		"toggle-draft":              {Commands: []string{"draft"}},
+		"close-pr":                  {Commands: []string{"close"}},
+		"update-branch":             {Commands: []string{"update"}},
+		"request-changes":           {Commands: []string{"block"}},
+		"merge-pr":                  {Commands: []string{"merge"}},
+		"ai-review":                 {Commands: []string{"ai"}},
+	}
+}
+
+func FixedActions() map[string]ActionConfig {
+	return map[string]ActionConfig{
 		"quit":                        {Keys: []string{"q", "ctrl+c"}},
 		"help":                        {Keys: []string{"?"}},
 		"summary-files":               {Keys: []string{"1"}},
@@ -84,8 +112,6 @@ func DefaultActions() map[string]ActionConfig {
 		"focus-prev":                  {Keys: []string{"shift+tab"}},
 		"go-top":                      {Keys: []string{"g"}},
 		"go-bottom":                   {Keys: []string{"G"}},
-		"open-pr":                     {Keys: []string{"o"}},
-		"copy-pr-url":                 {Keys: []string{"C"}},
 		"settings":                    {Keys: []string{"f"}},
 		"move-down":                   {Keys: []string{"j", "down"}},
 		"move-up":                     {Keys: []string{"k", "up"}},
@@ -97,17 +123,6 @@ func DefaultActions() map[string]ActionConfig {
 		"prev-item":                   {Keys: []string{"shift+up"}},
 		"inspect-pr":                  {Keys: []string{"enter"}},
 		"back-to-inbox":               {Keys: []string{"esc"}},
-		"refresh-pr":                  {Keys: []string{"r"}},
-		"refresh-inbox":               {Keys: []string{"R"}, Commands: []string{"refresh-all"}},
-		"toggle-diff":                 {Keys: []string{"v"}},
-		"open-diff-pager":             {Keys: []string{"V"}},
-		"next-file":                   {Keys: []string{"n", "]"}},
-		"prev-file":                   {Keys: []string{"p", "["}},
-		"toggle-side-by-side":         {Keys: []string{"s"}},
-		"toggle-file-content":         {Keys: []string{"x"}},
-		"approve-with-confirmation":   {Keys: []string{"a"}},
-		"approve-immediately":         {Keys: []string{"A"}},
-		"write-comment":               {Keys: []string{"c"}},
 		"command-palette":             {Keys: []string{":"}},
 		"help-close":                  {Keys: []string{"esc", "?", "enter"}},
 		"diff-close":                  {Keys: []string{"esc", "enter", "v"}},
@@ -131,15 +146,6 @@ func DefaultActions() map[string]ActionConfig {
 		"command-backspace":           {Keys: []string{"backspace", "ctrl+h"}},
 		"command-confirm":             {Keys: []string{"y", "enter"}},
 		"command-cancel-confirmation": {Keys: []string{"esc", "n"}},
-		"atlantis-plan":               {Commands: []string{"ap"}},
-		"atlantis-apply":              {Commands: []string{"aa"}},
-		"atlantis-unlock":             {Commands: []string{"au"}},
-		"toggle-draft":                {Commands: []string{"draft"}},
-		"close-pr":                    {Commands: []string{"close"}},
-		"update-branch":               {Commands: []string{"update"}},
-		"request-changes":             {Commands: []string{"block"}},
-		"merge-pr":                    {Commands: []string{"merge"}},
-		"ai-review":                   {Commands: []string{"ai"}},
 		"colorscheme":                 {Commands: []string{"colorscheme"}},
 	}
 }
@@ -189,10 +195,18 @@ func Load() (Config, error) {
 	cfg.Theme = file.Theme
 	cfg.Sort = file.Sort
 	for id, override := range file.Actions {
-		action, builtin := cfg.Actions[id]
 		if !actionIDPattern.MatchString(id) {
 			return cfg, fmt.Errorf("actions.%s: invalid action ID", id)
 		}
+		if fixed, ok := FixedActions()[id]; ok {
+			if override.Comment != nil || override.Confirm != nil ||
+				(override.Keys != nil && !reflect.DeepEqual(*override.Keys, fixed.Keys)) ||
+				(override.Commands != nil && !reflect.DeepEqual(*override.Commands, fixed.Commands)) {
+				return cfg, fmt.Errorf("actions.%s is now built in; remove it from config", id)
+			}
+			continue
+		}
+		action, builtin := cfg.Actions[id]
 		if builtin && override.Comment != nil {
 			return cfg, fmt.Errorf("actions.%s.comment: built-in action behavior cannot be changed", id)
 		}
