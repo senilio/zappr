@@ -104,12 +104,12 @@ q            quit
 ```
 
 The following PR/view actions use their default aliases and may be configured:
-`a` starts approval, `A` approves immediately, `c` comments, `r` refreshes the
-selected PR, `R` refreshes the inbox, `v` toggles the diff pane, `V` opens the
-full diff pager, `s` toggles side-by-side diff, `x` expands file content,
-`n`/`p` and `[`/`]` move between files or commits, `o` opens the PR, and `C`
-copies its URL. Command palette operations below are also configurable where
-listed.
+`a` approves after confirmation, `A` approves immediately, `c` opens the
+comment editor, `r` refreshes the selected PR, `R` refreshes the inbox, `v`
+toggles the diff pane, `V` opens the full diff pager, `s` toggles side-by-side
+diff, `x` expands file content, `n`/`p` and `[`/`]` move between files or
+commits, `o` opens the PR, and `C` copies its URL. Command palette operations
+below are also configurable where listed.
 
 The summary pane starts on changed files and can switch to commits, PR
 conversation comments, or Atlantis plan output with `1`, `2`, `3`, and `4`.
@@ -121,11 +121,8 @@ instead of wrapping. Keyboard shortcuts are always available via `?`.
 Press `:` to open the command palette. Type a command prefix to filter; press
 `Enter` on an exact match to execute.
 
-| Command  | Action |
-|----------|--------|
-| `:ap`    | Comment `atlantis plan` on selected PR |
-| `:aa`    | Comment `atlantis apply` on selected PR (prompts for confirmation) |
-| `:au`    | Comment `atlantis unlock` on selected PR |
+| Command | Action |
+|---------|--------|
 | `:draft` | Toggle PR draft status (draft ↔ ready for review) |
 | `:close` | Close PR (prompts for confirmation) |
 | `:update`| Update PR branch with base branch (prompts for confirmation) |
@@ -217,34 +214,40 @@ trust:
 
 `zappr config init` creates `$XDG_CONFIG_HOME/zappr/config.yaml` (or
 `~/.config/zappr/config.yaml`). The generated file includes only configurable
-PR/view, PR-writing, and static-comment actions. Fixed controls are built in
-and cannot be configured. Add only the fields to change; each action overlays
-its built-in `keys` and `commands` independently. An empty list clears that
-field.
+PR/view actions plus generic approval and comment actions. Fixed controls are
+built in and cannot be configured. Add only the fields to change; each action
+overlays its built-in `keys` and `commands` independently. An empty list clears
+that field.
 
 ```yaml
 actions:
   refresh-inbox: { keys: [R], commands: [refresh-all] }
   ai-review: { commands: [review] }
-  hello: { keys: [H], commands: [hello], comment: "Hello from zappr.", confirm: false }
+  approve: { operation: approve, keys: [a], confirm: true }
+  approve-now: { operation: approve, keys: [A], confirm: false }
+  comment: { operation: comment, keys: [c] }
+  plan: { operation: comment, keys: [P], commands: [ap], comment: "atlantis plan" }
 ```
 
 Configurable built-in IDs: `open-pr`, `copy-pr-url`, `refresh-pr`,
 `refresh-inbox`, `toggle-diff`, `open-diff-pager`, `next-file`, `prev-file`,
-`toggle-side-by-side`, `toggle-file-content`, `approve-with-confirmation`,
-`approve-immediately`, `write-comment`, `atlantis-plan`, `atlantis-apply`,
-`atlantis-unlock`, `toggle-draft`, `close-pr`, `update-branch`,
-`request-changes`, `merge-pr`, and `ai-review`.
+`toggle-side-by-side`, `toggle-file-content`, `toggle-draft`, `close-pr`,
+`update-branch`, `request-changes`, `merge-pr`, and `ai-review`. Generic action
+IDs include the default `approve`, `approve-now`, and `comment` entries.
 
-Legacy fixed-action entries that exactly match their old defaults are accepted;
-changed fixed entries fail with a migration error because those controls are
-now built in. Saving rewrites the YAML file, so comments and formatting are
-not preserved.
+Custom generic actions require `operation: approve` or `operation: comment`
+and at least one `keys` or `commands` entry. `description` is optional and
+replaces the generated help label. An `approve` action cannot set `comment` and
+confirms by default. A `comment` action without `comment` opens the editor and
+cannot set `confirm`; with a non-empty `comment`, it posts that static text and
+confirms by default. Set `confirm: false` for immediate approval or static
+comment actions.
 
-Custom IDs use lowercase letters, digits, and hyphens. They require `comment`
-and at least one `keys` or `commands` entry. Custom actions only post their
-static `comment` on the selected PR; they cannot run shell commands or replace
-built-in behavior. `confirm` defaults to true for custom actions.
+Custom IDs use lowercase letters, digits, and hyphens. Removed named action IDs
+such as `approve-with-confirmation`, `write-comment`, and `atlantis-plan` fail
+with a migration error: use `operation: approve` or `operation: comment`
+instead. Saving rewrites the YAML file, so comments and formatting are not
+preserved.
 
 Keys conflict only within the same UI context. Command aliases are global,
 case-insensitive, and must be unique. Commands use letters, digits, and

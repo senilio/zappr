@@ -418,11 +418,13 @@ func fullscreenDiffModel(t *testing.T, cfg config.Config) (Model, *commentRecord
 func TestFullscreenDiffIgnoresMutatingNormalActions(t *testing.T) {
 	cfg := config.Default()
 	confirm := false
+	cfg.Actions["approve"] = config.ActionConfig{Operation: "approve", Keys: []string{"Z"}, Confirm: &confirm}
+	cfg.Actions["comment"] = config.ActionConfig{Operation: "comment", Keys: []string{"W"}}
 	cfg.Actions["hello"] = config.ActionConfig{Operation: "comment", Keys: []string{"H"}, Comment: "hello", Confirm: &confirm}
 	m, provider := fullscreenDiffModel(t, cfg)
 
 	// Generic actions remain unreachable while the diff is full-screen.
-	for _, key := range []string{"A", "H"} {
+	for _, key := range []string{"Z", "W", "H"} {
 		m = updateKey(m, key)
 	}
 
