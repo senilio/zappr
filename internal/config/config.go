@@ -277,7 +277,7 @@ func Load() (Config, error) {
 			continue
 		}
 		action, builtin := cfg.Actions[id]
-		generic := action.Operation != "" || override.Operation != nil
+		generic := action.Operation != "" || (!builtin && override.Operation != nil)
 		if builtin && !generic {
 			if override.Operation != nil {
 				return cfg, fmt.Errorf("actions.%s.operation: built-in action behavior cannot be changed", id)

@@ -239,6 +239,7 @@ func TestLoadRejectsInvalidGenericActions(t *testing.T) {
 		{"legacy action", "actions:\n  atlantis-plan:\n    keys: [p]\n", "actions.atlantis-plan is no longer predefined; use operation: approve or operation: comment"},
 		{"invalid command", "actions:\n  hello:\n    operation: comment\n    keys: [H]\n    commands: [bad name]\n    comment: hello\n", "actions.hello.commands"},
 		{"named builtin comment", "actions:\n  merge-pr:\n    comment: hello\n", "actions.merge-pr.comment"},
+		{"named builtin operation", "actions:\n  merge-pr:\n    operation: approve\n", "actions.merge-pr.operation"},
 		{"invalid id", "actions:\n  Hello:\n    operation: comment\n    keys: [H]\n    comment: hello\n", "actions.Hello"},
 	}
 	for _, test := range tests {
