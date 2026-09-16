@@ -191,6 +191,22 @@ func TestActionRegistryFixedBindings(t *testing.T) {
 	}
 }
 
+func TestActionRegistryIgnoresConfiguredFixedAction(t *testing.T) {
+	configured := config.DefaultActions()
+	configured["move-down"] = config.ActionConfig{Keys: []string{"M"}}
+
+	registry, err := newActionRegistry(configured)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := registry.actionForKey(actionContextNormal, "M"); ok {
+		t.Fatal("configured fixed action key M must not be bound")
+	}
+	if action, ok := registry.actionForKey(actionContextNormal, "j"); !ok || action.ID != "move-down" {
+		t.Fatalf("j = %#v, %v; want move-down, true", action, ok)
+	}
+}
+
 func TestActionRegistryUsesConfiguredAliases(t *testing.T) {
 	configured := config.DefaultActions()
 	configured["refresh-inbox"] = config.ActionConfig{Keys: []string{"F"}}
@@ -206,11 +222,11 @@ func TestActionRegistryUsesConfiguredAliases(t *testing.T) {
 
 func TestActionRegistryRejectsNormalKeyCollision(t *testing.T) {
 	cfg := config.Default()
-	cfg.Actions["help"] = config.ActionConfig{Keys: []string{"H"}}
+	cfg.Actions["refresh-inbox"] = config.ActionConfig{Keys: []string{"H"}}
 	cfg.Actions["hello"] = config.ActionConfig{Keys: []string{"H"}, Comment: "hello world"}
 
 	_, err := newActionRegistry(cfg.Actions)
-	if err == nil || !strings.Contains(err.Error(), "help") || !strings.Contains(err.Error(), "hello") {
+	if err == nil || !strings.Contains(err.Error(), "refresh-inbox") || !strings.Contains(err.Error(), "hello") {
 		t.Fatalf("newActionRegistry error = %v, want conflicting action IDs", err)
 	}
 }
@@ -225,13 +241,16 @@ func TestActionRegistryRejectsCommandCollisionIgnoringCase(t *testing.T) {
 	}
 }
 
-func TestActionRegistryRejectsTextEntryControlCollision(t *testing.T) {
+func TestActionRegistryIgnoresConfiguredTextEntryControl(t *testing.T) {
 	cfg := config.Default()
 	cfg.Actions["command-cancel"] = config.ActionConfig{Keys: []string{"enter"}}
 
-	_, err := newActionRegistry(cfg.Actions)
-	if err == nil || !strings.Contains(err.Error(), "command-submit") {
-		t.Fatalf("newActionRegistry error = %v, want command-submit collision", err)
+	registry, err := newActionRegistry(cfg.Actions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if action, ok := registry.actionForKey(actionContextCommand, "enter"); !ok || action.ID != "command-submit" {
+		t.Fatalf("command enter = %#v, %v; want command-submit, true", action, ok)
 	}
 }
 

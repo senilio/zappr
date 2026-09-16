@@ -143,6 +143,9 @@ func newActionRegistry(configured map[string]config.ActionConfig) (actionRegistr
 	sort.Strings(ids)
 	for _, id := range ids {
 		configuredAction := configured[id]
+		if _, fixed := fixedActions[id]; fixed {
+			continue
+		}
 		action, builtin := descriptors[id]
 		if !builtin {
 			action = tuiAction{ID: id, Label: configuredAction.Comment, Context: actionContextNormal, RequiresPR: true, Confirmation: confirmationOptional, Comment: configuredAction.Comment}

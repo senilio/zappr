@@ -142,6 +142,8 @@ func TestLoadLegacyFixedActions(t *testing.T) {
 	}{
 		{"exact move-down", "actions:\n  move-down:\n    keys: [j, down]\n", ""},
 		{"changed move-down key", "actions:\n  move-down:\n    keys: [J, down]\n", "actions.move-down is now built in; remove it from config"},
+		{"null move-down keys", "actions:\n  move-down:\n    keys: null\n", "actions.move-down is now built in; remove it from config"},
+		{"null move-down comment", "actions:\n  move-down:\n    comment: null\n", "actions.move-down is now built in; remove it from config"},
 		{"added help command", "actions:\n  help:\n    commands: [help]\n", "actions.help is now built in; remove it from config"},
 	}
 	for _, test := range tests {

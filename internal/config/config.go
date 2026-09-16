@@ -79,6 +79,21 @@ type actionOverride struct {
 	Commands *[]string `yaml:"commands"`
 	Comment  *string   `yaml:"comment"`
 	Confirm  *bool     `yaml:"confirm"`
+	supplied map[string]bool
+}
+
+func (a *actionOverride) UnmarshalYAML(value *yaml.Node) error {
+	type rawActionOverride actionOverride
+	var raw rawActionOverride
+	if err := value.Decode(&raw); err != nil {
+		return err
+	}
+	*a = actionOverride(raw)
+	a.supplied = make(map[string]bool)
+	for i := 0; i < len(value.Content); i += 2 {
+		a.supplied[value.Content[i].Value] = true
+	}
+	return nil
 }
 
 type TrustConfig struct {
@@ -237,9 +252,9 @@ func Load() (Config, error) {
 			return cfg, fmt.Errorf("actions.%s: invalid action ID", id)
 		}
 		if fixed, ok := FixedActions()[id]; ok {
-			if override.Comment != nil || override.Confirm != nil ||
-				(override.Keys != nil && !reflect.DeepEqual(*override.Keys, fixed.Keys)) ||
-				(override.Commands != nil && !reflect.DeepEqual(*override.Commands, fixed.Commands)) {
+			if override.supplied["comment"] || override.supplied["confirm"] ||
+				(override.supplied["keys"] && (override.Keys == nil || !reflect.DeepEqual(*override.Keys, fixed.Keys))) ||
+				(override.supplied["commands"] && (override.Commands == nil || !reflect.DeepEqual(*override.Commands, fixed.Commands))) {
 				return cfg, fmt.Errorf("actions.%s is now built in; remove it from config", id)
 			}
 			continue
