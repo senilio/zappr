@@ -178,6 +178,32 @@ func TestActionRegistryResolvesCustomAliases(t *testing.T) {
 	}
 }
 
+func TestActionRegistryFixedBindings(t *testing.T) {
+	registry, err := newActionRegistry(config.DefaultActions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if action, ok := registry.actionForKey(actionContextNormal, "down"); !ok || action.ID != "move-down" {
+		t.Fatalf("down = %#v, %v", action, ok)
+	}
+	if action, ok := registry.actionForKey(actionContextNormal, "tab"); !ok || action.ID != "focus-next" {
+		t.Fatalf("tab = %#v, %v", action, ok)
+	}
+}
+
+func TestActionRegistryUsesConfiguredAliases(t *testing.T) {
+	configured := config.DefaultActions()
+	configured["refresh-inbox"] = config.ActionConfig{Keys: []string{"F"}}
+
+	registry, err := newActionRegistry(configured)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if action, ok := registry.actionForKey(actionContextNormal, "F"); !ok || action.ID != "refresh-inbox" {
+		t.Fatalf("F = %#v, %v", action, ok)
+	}
+}
+
 func TestActionRegistryRejectsNormalKeyCollision(t *testing.T) {
 	cfg := config.Default()
 	cfg.Actions["help"] = config.ActionConfig{Keys: []string{"H"}}
@@ -209,29 +235,8 @@ func TestActionRegistryRejectsTextEntryControlCollision(t *testing.T) {
 	}
 }
 
-func TestActionRegistryRequiresQuitBinding(t *testing.T) {
-	cfg := config.Default()
-	cfg.Actions["quit"] = config.ActionConfig{}
-
-	_, err := newActionRegistry(cfg.Actions)
-	if err == nil || !strings.Contains(err.Error(), "quit") {
-		t.Fatalf("newActionRegistry error = %v, want quit binding error", err)
-	}
-}
-
-func TestNewAnnotatesActionConfigurationError(t *testing.T) {
-	cfg := config.Default()
-	cfg.Actions["quit"] = config.ActionConfig{}
-
-	_, err := New(app.New(nil, nil, nil), "org/repo", 0, "", cfg)
-	if err == nil || !strings.Contains(err.Error(), "configure TUI actions") {
-		t.Fatalf("New error = %v, want annotated action configuration error", err)
-	}
-}
-
 func TestActionRegistryAllowsKeysInDifferentContexts(t *testing.T) {
 	cfg := config.Default()
-	cfg.Actions["settings-next"] = config.ActionConfig{Keys: []string{"j"}}
 
 	registry, err := newActionRegistry(cfg.Actions)
 	if err != nil {
@@ -479,17 +484,13 @@ func TestConfiguredBuiltinActionUsesRemappedCommand(t *testing.T) {
 	}
 }
 
-func TestSummaryTitleUsesConfiguredAliases(t *testing.T) {
+func TestSummaryTitleUsesFixedAliases(t *testing.T) {
 	cfg := config.Default()
-	cfg.Actions["summary-files"] = config.ActionConfig{Keys: []string{"F"}}
-	cfg.Actions["summary-commits"] = config.ActionConfig{Keys: []string{"L"}}
-	cfg.Actions["summary-comments"] = config.ActionConfig{Keys: []string{"M"}}
-	cfg.Actions["summary-atlantis"] = config.ActionConfig{Keys: []string{"Z"}}
 	m, _ := configuredModel(t, cfg, true)
 	m.summaryMode = SummaryModeFiles
 
 	title := stripANSI(m.summaryTitle())
-	if want := "Summary [F files] [L] [M] [Z]"; title != want {
+	if want := "Summary [1 files] [2] [3] [4]"; title != want {
 		t.Fatalf("summary title = %q, want %q", title, want)
 	}
 }
@@ -594,81 +595,48 @@ func TestCustomCommentConfirmationEscapesAndTruncatesPreview(t *testing.T) {
 	}
 }
 
-func TestModalHintsUseConfiguredActions(t *testing.T) {
+func TestModalHintsUseFixedActions(t *testing.T) {
 	cfg := config.Default()
-	cfg.Actions["comment-submit"] = config.ActionConfig{Keys: []string{"S"}}
-	cfg.Actions["comment-cancel"] = config.ActionConfig{Keys: []string{"X"}}
-	cfg.Actions["command-confirm"] = config.ActionConfig{Keys: []string{"Y"}}
-	cfg.Actions["command-cancel-confirmation"] = config.ActionConfig{Keys: []string{"N"}}
-	cfg.Actions["settings-close"] = config.ActionConfig{Keys: []string{"B"}}
-	cfg.Actions["quit"] = config.ActionConfig{Keys: []string{"Q"}}
 	m, _ := configuredModel(t, cfg, true)
 
-	if panel := stripANSI(m.commentPanel()); !strings.Contains(panel, "S submit  X cancel") || strings.Contains(panel, "enter submit") {
+	if panel := stripANSI(m.commentPanel()); !strings.Contains(panel, "enter submit  esc cancel") {
 		t.Fatalf("comment hint = %q", panel)
 	}
 	m.pendingAction, _ = m.actions.actionByID("hello")
 	m.mode = ModeConfirmCommand
-	if panel := stripANSI(m.commandPanel()); !strings.Contains(panel, "Y confirm  N cancel") || strings.Contains(panel, "y confirm") {
+	if panel := stripANSI(m.commandPanel()); !strings.Contains(panel, "y/enter confirm  esc/n cancel") {
 		t.Fatalf("confirmation hint = %q", panel)
 	}
-	if view := stripANSI(m.settingsView()); !strings.Contains(view, "B back  Q quit") || strings.Contains(view, "esc back") {
+	if view := stripANSI(m.settingsView()); !strings.Contains(view, "esc/f back  q/ctrl+c quit") {
 		t.Fatalf("settings hint = %q", view)
 	}
 }
 
-func TestRemainingModalAndFallbackHintsUseConfiguredActions(t *testing.T) {
+func TestRemainingModalAndFallbackHintsUseFixedActions(t *testing.T) {
 	cfg := config.Default()
-	cfg.Actions["approve-confirm"] = config.ActionConfig{Keys: []string{"Y"}}
-	cfg.Actions["approve-cancel"] = config.ActionConfig{Keys: []string{"N"}}
-	cfg.Actions["comment-submit"] = config.ActionConfig{Keys: []string{"S"}}
-	cfg.Actions["comment-cancel"] = config.ActionConfig{Keys: []string{"X"}}
-	cfg.Actions["command-submit"] = config.ActionConfig{Keys: []string{"E"}}
-	cfg.Actions["command-cancel"] = config.ActionConfig{Keys: []string{"C"}}
-	cfg.Actions["settings-next"] = config.ActionConfig{Keys: []string{"J"}}
-	cfg.Actions["settings-prev"] = config.ActionConfig{Keys: []string{"K"}}
-	cfg.Actions["settings-toggle"] = config.ActionConfig{Keys: []string{"T"}}
-	cfg.Actions["settings-close"] = config.ActionConfig{Keys: []string{"B"}}
-	cfg.Actions["colorscheme-next"] = config.ActionConfig{Keys: []string{"J"}}
-	cfg.Actions["colorscheme-prev"] = config.ActionConfig{Keys: []string{"K"}}
-	cfg.Actions["colorscheme-confirm"] = config.ActionConfig{Keys: []string{"S"}}
-	cfg.Actions["colorscheme-cancel"] = config.ActionConfig{Keys: []string{"X"}}
 	m, _ := configuredModel(t, cfg, true)
 
-	if panel := stripANSI(m.approvePanel()); !strings.Contains(panel, "Y approve  N cancel") {
+	if panel := stripANSI(m.approvePanel()); !strings.Contains(panel, "y approve  esc/n cancel") {
 		t.Fatalf("approve hint = %q", panel)
 	}
-	if view := stripANSI(m.approveView()); !strings.Contains(view, "Y to approve") || !strings.Contains(view, "N to cancel") {
+	if view := stripANSI(m.approveView()); !strings.Contains(view, "y to approve") || !strings.Contains(view, "esc/n to cancel") {
 		t.Fatalf("approve fallback = %q", view)
 	}
-	if view := stripANSI(m.commentView()); !strings.Contains(view, "S submit  X cancel") {
+	if view := stripANSI(m.commentView()); !strings.Contains(view, "enter submit  esc cancel") {
 		t.Fatalf("comment fallback = %q", view)
 	}
 	m.mode = ModeCommand
-	if panel := stripANSI(m.commandPanel()); !strings.Contains(panel, "E execute  C cancel") {
+	if panel := stripANSI(m.commandPanel()); !strings.Contains(panel, "enter execute  esc cancel") {
 		t.Fatalf("command hint = %q", panel)
 	}
-	if view := stripANSI(m.commandView()); !strings.Contains(view, "E execute  C cancel") {
+	if view := stripANSI(m.commandView()); !strings.Contains(view, "enter execute  esc cancel") {
 		t.Fatalf("command fallback = %q", view)
 	}
-	if panel := stripANSI(m.settingsPanel()); !strings.Contains(panel, "J/K select  T toggle  B close") {
+	if panel := stripANSI(m.settingsPanel()); !strings.Contains(panel, "j/down/k/up select") || !strings.Contains(panel, "esc/f close") {
 		t.Fatalf("settings hint = %q", panel)
 	}
-	if panel := stripANSI(m.colorschemePanel()); !strings.Contains(panel, "J/K move  S select  X cancel") {
+	if panel := stripANSI(m.colorschemePanel()); !strings.Contains(panel, "j/down/k/up move") || !strings.Contains(panel, "esc/q cancel") {
 		t.Fatalf("colorscheme hint = %q", panel)
-	}
-}
-
-func TestModalHintsTruncateLongConfiguredAliases(t *testing.T) {
-	cfg := config.Default()
-	longKey := strings.Repeat("x", 80)
-	cfg.Actions["command-submit"] = config.ActionConfig{Keys: []string{longKey}}
-	m, _ := configuredModel(t, cfg, true)
-	m.width = 40
-	m.mode = ModeCommand
-
-	if panel := stripANSI(m.commandPanel()); strings.Contains(panel, longKey) {
-		t.Fatalf("command hint = %q, contains untruncated alias", panel)
 	}
 }
 
@@ -700,15 +668,13 @@ func TestSettingsSavePreservesActions(t *testing.T) {
 	}
 }
 
-func TestHeaderUsesConfiguredActions(t *testing.T) {
+func TestHeaderUsesFixedActions(t *testing.T) {
 	cfg := config.Default()
-	cfg.Actions["help"] = config.ActionConfig{Keys: []string{"H"}}
-	cfg.Actions["quit"] = config.ActionConfig{Keys: []string{"Q"}}
 	m, _ := configuredModel(t, cfg, true)
 	m.width = 100
 
 	header := stripANSI(m.headerView())
-	if !strings.Contains(header, "H help") || !strings.Contains(header, "Q quit") || strings.Contains(header, "? help") || strings.Contains(header, "q quit") {
+	if !strings.Contains(header, "? help") || !strings.Contains(header, "q/ctrl+c quit") {
 		t.Fatalf("header = %q", header)
 	}
 }

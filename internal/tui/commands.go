@@ -124,6 +124,18 @@ func newActionRegistry(configured map[string]config.ActionConfig) (actionRegistr
 	for _, descriptor := range actionDescriptors {
 		descriptors[descriptor.ID] = descriptor
 	}
+	fixedActions := config.FixedActions()
+	for _, descriptor := range actionDescriptors {
+		fixedAction, ok := fixedActions[descriptor.ID]
+		if !ok {
+			continue
+		}
+		descriptor.Keys = append([]string(nil), fixedAction.Keys...)
+		descriptor.Commands = append([]string(nil), fixedAction.Commands...)
+		if err := registry.add(descriptor); err != nil {
+			return actionRegistry{}, err
+		}
+	}
 	ids := make([]string, 0, len(configured))
 	for id := range configured {
 		ids = append(ids, id)
