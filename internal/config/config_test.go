@@ -177,7 +177,7 @@ func TestLoadLegacyFixedActions(t *testing.T) {
 	}
 }
 
-func TestLoadOverlaysActionFields(t *testing.T) {
+func TestLoadGenericActions(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "config")
 	t.Setenv("XDG_CONFIG_HOME", dir)
 
@@ -189,12 +189,17 @@ func TestLoadOverlaysActionFields(t *testing.T) {
 		t.Fatalf("mkdir: %v", err)
 	}
 	data := `actions:
-  hello:
+  deploy:
+    operation: comment
     keys: [H]
-    commands: [hello]
-    comment: hello world
-  refresh-inbox:
-    keys: [R]
+    comment: deploy preview
+    confirm: false
+    description: Deploy the selected PR
+  approve-now:
+    operation: approve
+    confirm: false
+  comment:
+    operation: comment
 `
 	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
@@ -204,36 +209,37 @@ func TestLoadOverlaysActionFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	for name, want := range map[string]ActionConfig{
-		"hello": {Keys: []string{"H"}, Commands: []string{"hello"}, Comment: "hello world"},
-	} {
-		got := cfg.Actions[name]
-		if !reflect.DeepEqual(got.Keys, want.Keys) || !reflect.DeepEqual(got.Commands, want.Commands) || got.Comment != want.Comment {
-			t.Errorf("%s = %#v, want %#v", name, got, want)
-		}
-		if got.Confirm == nil || !*got.Confirm {
-			t.Errorf("%s confirm = %v, want true", name, got.Confirm)
-		}
+	deploy := cfg.Actions["deploy"]
+	if deploy.Operation != "comment" || deploy.Comment != "deploy preview" || deploy.Description != "Deploy the selected PR" || deploy.Confirm == nil || *deploy.Confirm {
+		t.Fatalf("deploy = %#v", deploy)
 	}
-	if got := cfg.Actions["refresh-inbox"]; !reflect.DeepEqual(got.Keys, []string{"R"}) || !reflect.DeepEqual(got.Commands, []string{"refresh-all"}) {
-		t.Errorf("refresh-inbox = %#v, want keys [R] and commands [refresh-all]", got)
+	if approve := cfg.Actions["approve-now"]; approve.Operation != "approve" || approve.Confirm == nil || *approve.Confirm {
+		t.Fatalf("approve-now = %#v", approve)
+	}
+	if approve := cfg.Actions["approve"]; approve.Operation != "approve" || approve.Confirm == nil || !*approve.Confirm {
+		t.Fatalf("approve = %#v", approve)
+	}
+	if comment := cfg.Actions["comment"]; comment.Operation != "comment" || comment.Confirm != nil {
+		t.Fatalf("comment = %#v", comment)
 	}
 }
 
-func TestLoadRejectsInvalidAction(t *testing.T) {
+func TestLoadRejectsInvalidGenericActions(t *testing.T) {
 	tests := []struct {
 		name string
 		yaml string
 		want string
 	}{
-		{"blank comment", "actions:\n  hello:\n    comment: '   '\n", "actions.hello.comment"},
-		{"invalid command", "actions:\n  hello:\n    keys: [H]\n    commands: [bad name]\n    comment: hello\n", "actions.hello.commands"},
-		{"conflicting command", "actions:\n  hello:\n    commands: [AI]\n    comment: hello\n", "ai-review"},
-		{"no trigger", "actions:\n  hello:\n    comment: hello\n", "actions.hello"},
-		{"leading command colon", "actions:\n  hello:\n    commands: [':hello']\n    comment: hello\n", "actions.hello.commands"},
-		{"duplicate command case", "actions:\n  hello:\n    commands: [hello]\n    comment: hello\n  goodbye:\n    commands: [HELLO]\n    comment: goodbye\n", "hello"},
-		{"builtin comment", "actions:\n  merge-pr:\n    comment: hello\n", "actions.merge-pr.comment"},
-		{"invalid id", "actions:\n  Hello:\n    keys: [H]\n    comment: hello\n", "actions.Hello"},
+		{"missing operation", "actions:\n  hello:\n    keys: [h]\n", "actions.hello requires operation"},
+		{"unknown operation", "actions:\n  hello:\n    operation: merge\n    keys: [h]\n", "actions.hello has unknown operation"},
+		{"approve comment", "actions:\n  approve:\n    operation: approve\n    comment: nope\n    keys: [a]\n", "actions.approve approve actions cannot set comment"},
+		{"editor confirm", "actions:\n  comment:\n    operation: comment\n    confirm: true\n    keys: [c]\n", "actions.comment editor comments cannot set confirm"},
+		{"blank static", "actions:\n  hello:\n    operation: comment\n    comment: \"\"\n    keys: [h]\n", "actions.hello static comment cannot be blank"},
+		{"no trigger", "actions:\n  hello:\n    operation: comment\n    comment: hello\n", "actions.hello: custom action requires a key or command"},
+		{"legacy action", "actions:\n  atlantis-plan:\n    keys: [p]\n", "actions.atlantis-plan is no longer predefined; use operation: approve or operation: comment"},
+		{"invalid command", "actions:\n  hello:\n    operation: comment\n    keys: [H]\n    commands: [bad name]\n    comment: hello\n", "actions.hello.commands"},
+		{"named builtin comment", "actions:\n  merge-pr:\n    comment: hello\n", "actions.merge-pr.comment"},
+		{"invalid id", "actions:\n  Hello:\n    operation: comment\n    keys: [H]\n    comment: hello\n", "actions.Hello"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -261,7 +267,7 @@ func TestSavePreservesActions(t *testing.T) {
 
 	cfg := Default()
 	confirmed := true
-	cfg.Actions["hello"] = ActionConfig{Keys: []string{"H"}, Commands: []string{"hello"}, Comment: "hello world", Confirm: &confirmed}
+	cfg.Actions["hello"] = ActionConfig{Operation: "comment", Keys: []string{"H"}, Commands: []string{"hello"}, Comment: "hello world", Confirm: &confirmed, Description: "Say hello"}
 	if err := Save(cfg); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -274,17 +280,19 @@ func TestSavePreservesActions(t *testing.T) {
 	}
 }
 
-func TestSaveWritesActionsAsFlowMappings(t *testing.T) {
+func TestSaveGenericActions(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(t.TempDir(), "config"))
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(t.TempDir(), "cache"))
 
 	cfg := Default()
 	confirmed := false
 	cfg.Actions["deploy-preview"] = ActionConfig{
-		Keys:     []string{"P"},
-		Commands: []string{"preview"},
-		Comment:  "deploy preview",
-		Confirm:  &confirmed,
+		Operation:   "comment",
+		Keys:        []string{"P"},
+		Commands:    []string{"preview"},
+		Comment:     "deploy preview",
+		Confirm:     &confirmed,
+		Description: "Deploy preview",
 	}
 	if err := Save(cfg); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -309,12 +317,26 @@ func TestSaveWritesActionsAsFlowMappings(t *testing.T) {
 	}
 	custom := actionLine(string(data), "deploy-preview")
 	last := -1
-	for _, field := range []string{"{", "keys:", "commands:", "comment:", "confirm: false", "}"} {
+	for _, field := range []string{"{", "operation:", "keys:", "commands:", "comment:", "confirm: false", "description:", "}"} {
 		index := strings.Index(custom, field)
 		if index <= last {
 			t.Fatalf("deploy-preview = %q, want %q", custom, field)
 		}
 		last = index
+	}
+}
+
+func TestDefaultGenericActions(t *testing.T) {
+	actions := DefaultActions()
+	for _, id := range []string{"approve", "approve-now", "comment"} {
+		if _, ok := actions[id]; !ok {
+			t.Fatalf("missing default action %q", id)
+		}
+	}
+	for _, id := range []string{"approve-with-confirmation", "approve-immediately", "write-comment", "atlantis-plan", "atlantis-apply", "atlantis-unlock"} {
+		if _, ok := actions[id]; ok {
+			t.Fatalf("removed default action %q present", id)
+		}
 	}
 }
 

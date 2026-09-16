@@ -31,14 +31,22 @@ type Config struct {
 }
 
 type ActionConfig struct {
-	Keys     []string `yaml:"keys,omitempty"`
-	Commands []string `yaml:"commands,omitempty"`
-	Comment  string   `yaml:"comment,omitempty"`
-	Confirm  *bool    `yaml:"confirm,omitempty"`
+	Operation   string   `yaml:"operation,omitempty"`
+	Keys        []string `yaml:"keys,omitempty"`
+	Commands    []string `yaml:"commands,omitempty"`
+	Comment     string   `yaml:"comment,omitempty"`
+	Confirm     *bool    `yaml:"confirm,omitempty"`
+	Description string   `yaml:"description,omitempty"`
 }
 
 func (a ActionConfig) MarshalYAML() (any, error) {
 	node := yaml.Node{Kind: yaml.MappingNode, Style: yaml.FlowStyle}
+	if a.Operation != "" {
+		node.Content = append(node.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "operation"},
+			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: a.Operation},
+		)
+	}
 	if a.Keys != nil {
 		node.Content = append(node.Content,
 			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "keys"},
@@ -63,6 +71,12 @@ func (a ActionConfig) MarshalYAML() (any, error) {
 			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: strconv.FormatBool(*a.Confirm)},
 		)
 	}
+	if a.Description != "" {
+		node.Content = append(node.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "description"},
+			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: a.Description},
+		)
+	}
 	return &node, nil
 }
 
@@ -75,11 +89,13 @@ func stringNodes(values []string) []*yaml.Node {
 }
 
 type actionOverride struct {
-	Keys     *[]string `yaml:"keys"`
-	Commands *[]string `yaml:"commands"`
-	Comment  *string   `yaml:"comment"`
-	Confirm  *bool     `yaml:"confirm"`
-	supplied map[string]bool
+	Operation   *string   `yaml:"operation"`
+	Keys        *[]string `yaml:"keys"`
+	Commands    *[]string `yaml:"commands"`
+	Comment     *string   `yaml:"comment"`
+	Confirm     *bool     `yaml:"confirm"`
+	Description *string   `yaml:"description"`
+	supplied    map[string]bool
 }
 
 func (a *actionOverride) UnmarshalYAML(value *yaml.Node) error {
@@ -127,29 +143,27 @@ func Default() Config {
 }
 
 func DefaultActions() map[string]ActionConfig {
+	confirmed, immediate := true, false
 	return map[string]ActionConfig{
-		"open-pr":                   {Keys: []string{"o"}},
-		"copy-pr-url":               {Keys: []string{"C"}},
-		"refresh-pr":                {Keys: []string{"r"}},
-		"refresh-inbox":             {Keys: []string{"R"}, Commands: []string{"refresh-all"}},
-		"toggle-diff":               {Keys: []string{"v"}},
-		"open-diff-pager":           {Keys: []string{"V"}},
-		"next-file":                 {Keys: []string{"n", "]"}},
-		"prev-file":                 {Keys: []string{"p", "["}},
-		"toggle-side-by-side":       {Keys: []string{"s"}},
-		"toggle-file-content":       {Keys: []string{"x"}},
-		"approve-with-confirmation": {Keys: []string{"a"}},
-		"approve-immediately":       {Keys: []string{"A"}},
-		"write-comment":             {Keys: []string{"c"}},
-		"atlantis-plan":             {Commands: []string{"ap"}},
-		"atlantis-apply":            {Commands: []string{"aa"}},
-		"atlantis-unlock":           {Commands: []string{"au"}},
-		"toggle-draft":              {Commands: []string{"draft"}},
-		"close-pr":                  {Commands: []string{"close"}},
-		"update-branch":             {Commands: []string{"update"}},
-		"request-changes":           {Commands: []string{"block"}},
-		"merge-pr":                  {Commands: []string{"merge"}},
-		"ai-review":                 {Commands: []string{"ai"}},
+		"open-pr":             {Keys: []string{"o"}},
+		"copy-pr-url":         {Keys: []string{"C"}},
+		"refresh-pr":          {Keys: []string{"r"}},
+		"refresh-inbox":       {Keys: []string{"R"}, Commands: []string{"refresh-all"}},
+		"toggle-diff":         {Keys: []string{"v"}},
+		"open-diff-pager":     {Keys: []string{"V"}},
+		"next-file":           {Keys: []string{"n", "]"}},
+		"prev-file":           {Keys: []string{"p", "["}},
+		"toggle-side-by-side": {Keys: []string{"s"}},
+		"toggle-file-content": {Keys: []string{"x"}},
+		"approve":             {Operation: "approve", Keys: []string{"a"}, Confirm: &confirmed},
+		"approve-now":         {Operation: "approve", Keys: []string{"A"}, Confirm: &immediate},
+		"comment":             {Operation: "comment", Keys: []string{"c"}},
+		"toggle-draft":        {Commands: []string{"draft"}},
+		"close-pr":            {Commands: []string{"close"}},
+		"update-branch":       {Commands: []string{"update"}},
+		"request-changes":     {Commands: []string{"block"}},
+		"merge-pr":            {Commands: []string{"merge"}},
+		"ai-review":           {Commands: []string{"ai"}},
 	}
 }
 
@@ -251,8 +265,11 @@ func Load() (Config, error) {
 		if !actionIDPattern.MatchString(id) {
 			return cfg, fmt.Errorf("actions.%s: invalid action ID", id)
 		}
+		if isRemovedAction(id) {
+			return cfg, fmt.Errorf("actions.%s is no longer predefined; use operation: approve or operation: comment", id)
+		}
 		if fixed, ok := FixedActions()[id]; ok {
-			if override.supplied["comment"] || override.supplied["confirm"] ||
+			if override.supplied["operation"] || override.supplied["comment"] || override.supplied["confirm"] || override.supplied["description"] ||
 				(override.supplied["keys"] && (override.Keys == nil || !reflect.DeepEqual(*override.Keys, fixed.Keys))) ||
 				(override.supplied["commands"] && (override.Commands == nil || !reflect.DeepEqual(*override.Commands, fixed.Commands))) {
 				return cfg, fmt.Errorf("actions.%s is now built in; remove it from config", id)
@@ -260,28 +277,66 @@ func Load() (Config, error) {
 			continue
 		}
 		action, builtin := cfg.Actions[id]
-		if builtin && override.Comment != nil {
-			return cfg, fmt.Errorf("actions.%s.comment: built-in action behavior cannot be changed", id)
-		}
-		if builtin && override.Confirm != nil {
-			return cfg, fmt.Errorf("actions.%s.confirm: built-in action behavior cannot be changed", id)
-		}
-		if !builtin {
-			if override.Comment == nil || strings.TrimSpace(*override.Comment) == "" {
-				return cfg, fmt.Errorf("actions.%s.comment: custom action comment is required", id)
+		generic := action.Operation != "" || override.Operation != nil
+		if builtin && !generic {
+			if override.Operation != nil {
+				return cfg, fmt.Errorf("actions.%s.operation: built-in action behavior cannot be changed", id)
 			}
-			confirmed := true
-			action = ActionConfig{Comment: *override.Comment, Confirm: &confirmed}
+			if override.Comment != nil {
+				return cfg, fmt.Errorf("actions.%s.comment: built-in action behavior cannot be changed", id)
+			}
+			if override.Confirm != nil {
+				return cfg, fmt.Errorf("actions.%s.confirm: built-in action behavior cannot be changed", id)
+			}
+			if override.Description != nil {
+				return cfg, fmt.Errorf("actions.%s.description: built-in action behavior cannot be changed", id)
+			}
+		}
+		if generic {
+			if override.Operation != nil {
+				action.Operation = *override.Operation
+			}
+			if action.Operation == "" {
+				return cfg, fmt.Errorf("actions.%s requires operation", id)
+			}
+			if action.Operation != "approve" && action.Operation != "comment" {
+				return cfg, fmt.Errorf("actions.%s has unknown operation %q", id, action.Operation)
+			}
+			if override.supplied["comment"] {
+				if action.Operation == "approve" {
+					return cfg, fmt.Errorf("actions.%s approve actions cannot set comment", id)
+				}
+				if override.Comment == nil || strings.TrimSpace(*override.Comment) == "" {
+					return cfg, fmt.Errorf("actions.%s static comment cannot be blank", id)
+				}
+				action.Comment = *override.Comment
+			}
+			if override.supplied["confirm"] && action.Operation == "comment" && action.Comment == "" {
+				return cfg, fmt.Errorf("actions.%s editor comments cannot set confirm", id)
+			}
+			if override.Confirm != nil {
+				confirmed := *override.Confirm
+				action.Confirm = &confirmed
+			}
+			if action.Operation == "approve" || action.Comment != "" {
+				if action.Confirm == nil {
+					confirmed := true
+					action.Confirm = &confirmed
+				}
+			} else {
+				action.Confirm = nil
+			}
+			if override.Description != nil {
+				action.Description = *override.Description
+			}
+		} else if !builtin {
+			return cfg, fmt.Errorf("actions.%s requires operation", id)
 		}
 		if override.Keys != nil {
 			action.Keys = append([]string{}, (*override.Keys)...)
 		}
 		if override.Commands != nil {
 			action.Commands = append([]string{}, (*override.Commands)...)
-		}
-		if !builtin && override.Confirm != nil {
-			confirmed := *override.Confirm
-			action.Confirm = &confirmed
 		}
 		cfg.Actions[id] = action
 	}
@@ -313,13 +368,18 @@ func validateActions(actions map[string]ActionConfig) error {
 		if !actionIDPattern.MatchString(id) {
 			return fmt.Errorf("actions.%s: invalid action ID", id)
 		}
-		if _, builtin := builtins[id]; !builtin {
-			if strings.TrimSpace(action.Comment) == "" {
-				return fmt.Errorf("actions.%s.comment: custom action comment is required", id)
+		if action.Operation != "" {
+			if action.Operation != "approve" && action.Operation != "comment" {
+				return fmt.Errorf("actions.%s has unknown operation %q", id, action.Operation)
+			}
+			if action.Operation == "approve" && action.Comment != "" {
+				return fmt.Errorf("actions.%s approve actions cannot set comment", id)
 			}
 			if len(action.Keys) == 0 && len(action.Commands) == 0 {
 				return fmt.Errorf("actions.%s: custom action requires a key or command", id)
 			}
+		} else if _, builtin := builtins[id]; !builtin {
+			return fmt.Errorf("actions.%s requires operation", id)
 		}
 		for _, command := range action.Commands {
 			if !commandAliasPattern.MatchString(command) {
@@ -333,6 +393,14 @@ func validateActions(actions map[string]ActionConfig) error {
 		}
 	}
 	return nil
+}
+
+func isRemovedAction(id string) bool {
+	switch id {
+	case "approve-with-confirmation", "approve-immediately", "write-comment", "atlantis-plan", "atlantis-apply", "atlantis-unlock":
+		return true
+	}
+	return false
 }
 
 type Duration time.Duration
