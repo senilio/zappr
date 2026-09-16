@@ -387,7 +387,8 @@ func (m Model) triggerAction(action tuiAction) (tea.Model, tea.Cmd) {
 		}
 	}
 	if action.Confirmation != confirmationNone {
-		if action.ID == "approve-with-confirmation" {
+		if action.Operation == "approve" {
+			m.pendingAction = action
 			m.mode = ModeConfirmApprove
 			return m, nil
 		}
@@ -431,7 +432,16 @@ func (m Model) executeAction(action tuiAction) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	pr, _ := m.current()
-	if action.Comment != "" {
+	switch action.Operation {
+	case "approve":
+		m.loading = true
+		return m, tea.Batch(m.startStatus("approving…"), approveCmd(m.app, pr))
+	case "comment":
+		if action.Comment == "" {
+			m.comment = ""
+			m.mode = ModeComment
+			return m, nil
+		}
 		return m, tea.Batch(m.startStatus("commenting…"), commentCmd(m.app, pr, action.Comment))
 	}
 	switch action.ID {
@@ -443,12 +453,6 @@ func (m Model) executeAction(action tuiAction) (tea.Model, tea.Cmd) {
 		m.message = "re-running analysis"
 		m.aiAnalyzing = true
 		return m, tea.Batch(m.startStatus("re-running analysis…"), analyzeCmd(m.app, pr))
-	case "atlantis-plan":
-		return m, tea.Batch(m.startStatus("commenting…"), commentCmd(m.app, pr, "atlantis plan"))
-	case "atlantis-apply":
-		return m, tea.Batch(m.startStatus("commenting…"), commentCmd(m.app, pr, "atlantis apply"))
-	case "atlantis-unlock":
-		return m, tea.Batch(m.startStatus("commenting…"), commentCmd(m.app, pr, "atlantis unlock"))
 	case "toggle-draft":
 		status := "marking ready…"
 		if !pr.Draft {
@@ -779,16 +783,6 @@ func (m Model) executeAction(action tuiAction) (tea.Model, tea.Cmd) {
 		}
 		path := pr.Files[m.fileIndex].Path
 		return m, tea.Batch(m.startStatus("fetching file…"), fileContentCmd(m.app.GitHub, pr.Repo, path, pr.HeadRefOID, key))
-	case "approve-with-confirmation":
-		m.mode = ModeConfirmApprove
-	case "approve-immediately":
-		if pr, ok := m.current(); ok {
-			m.loading = true
-			return m, tea.Batch(m.startStatus("approving…"), approveCmd(m.app, pr))
-		}
-	case "write-comment":
-		m.comment = ""
-		m.mode = ModeComment
 	case "command-palette":
 		m.commandInput = ""
 		m.commandCursor = 0
@@ -808,13 +802,7 @@ func (m Model) handleApproveKey(key string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if action.ID == "approve-confirm" {
-		pr, ok := m.current()
-		if !ok {
-			m.mode = ModeInbox
-			return m, nil
-		}
-		m.loading = true
-		return m, tea.Batch(m.startStatus("approving…"), approveCmd(m.app, pr))
+		return m.executeAction(m.pendingAction)
 	}
 	return m, nil
 }

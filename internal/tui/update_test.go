@@ -332,36 +332,71 @@ func TestActionRegistryAllowsKeysInDifferentContexts(t *testing.T) {
 	}
 }
 
-func TestConfiguredCommentAction(t *testing.T) {
+func TestGenericActionsDispatchByOperation(t *testing.T) {
 	cfg := config.Default()
-	cfg.Actions["hello"] = config.ActionConfig{Operation: "comment", Keys: []string{"H"}, Commands: []string{"hello"}, Comment: "hello world"}
+	confirmed := false
+	cfg.Actions["approve"] = config.ActionConfig{Operation: "approve", Keys: []string{"Z"}, Commands: []string{"approve-confirmed"}}
+	cfg.Actions["approve-now"] = config.ActionConfig{Operation: "approve", Keys: []string{"I"}, Commands: []string{"approve-immediate"}, Confirm: &confirmed}
+	cfg.Actions["static-comment"] = config.ActionConfig{Operation: "comment", Keys: []string{"S"}, Commands: []string{"static-comment"}, Comment: "hello world"}
+	cfg.Actions["comment"] = config.ActionConfig{Operation: "comment", Keys: []string{"W"}, Commands: []string{"editor-comment"}}
 	m, provider := configuredModel(t, cfg, true)
 
-	m = updateKey(m, "H")
-	assertMode(t, m, ModeConfirmCommand)
+	// Confirmed approval uses the fixed approval modal and its configured key.
+	m = updateKey(m, "Z")
+	assertMode(t, m, ModeConfirmApprove)
 	m = updateKey(m, "y")
-	assertCommentBody(t, provider, "hello world")
+	if provider.approvals != 1 {
+		t.Fatalf("approvals = %d, want 1", provider.approvals)
+	}
 
+	// Immediate approval dispatches from its command alias.
 	m, provider = configuredModel(t, cfg, true)
-	m = openCommandAndType(m, "hello")
+	m = openCommandAndType(m, "approve-immediate")
+	m = updateKey(m, "enter")
+	if provider.approvals != 1 {
+		t.Fatalf("approvals = %d, want 1", provider.approvals)
+	}
+
+	// Static and editor comments both dispatch from generic aliases.
+	m = openCommandAndType(m, "static-comment")
 	m = updateKey(m, "enter")
 	assertMode(t, m, ModeConfirmCommand)
 	m = updateKey(m, "y")
 	assertCommentBody(t, provider, "hello world")
+	m.comment = "stale draft"
+	m = updateKey(m, "W")
+	assertMode(t, m, ModeComment)
+	if m.comment != "" {
+		t.Fatalf("comment = %q, want cleared draft", m.comment)
+	}
+	m = updateKey(m, "esc")
+	assertMode(t, m, ModeDetail)
+	if len(provider.comments) != 1 {
+		t.Fatalf("comments = %#v, want static comment only", provider.comments)
+	}
+	m = openCommandAndType(m, "editor-comment")
+	m = updateKey(m, "enter")
+	m = updateKey(m, "o")
+	m = updateKey(m, "k")
+	m = updateKey(m, "enter")
+	if got := strings.Join(provider.comments, ","); got != "hello world,ok" {
+		t.Fatalf("comments = %q, want hello world,ok", got)
+	}
 }
 
-func TestConfiguredCommentActionWithoutConfirmation(t *testing.T) {
+func TestGenericApprovalCancellation(t *testing.T) {
 	cfg := config.Default()
-	confirm := false
-	cfg.Actions["hello"] = config.ActionConfig{Operation: "comment", Keys: []string{"H"}, Comment: " hello world ", Confirm: &confirm}
+	confirmed := false
+	cfg.Actions["approve"] = config.ActionConfig{Operation: "approve", Keys: []string{"A"}}
+	cfg.Actions["approve-now"] = config.ActionConfig{Operation: "approve", Confirm: &confirmed}
 	m, provider := configuredModel(t, cfg, true)
 
-	m = updateKey(m, "H")
-
-	if m.mode == ModeConfirmCommand {
-		t.Fatal("comment action should not require confirmation")
+	m = updateKey(m, "A")
+	m = updateKey(m, "esc")
+	assertMode(t, m, ModeDetail)
+	if provider.approvals != 0 {
+		t.Fatalf("approvals = %d, want 0 after cancellation", provider.approvals)
 	}
-	assertCommentBody(t, provider, " hello world ")
 }
 
 func fullscreenDiffModel(t *testing.T, cfg config.Config) (Model, *commentRecordingGitHub) {
@@ -386,7 +421,7 @@ func TestFullscreenDiffIgnoresMutatingNormalActions(t *testing.T) {
 	cfg.Actions["hello"] = config.ActionConfig{Operation: "comment", Keys: []string{"H"}, Comment: "hello", Confirm: &confirm}
 	m, provider := fullscreenDiffModel(t, cfg)
 
-	// "A" is approve-immediately, "H" is an unconfirmed custom comment action.
+	// Generic actions remain unreachable while the diff is full-screen.
 	for _, key := range []string{"A", "H"} {
 		m = updateKey(m, key)
 	}
@@ -477,7 +512,10 @@ func TestDiffPaneClickKeepsNormalKeysAlive(t *testing.T) {
 		t.Run(fmt.Sprintf("width%d", width), func(t *testing.T) {
 			cfg := config.Default()
 			confirm := false
+			cfg.Actions["approve"] = config.ActionConfig{Operation: "approve", Keys: []string{"A"}}
+			cfg.Actions["approve-now"] = config.ActionConfig{Operation: "approve", Confirm: &confirm}
 			cfg.Actions["hello"] = config.ActionConfig{Operation: "comment", Keys: []string{"H"}, Comment: "hello", Confirm: &confirm}
+			cfg.Actions["comment"] = config.ActionConfig{Operation: "comment", Keys: []string{"W"}}
 			m, provider := paneDiffModel(t, cfg, width)
 
 			// Summary-mode switching via "2".
@@ -498,16 +536,16 @@ func TestDiffPaneClickKeepsNormalKeysAlive(t *testing.T) {
 				t.Error("tab did not change focus away from diff pane")
 			}
 
-			// Approval confirmation via "a".
-			m5 := updateKey(m, "a")
+			// Generic approval confirmation via its configured key.
+			m5 := updateKey(m, "A")
 			if m5.mode != ModeConfirmApprove {
-				t.Errorf("mode = %v, want ModeConfirmApprove after \"a\"", m5.mode)
+				t.Errorf("mode = %v, want ModeConfirmApprove after \"A\"", m5.mode)
 			}
 
-			// Comment composition via "c".
-			m6 := updateKey(m, "c")
+			// Generic comment composition via an empty comment action.
+			m6 := updateKey(m, "W")
 			if m6.mode != ModeComment {
-				t.Errorf("mode = %v, want ModeComment after \"c\"", m6.mode)
+				t.Errorf("mode = %v, want ModeComment after \"W\"", m6.mode)
 			}
 
 			// A custom unconfirmed comment action is reachable in a pane layout.
