@@ -85,31 +85,31 @@ zappr version                 # print version (also --version)
 
 ## TUI Keys
 
+These standard navigation, pane switching, selection, confirmation, help, and
+quit controls are built in and cannot be configured:
+
 ```text
 j/k          navigate inbox
 enter        inspect selected PR
-a            start approval; y confirms
-A            approve immediately (no confirmation)
-c            comment on selected PR
-r            refresh selected PR (or inbox when none is selected)
-R            refresh full inbox
-v            toggle diff pane
-V            open full diff in external pager (delta or less)
-s            toggle side-by-side diff
+y            confirm
 tab          cycle focus
 g/G          top / bottom of list
 shift-up/down previous / next file or commit
-x            expand selected file / diff hunks
 1/2/3/4      summary pane: files / commits / comments / Atlantis plan
-n/p, [/]     previous / next file or commit in summary/diff
 f            filters / settings
-o            open PR in browser
-C            copy PR URL
 ?            help
 :            command palette (vim-style colon commands)
 esc          back / cancel
 q            quit
 ```
+
+The following PR/view actions use their default aliases and may be configured:
+`a` starts approval, `A` approves immediately, `c` comments, `r` refreshes the
+selected PR, `R` refreshes the inbox, `v` toggles the diff pane, `V` opens the
+full diff pager, `s` toggles side-by-side diff, `x` expands file content,
+`n`/`p` and `[`/`]` move between files or commits, `o` opens the PR, and `C`
+copies its URL. Command palette operations below are also configurable where
+listed.
 
 The summary pane starts on changed files and can switch to commits, PR
 conversation comments, or Atlantis plan output with `1`, `2`, `3`, and `4`.
@@ -216,40 +216,30 @@ trust:
 ### TUI actions
 
 `zappr config init` creates `$XDG_CONFIG_HOME/zappr/config.yaml` (or
-`~/.config/zappr/config.yaml`). The generated file includes every built-in
-action. Add only the fields to change; each action overlays its built-in
-`keys` and `commands` independently. An empty list clears that field.
+`~/.config/zappr/config.yaml`). The generated file includes only configurable
+PR/view, PR-writing, and static-comment actions. Fixed controls are built in
+and cannot be configured. Add only the fields to change; each action overlays
+its built-in `keys` and `commands` independently. An empty list clears that
+field.
 
 ```yaml
 actions:
-  help:
-    keys: [H]
-  ai-review:
-    commands: [review]
-  hello:
-    keys: [H]
-    commands: [hello]
-    comment: |-
-      Hello from zappr.
-    confirm: false
+  refresh-inbox: { keys: [R], commands: [refresh-all] }
+  ai-review: { commands: [review] }
+  hello: { keys: [H], commands: [hello], comment: "Hello from zappr.", confirm: false }
 ```
 
-Built-in IDs: `quit`, `help`, `summary-files`, `summary-commits`,
-`summary-comments`, `summary-atlantis`, `focus-next`, `focus-prev`, `go-top`,
-`go-bottom`, `open-pr`, `copy-pr-url`, `settings`, `move-down`, `move-up`,
-`pan-left`, `pan-right`, `page-down`, `page-up`, `next-item`, `prev-item`,
-`inspect-pr`, `back-to-inbox`, `refresh-pr`, `refresh-inbox`, `toggle-diff`,
-`open-diff-pager`, `next-file`, `prev-file`, `toggle-side-by-side`,
-`toggle-file-content`, `approve-with-confirmation`, `approve-immediately`,
-`write-comment`, `command-palette`, `help-close`, `diff-close`,
-`approve-confirm`, `approve-cancel`, `settings-close`, `settings-next`,
-`settings-prev`, `settings-toggle`, `colorscheme-cancel`, `colorscheme-next`,
-`colorscheme-prev`, `colorscheme-confirm`, `comment-cancel`, `comment-submit`,
-`comment-backspace`, `command-cancel`, `command-submit`, `command-next`,
-`command-prev`, `command-backspace`, `command-confirm`,
-`command-cancel-confirmation`, `atlantis-plan`, `atlantis-apply`,
+Configurable built-in IDs: `open-pr`, `copy-pr-url`, `refresh-pr`,
+`refresh-inbox`, `toggle-diff`, `open-diff-pager`, `next-file`, `prev-file`,
+`toggle-side-by-side`, `toggle-file-content`, `approve-with-confirmation`,
+`approve-immediately`, `write-comment`, `atlantis-plan`, `atlantis-apply`,
 `atlantis-unlock`, `toggle-draft`, `close-pr`, `update-branch`,
-`request-changes`, `merge-pr`, `ai-review`, and `colorscheme`.
+`request-changes`, `merge-pr`, and `ai-review`.
+
+Legacy fixed-action entries that exactly match their old defaults are accepted;
+changed fixed entries fail with a migration error because those controls are
+now built in. Saving rewrites the YAML file, so comments and formatting are
+not preserved.
 
 Custom IDs use lowercase letters, digits, and hyphens. They require `comment`
 and at least one `keys` or `commands` entry. Custom actions only post their
