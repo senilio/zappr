@@ -52,10 +52,9 @@ func ParseSortMode(s string) SortMode {
 }
 
 type App struct {
-	GitHub         github.Provider
-	AI             ai.Provider
-	Cache          cache.Store
-	TrustedAuthors map[string]bool
+	GitHub github.Provider
+	AI     ai.Provider
+	Cache  cache.Store
 }
 
 func New(githubProvider github.Provider, aiProvider ai.Provider, store cache.Store) *App {
@@ -63,15 +62,6 @@ func New(githubProvider github.Provider, aiProvider ai.Provider, store cache.Sto
 		aiProvider = ai.NoopProvider{}
 	}
 	return &App{GitHub: githubProvider, AI: aiProvider, Cache: store}
-}
-
-// AIEnabled reports whether a real AI provider is configured.
-func (a *App) AIEnabled() bool {
-	if a.AI == nil {
-		return false
-	}
-	_, noop := a.AI.(ai.NoopProvider)
-	return !noop
 }
 
 func (a *App) Refresh(ctx context.Context, repo string) ([]model.PullRequest, error) {

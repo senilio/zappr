@@ -69,7 +69,6 @@ type Model struct {
 	theme            uitheme.Theme
 	cfg              config.Config
 	actions          actionRegistry
-	aiEnabled        bool
 	prevMode         Mode
 	inboxVP          viewport.Model
 	summaryVP        viewport.Model
@@ -90,7 +89,6 @@ type Model struct {
 	pendingAction tuiAction // action awaiting confirmation
 	commandCursor int       // selected index in command palette list
 
-	aiAnalyzing bool // true while AI analysis is in-flight
 }
 
 type SummaryMode int
@@ -152,7 +150,7 @@ func New(zappr *app.App, repo string, pollEvery time.Duration, themeName string,
 	dvp := viewport.New(0, 0)
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
-	return Model{app: zappr, repo: repo, loading: true, pollEvery: pollEvery, sortMode: app.ParseSortMode(cfg.Sort), theme: uitheme.DefaultWithName(themeName), cfg: cfg, actions: actions, aiEnabled: zappr.AIEnabled(), inboxVP: ivp, summaryVP: vp, diffVP: dvp, statusSpinner: sp, summaryMode: SummaryModeFiles}, nil
+	return Model{app: zappr, repo: repo, loading: true, pollEvery: pollEvery, sortMode: app.ParseSortMode(cfg.Sort), theme: uitheme.DefaultWithName(themeName), cfg: cfg, actions: actions, inboxVP: ivp, summaryVP: vp, diffVP: dvp, statusSpinner: sp, summaryMode: SummaryModeFiles}, nil
 }
 
 func (m Model) Init() tea.Cmd {
@@ -276,18 +274,6 @@ func refreshPRCmd(app *app.App, pr model.PullRequest) tea.Cmd {
 		defer cancel()
 		fresh, err := app.RefreshPR(ctx, pr.Repo, pr.Number)
 		return refreshPRMsg{repo: pr.Repo, number: pr.Number, pr: fresh, err: err}
-	}
-}
-
-func analyzeCmd(app *app.App, pr model.PullRequest) tea.Cmd {
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-		defer cancel()
-		if _, err := app.Analyze(ctx, pr.Repo, pr.Number); err != nil {
-			return refreshMsg{err: err}
-		}
-		prs, err := app.Refresh(ctx, pr.Repo)
-		return refreshMsg{prs: prs, err: err}
 	}
 }
 

@@ -22,9 +22,7 @@ var (
 
 type Config struct {
 	Refresh RefreshConfig           `yaml:"refresh"`
-	AI      AIConfig                `yaml:"ai"`
 	Cache   CacheConfig             `yaml:"cache"`
-	Trust   TrustConfig             `yaml:"trust"`
 	Theme   string                  `yaml:"theme,omitempty"`
 	Sort    string                  `yaml:"sort,omitempty"`
 	Actions map[string]ActionConfig `yaml:"actions"`
@@ -40,7 +38,7 @@ type ActionConfig struct {
 }
 
 func (a ActionConfig) MarshalYAML() (any, error) {
-	node := yaml.Node{Kind: yaml.MappingNode, Style: yaml.FlowStyle}
+	node := yaml.Node{Kind: yaml.MappingNode}
 	if a.Operation != "" {
 		node.Content = append(node.Content,
 			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "operation"},
@@ -50,13 +48,13 @@ func (a ActionConfig) MarshalYAML() (any, error) {
 	if a.Keys != nil {
 		node.Content = append(node.Content,
 			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "keys"},
-			&yaml.Node{Kind: yaml.SequenceNode, Style: yaml.FlowStyle, Content: stringNodes(a.Keys)},
+			&yaml.Node{Kind: yaml.SequenceNode, Content: stringNodes(a.Keys)},
 		)
 	}
 	if a.Commands != nil {
 		node.Content = append(node.Content,
 			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "commands"},
-			&yaml.Node{Kind: yaml.SequenceNode, Style: yaml.FlowStyle, Content: stringNodes(a.Commands)},
+			&yaml.Node{Kind: yaml.SequenceNode, Content: stringNodes(a.Commands)},
 		)
 	}
 	if a.Comment != "" {
@@ -112,20 +110,8 @@ func (a *actionOverride) UnmarshalYAML(value *yaml.Node) error {
 	return nil
 }
 
-type TrustConfig struct {
-	// Authors lists GitHub usernames whose PRs are biased toward safe.
-	// Trust never overrides a block verdict.
-	Authors []string `yaml:"authors"`
-}
-
 type RefreshConfig struct {
 	Interval Duration `yaml:"interval"`
-}
-
-type AIConfig struct {
-	Command string   `yaml:"command"`
-	Prompt  string   `yaml:"prompt"`
-	Timeout Duration `yaml:"timeout"`
 }
 
 type CacheConfig struct {
@@ -136,7 +122,6 @@ func Default() Config {
 	cachePath, _ := DefaultCachePath()
 	return Config{
 		Refresh: RefreshConfig{Interval: Duration(2 * time.Minute)},
-		AI:      AIConfig{Timeout: Duration(60 * time.Second)},
 		Cache:   CacheConfig{Path: cachePath},
 		Actions: DefaultActions(),
 	}
@@ -151,8 +136,6 @@ func DefaultActions() map[string]ActionConfig {
 		"refresh-inbox":       {Keys: []string{"R"}, Commands: []string{"refresh-all"}},
 		"toggle-diff":         {Keys: []string{"v"}},
 		"open-diff-pager":     {Keys: []string{"V"}},
-		"next-file":           {Keys: []string{"n", "]"}},
-		"prev-file":           {Keys: []string{"p", "["}},
 		"toggle-side-by-side": {Keys: []string{"s"}},
 		"toggle-file-content": {Keys: []string{"x"}},
 		"approve":             {Operation: "approve", Keys: []string{"a"}, Confirm: &confirmed},
@@ -163,7 +146,6 @@ func DefaultActions() map[string]ActionConfig {
 		"update-branch":       {Commands: []string{"update"}},
 		"request-changes":     {Commands: []string{"block"}},
 		"merge-pr":            {Commands: []string{"merge"}},
-		"ai-review":           {Commands: []string{"ai"}},
 	}
 }
 
@@ -180,8 +162,8 @@ func FixedActions() map[string]ActionConfig {
 		"go-top":                      {Keys: []string{"g"}},
 		"go-bottom":                   {Keys: []string{"G"}},
 		"settings":                    {Keys: []string{"f"}},
-		"move-down":                   {Keys: []string{"j", "down"}},
-		"move-up":                     {Keys: []string{"k", "up"}},
+		"move-down":                   {Keys: []string{"down"}},
+		"move-up":                     {Keys: []string{"up"}},
 		"pan-left":                    {Keys: []string{"left"}},
 		"pan-right":                   {Keys: []string{"right"}},
 		"page-down":                   {Keys: []string{"pgdown", " "}},
@@ -238,17 +220,13 @@ func Load() (Config, error) {
 	}
 	file := struct {
 		Refresh RefreshConfig             `yaml:"refresh"`
-		AI      AIConfig                  `yaml:"ai"`
 		Cache   CacheConfig               `yaml:"cache"`
-		Trust   TrustConfig               `yaml:"trust"`
 		Theme   string                    `yaml:"theme,omitempty"`
 		Sort    string                    `yaml:"sort,omitempty"`
 		Actions map[string]actionOverride `yaml:"actions"`
 	}{
 		Refresh: cfg.Refresh,
-		AI:      cfg.AI,
 		Cache:   cfg.Cache,
-		Trust:   cfg.Trust,
 		Theme:   cfg.Theme,
 		Sort:    cfg.Sort,
 	}
@@ -256,9 +234,7 @@ func Load() (Config, error) {
 		return cfg, fmt.Errorf("parse config %s: %w", path, err)
 	}
 	cfg.Refresh = file.Refresh
-	cfg.AI = file.AI
 	cfg.Cache = file.Cache
-	cfg.Trust = file.Trust
 	cfg.Theme = file.Theme
 	cfg.Sort = file.Sort
 	for id, override := range file.Actions {
@@ -346,9 +322,6 @@ func Load() (Config, error) {
 	if cfg.Refresh.Interval == 0 {
 		cfg.Refresh.Interval = Duration(2 * time.Minute)
 	}
-	if cfg.AI.Timeout == 0 {
-		cfg.AI.Timeout = Duration(60 * time.Second)
-	}
 	if cfg.Cache.Path == "" {
 		cfg.Cache.Path, _ = DefaultCachePath()
 	}
@@ -397,7 +370,7 @@ func validateActions(actions map[string]ActionConfig) error {
 
 func isRemovedAction(id string) bool {
 	switch id {
-	case "approve-with-confirmation", "approve-immediately", "write-comment", "atlantis-plan", "atlantis-apply", "atlantis-unlock":
+	case "approve-with-confirmation", "approve-immediately", "write-comment":
 		return true
 	}
 	return false

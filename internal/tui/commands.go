@@ -76,8 +76,6 @@ var actionDescriptors = []tuiAction{
 	{"refresh-inbox", "refresh full inbox", actionContextNormal, nil, nil, false, confirmationNone, "refresh-inbox", ""},
 	{"toggle-diff", "toggle diff", actionContextNormal, nil, nil, true, confirmationNone, "toggle-diff", ""},
 	{"open-diff-pager", "open diff pager", actionContextNormal, nil, nil, true, confirmationNone, "open-diff-pager", ""},
-	{"next-file", "next file", actionContextNormal, nil, nil, true, confirmationNone, "next-file", ""},
-	{"prev-file", "previous file", actionContextNormal, nil, nil, true, confirmationNone, "prev-file", ""},
 	{"toggle-side-by-side", "toggle side-by-side", actionContextNormal, nil, nil, true, confirmationNone, "toggle-side-by-side", ""},
 	{"toggle-file-content", "toggle file content", actionContextNormal, nil, nil, true, confirmationNone, "toggle-file-content", ""},
 	{"command-palette", "open command palette", actionContextNormal, nil, nil, false, confirmationNone, "command-palette", ""},
@@ -108,7 +106,6 @@ var actionDescriptors = []tuiAction{
 	{"update-branch", "update branch with base branch", actionContextNormal, nil, nil, true, confirmationMandatory, "update-branch", ""},
 	{"request-changes", "request changes to block PR merge", actionContextNormal, nil, nil, true, confirmationMandatory, "request-changes", ""},
 	{"merge-pr", "merge active PR (squash)", actionContextNormal, nil, nil, true, confirmationMandatory, "merge-pr", ""},
-	{"ai-review", "run AI review on selected PR", actionContextNormal, nil, nil, true, confirmationNone, "ai-review", ""},
 	{"colorscheme", "pick color scheme", actionContextNormal, nil, nil, false, confirmationNone, "colorscheme", ""},
 }
 
@@ -214,7 +211,6 @@ var diffFallbackActionIDs = []string{
 	"pan-left", "pan-right",
 	"page-down", "page-up",
 	"next-item", "prev-item",
-	"next-file", "prev-file",
 	"toggle-side-by-side", "toggle-file-content",
 }
 

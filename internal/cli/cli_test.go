@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/senilio/zappr/internal/ai"
 	"github.com/senilio/zappr/internal/config"
 )
 
@@ -41,13 +42,24 @@ func TestEnsureWritablePrivateModes(t *testing.T) {
 	}
 }
 
-func TestUsageTextSeparatesRefreshAndAIReview(t *testing.T) {
+func TestUsageTextOmitsAIReview(t *testing.T) {
 	text := usageText()
-	if !strings.Contains(text, "r refresh") || !strings.Contains(text, ":ai AI review") {
-		t.Fatalf("usage text = %q, want separate refresh and AI review commands", text)
+	if !strings.Contains(text, "r refresh") {
+		t.Fatalf("usage text = %q, want refresh command", text)
 	}
-	if strings.Contains(text, "r refresh/AI review") {
-		t.Fatalf("usage text = %q, contains stale combined shortcut", text)
+	if strings.Contains(strings.ToLower(text), "ai review") || strings.Contains(text, ":ai") {
+		t.Fatalf("usage text = %q, contains AI review", text)
+	}
+}
+
+func TestNewAppUsesNoopAI(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	zappr, err := newApp(config.Default())
+	if err != nil {
+		t.Fatalf("newApp: %v", err)
+	}
+	if _, ok := zappr.AI.(ai.NoopProvider); !ok {
+		t.Fatalf("AI provider = %T, want NoopProvider", zappr.AI)
 	}
 }
 

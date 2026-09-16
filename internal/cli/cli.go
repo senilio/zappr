@@ -80,35 +80,11 @@ func Run(args []string) error {
 
 func newApp(cfg config.Config) (*app.App, error) {
 	gh := github.NewGHProvider()
-	aiProvider := ai.Provider(ai.NoopProvider{})
-	aiCommand := cfg.AI.Command
-	if cmd := os.Getenv("ZAPPR_AI_COMMAND"); strings.TrimSpace(cmd) != "" {
-		aiCommand = cmd
-	}
-	if strings.TrimSpace(aiCommand) != "" {
-		aiProvider = ai.ShellProvider{Command: aiCommand, Prompt: cfg.AI.Prompt, Timeout: cfg.AI.Timeout.Duration()}
-	}
 	store, err := cache.OpenSQLite(cfg.Cache.Path)
 	if err != nil {
 		return nil, err
 	}
-	zappr := app.New(gh, aiProvider, store)
-	zappr.TrustedAuthors = trustedSet(cfg.Trust.Authors)
-	return zappr, nil
-}
-
-func trustedSet(authors []string) map[string]bool {
-	if len(authors) == 0 {
-		return nil
-	}
-	set := make(map[string]bool, len(authors))
-	for _, a := range authors {
-		name := strings.ToLower(strings.TrimSpace(a))
-		if name != "" {
-			set[name] = true
-		}
-	}
-	return set
+	return app.New(gh, ai.NoopProvider{}, store), nil
 }
 
 func runWatch(zappr *app.App, cfg config.Config, args []string) error {
@@ -230,12 +206,6 @@ func runDoctor(cfg config.Config) error {
 		{name: "gh authenticated", err: runQuiet("gh", "auth", "status")},
 		{name: "cache writable", err: ensureWritable(cfg.Cache.Path)},
 	}
-	if strings.TrimSpace(cfg.AI.Command) != "" {
-		checks = append(checks, struct {
-			name string
-			err  error
-		}{name: "ai command configured", err: nil})
-	}
 	failed := false
 	for _, check := range checks {
 		if check.err != nil {
@@ -331,6 +301,6 @@ Commands:
   zappr version                 print version
 
 Keys:
-  j/k navigate  tab focus  enter inspect  a approve, y confirm  c comment  r refresh  :ai AI review  v diff  1/2/3/4 summary  ? help  q quit
+	  j/k navigate  tab focus  enter inspect  a approve, y confirm  c comment  r refresh  v diff  1/2/3/4 summary  ? help  q quit
 `
 }

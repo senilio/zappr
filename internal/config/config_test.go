@@ -28,8 +28,8 @@ func TestInitAndLoad(t *testing.T) {
 	if cfg.Refresh.Interval.Duration() != 2*time.Minute {
 		t.Fatalf("interval = %s", cfg.Refresh.Interval.Duration())
 	}
-	if cfg.AI.Timeout.Duration() != 60*time.Second {
-		t.Fatalf("timeout = %s", cfg.AI.Timeout.Duration())
+	if _, ok := cfg.Actions["ai-review"]; ok {
+		t.Fatal("default config contains AI review action")
 	}
 }
 
@@ -123,13 +123,20 @@ func TestLoadCreatesConfig(t *testing.T) {
 	if !reflect.DeepEqual(cfg.Actions, DefaultActions()) {
 		t.Fatalf("actions = %#v, want defaults", cfg.Actions)
 	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	if strings.Contains(string(data), "ai:") || strings.Contains(string(data), "trust:") {
+		t.Fatalf("generated config contains removed settings: %q", data)
+	}
 }
 
 func TestActionDefaultsSeparateFixedActions(t *testing.T) {
 	if _, ok := DefaultActions()["move-down"]; ok {
 		t.Fatal("move-down must be fixed")
 	}
-	if got := FixedActions()["move-down"].Keys; !reflect.DeepEqual(got, []string{"j", "down"}) {
+	if got := FixedActions()["move-down"].Keys; !reflect.DeepEqual(got, []string{"down"}) {
 		t.Fatalf("fixed move-down keys = %v", got)
 	}
 }
@@ -140,8 +147,8 @@ func TestLoadLegacyFixedActions(t *testing.T) {
 		yaml string
 		want string
 	}{
-		{"exact move-down", "actions:\n  move-down:\n    keys: [j, down]\n", ""},
-		{"changed move-down key", "actions:\n  move-down:\n    keys: [J, down]\n", "actions.move-down is now built in; remove it from config"},
+		{"exact move-down", "actions:\n  move-down:\n    keys: [down]\n", ""},
+		{"changed move-down key", "actions:\n  move-down:\n    keys: [j, down]\n", "actions.move-down is now built in; remove it from config"},
 		{"null move-down keys", "actions:\n  move-down:\n    keys: null\n", "actions.move-down is now built in; remove it from config"},
 		{"null move-down comment", "actions:\n  move-down:\n    comment: null\n", "actions.move-down is now built in; remove it from config"},
 		{"added help command", "actions:\n  help:\n    commands: [help]\n", "actions.help is now built in; remove it from config"},
@@ -236,7 +243,6 @@ func TestLoadRejectsInvalidGenericActions(t *testing.T) {
 		{"editor confirm", "actions:\n  comment:\n    operation: comment\n    confirm: true\n    keys: [c]\n", "actions.comment editor comments cannot set confirm"},
 		{"blank static", "actions:\n  hello:\n    operation: comment\n    comment: \"\"\n    keys: [h]\n", "actions.hello static comment cannot be blank"},
 		{"no trigger", "actions:\n  hello:\n    operation: comment\n    comment: hello\n", "actions.hello: custom action requires a key or command"},
-		{"legacy action", "actions:\n  atlantis-plan:\n    keys: [p]\n", "actions.atlantis-plan is no longer predefined; use operation: approve or operation: comment"},
 		{"invalid command", "actions:\n  hello:\n    operation: comment\n    keys: [H]\n    commands: [bad name]\n    comment: hello\n", "actions.hello.commands"},
 		{"named builtin comment", "actions:\n  merge-pr:\n    comment: hello\n", "actions.merge-pr.comment"},
 		{"named builtin operation", "actions:\n  merge-pr:\n    operation: approve\n", "actions.merge-pr.operation"},
@@ -259,6 +265,31 @@ func TestLoadRejectsInvalidGenericActions(t *testing.T) {
 				t.Fatalf("Load error = %v, want containing %q", err, test.want)
 			}
 		})
+	}
+}
+
+func TestLoadAllowsAtlantisActionNames(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "config")
+	t.Setenv("XDG_CONFIG_HOME", dir)
+
+	path, err := DefaultConfigPath()
+	if err != nil {
+		t.Fatalf("DefaultConfigPath: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	data := "actions:\n  atlantis-plan:\n    operation: comment\n    comment: atlantis plan\n    commands: [ap]\n"
+	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if action := cfg.Actions["atlantis-plan"]; action.Operation != "comment" || action.Comment != "atlantis plan" {
+		t.Fatalf("atlantis-plan = %#v", action)
 	}
 }
 
@@ -307,23 +338,19 @@ func TestSaveGenericActions(t *testing.T) {
 		t.Fatalf("read config: %v", err)
 	}
 
-	for id := range DefaultActions() {
-		line := actionLine(string(data), id)
-		if !strings.Contains(line, "{") || !strings.Contains(line, "}") {
-			t.Fatalf("%s = %q, want one-line flow mapping", id, line)
-		}
+	if strings.Contains(string(data), "{") {
+		t.Fatalf("generated config contains flow mappings: %q", data)
+	}
+	if strings.Contains(string(data), "next-file:") || strings.Contains(string(data), "prev-file:") {
+		t.Fatalf("generated config contains file navigation actions: %q", data)
 	}
 	if strings.Contains(string(data), "move-down:") {
 		t.Fatal("generated config contains fixed move-down action")
 	}
-	custom := actionLine(string(data), "deploy-preview")
-	last := -1
-	for _, field := range []string{"{", "operation:", "keys:", "commands:", "comment:", "confirm: false", "description:", "}"} {
-		index := strings.Index(custom, field)
-		if index <= last {
-			t.Fatalf("deploy-preview = %q, want %q", custom, field)
+	for _, field := range []string{"deploy-preview:\n", "operation: comment\n", "keys:\n", "commands:\n", "comment: deploy preview\n", "confirm: false\n", "description: Deploy preview\n"} {
+		if !strings.Contains(string(data), field) {
+			t.Fatalf("generated config missing %q: %q", field, data)
 		}
-		last = index
 	}
 }
 
@@ -334,7 +361,7 @@ func TestDefaultGenericActions(t *testing.T) {
 			t.Fatalf("missing default action %q", id)
 		}
 	}
-	for _, id := range []string{"approve-with-confirmation", "approve-immediately", "write-comment", "atlantis-plan", "atlantis-apply", "atlantis-unlock"} {
+	for _, id := range []string{"approve-with-confirmation", "approve-immediately", "write-comment"} {
 		if _, ok := actions[id]; ok {
 			t.Fatalf("removed default action %q present", id)
 		}
@@ -360,8 +387,8 @@ func TestSaveRoundTripsEmptyActionAliases(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read config: %v", err)
 	}
-	if line := actionLine(string(data), "refresh-inbox"); !strings.Contains(line, "keys: []") {
-		t.Fatalf("refresh-inbox = %q, want explicit empty keys", line)
+	if !strings.Contains(string(data), "refresh-inbox:\n        keys: []") {
+		t.Fatalf("refresh-inbox = %q, want explicit empty keys", data)
 	}
 
 	got, err := Load()
@@ -370,38 +397,6 @@ func TestSaveRoundTripsEmptyActionAliases(t *testing.T) {
 	}
 	if keys := got.Actions["refresh-inbox"].Keys; keys == nil || len(keys) != 0 {
 		t.Fatalf("refresh-inbox keys = %#v, want empty slice", keys)
-	}
-}
-
-func TestLoadParsesTrustAuthors(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "config")
-	t.Setenv("XDG_CONFIG_HOME", dir)
-	t.Setenv("XDG_CACHE_HOME", filepath.Join(t.TempDir(), "cache"))
-
-	path, err := DefaultConfigPath()
-	if err != nil {
-		t.Fatalf("DefaultConfigPath: %v", err)
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	data := "trust:\n  authors:\n    - alice\n    - bob\n"
-	if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-
-	cfg, err := Load()
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if mode := fileMode(t, filepath.Dir(path)); mode != 0o700 {
-		t.Fatalf("config directory mode after Load = %o, want 700", mode)
-	}
-	if mode := fileMode(t, path); mode != 0o600 {
-		t.Fatalf("config file mode after Load = %o, want 600", mode)
-	}
-	if len(cfg.Trust.Authors) != 2 || cfg.Trust.Authors[0] != "alice" || cfg.Trust.Authors[1] != "bob" {
-		t.Fatalf("trust authors = %v", cfg.Trust.Authors)
 	}
 }
 

@@ -201,7 +201,7 @@ func TestActionRegistryGenericActions(t *testing.T) {
 	if !ok || approve.Operation != "approve" || approve.Label != "Approve selected PR without confirmation" {
 		t.Fatalf("A = %#v, %v", approve, ok)
 	}
-	for _, id := range []string{"approve-with-confirmation", "approve-immediately", "write-comment", "atlantis-plan", "atlantis-apply", "atlantis-unlock"} {
+	for _, id := range []string{"approve-with-confirmation", "approve-immediately", "write-comment"} {
 		if _, ok := registry.actionByID(id); ok {
 			t.Errorf("removed action %q is registered", id)
 		}
@@ -229,15 +229,12 @@ func TestGenericActionDescriptions(t *testing.T) {
 	m, _ := configuredModel(t, cfg, true)
 	m.width = 100
 	m.height = 40
-	for _, want := range []string{`Comment "hello" on PR. No confirmation.`, "Use this"} {
-		if !strings.Contains(stripANSI(m.helpPanel()), want) {
-			t.Errorf("help is missing %q", want)
-		}
-	}
 	m.mode = ModeCommand
-	m.commandInput = "deploy"
-	if panel := stripANSI(m.commandPanel()); !strings.Contains(panel, `Comment "hello" on PR.`) {
-		t.Errorf("palette is missing generated label: %q", panel)
+	panel := stripANSI(m.commandPanel())
+	for _, want := range []string{`Comment "hello" on PR.`, "Use this"} {
+		if !strings.Contains(panel, want) {
+			t.Errorf("palette is missing generated label %q: %q", want, panel)
+		}
 	}
 }
 
@@ -252,6 +249,11 @@ func TestActionRegistryFixedBindings(t *testing.T) {
 	if action, ok := registry.actionForKey(actionContextNormal, "tab"); !ok || action.ID != "focus-next" {
 		t.Fatalf("tab = %#v, %v", action, ok)
 	}
+	for _, id := range []string{"next-file", "prev-file"} {
+		if _, ok := registry.actionByID(id); ok {
+			t.Errorf("removed action %q is registered", id)
+		}
+	}
 }
 
 func TestActionRegistryIgnoresConfiguredFixedAction(t *testing.T) {
@@ -265,8 +267,8 @@ func TestActionRegistryIgnoresConfiguredFixedAction(t *testing.T) {
 	if _, ok := registry.actionForKey(actionContextNormal, "M"); ok {
 		t.Fatal("configured fixed action key M must not be bound")
 	}
-	if action, ok := registry.actionForKey(actionContextNormal, "j"); !ok || action.ID != "move-down" {
-		t.Fatalf("j = %#v, %v; want move-down, true", action, ok)
+	if action, ok := registry.actionForKey(actionContextNormal, "down"); !ok || action.ID != "move-down" {
+		t.Fatalf("down = %#v, %v; want move-down, true", action, ok)
 	}
 }
 
@@ -298,9 +300,12 @@ func TestActionRegistryRejectsCommandCollisionIgnoringCase(t *testing.T) {
 	cfg := config.Default()
 	cfg.Actions["hello"] = config.ActionConfig{Operation: "comment", Commands: []string{"AI"}, Comment: "hello world"}
 
-	_, err := newActionRegistry(cfg.Actions)
-	if err == nil || !strings.Contains(err.Error(), "ai-review") || !strings.Contains(err.Error(), "hello") {
-		t.Fatalf("newActionRegistry error = %v, want conflicting action IDs", err)
+	registry, err := newActionRegistry(cfg.Actions)
+	if err != nil {
+		t.Fatalf("newActionRegistry: %v", err)
+	}
+	if action, ok := registry.exactCommand("ai"); !ok || action.ID != "hello" {
+		t.Fatalf(":ai = %#v, %v; want hello, true", action, ok)
 	}
 }
 
@@ -324,8 +329,8 @@ func TestActionRegistryAllowsKeysInDifferentContexts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newActionRegistry: %v", err)
 	}
-	if action, ok := registry.actionForKey(actionContextNormal, "j"); !ok || action.ID != "move-down" {
-		t.Fatalf("normal j = %#v, %v; want move-down, true", action, ok)
+	if action, ok := registry.actionForKey(actionContextNormal, "down"); !ok || action.ID != "move-down" {
+		t.Fatalf("normal down = %#v, %v; want move-down, true", action, ok)
 	}
 	if action, ok := registry.actionForKey(actionContextSettings, "j"); !ok || action.ID != "settings-next" {
 		t.Fatalf("settings j = %#v, %v; want settings-next, true", action, ok)
@@ -443,13 +448,13 @@ func TestFullscreenDiffKeepsScrollingAndNavigation(t *testing.T) {
 	cfg := config.Default()
 
 	m, _ := fullscreenDiffModel(t, cfg)
-	m = updateKey(m, "j")
+	m = updateKey(m, "down")
 	if m.diffVP.YOffset == 0 {
-		t.Error("j did not scroll diff down in fullscreen diff")
+		t.Error("down did not scroll diff down in fullscreen diff")
 	}
-	m = updateKey(m, "k")
+	m = updateKey(m, "up")
 	if m.diffVP.YOffset != 0 {
-		t.Errorf("k did not scroll diff up, YOffset = %d", m.diffVP.YOffset)
+		t.Errorf("up did not scroll diff up, YOffset = %d", m.diffVP.YOffset)
 	}
 
 	m, _ = fullscreenDiffModel(t, cfg)
@@ -591,21 +596,6 @@ func TestConfiguredActionWithoutSelectedPRShowsStatus(t *testing.T) {
 	}
 }
 
-func TestConfiguredBuiltinActionUsesRemappedCommand(t *testing.T) {
-	cfg := config.Default()
-	cfg.Actions["ai-review"] = config.ActionConfig{Commands: []string{"review"}}
-	m, _ := configuredModel(t, cfg, true)
-	m.aiEnabled = true
-
-	m = openCommandAndType(m, "review")
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m = next.(Model)
-
-	if !m.aiAnalyzing {
-		t.Fatal(":review should run the ai-review action")
-	}
-}
-
 func TestSummaryTitleUsesFixedAliases(t *testing.T) {
 	cfg := config.Default()
 	m, _ := configuredModel(t, cfg, true)
@@ -667,15 +657,56 @@ func TestCommandPaletteConfirmsExactAlias(t *testing.T) {
 	}
 }
 
-func TestConfiguredActionHelp(t *testing.T) {
+func TestConfiguredActionIsHiddenFromCuratedHelp(t *testing.T) {
 	cfg := config.Default()
 	cfg.Actions["hello"] = config.ActionConfig{Operation: "comment", Keys: []string{"H"}, Commands: []string{"hello"}, Comment: "hello world"}
 	m, _ := configuredModel(t, cfg, true)
 
 	panel := stripANSI(m.helpPanel())
-	for _, want := range []string{"H", ":hello", "hello world", "[confirm]"} {
+	for _, unwanted := range []string{"H", ":hello", "hello world"} {
+		if strings.Contains(panel, unwanted) {
+			t.Fatalf("help = %q, unexpectedly contains %q", panel, unwanted)
+		}
+	}
+}
+
+func TestHelpPanelShowsCuratedShortcuts(t *testing.T) {
+	model, _ := configuredModel(t, config.Default(), true)
+	panel := stripANSI(model.helpPanel())
+
+	for _, want := range []string{"Navigate", "↑/↓", "←/→", "shift+↑/↓", "Review", "diff", "approve [confirm]", "More", "command palette"} {
 		if !strings.Contains(panel, want) {
-			t.Fatalf("help = %q, missing %q", panel, want)
+			t.Errorf("help = %q, missing %q", panel, want)
+		}
+	}
+	for _, unwanted := range []string{"Modal keys", "Commands", "colorscheme", "refresh full inbox", "j/k", "n/]/p/["} {
+		if strings.Contains(panel, unwanted) {
+			t.Errorf("help = %q, unexpectedly contains %q", panel, unwanted)
+		}
+	}
+}
+
+func TestHelpPanelUsesResponsiveColumns(t *testing.T) {
+	model, _ := configuredModel(t, config.Default(), true)
+	model.width = 100
+	wide := stripANSI(model.helpPanel())
+	if !strings.Contains(wide, "↑/↓") {
+		t.Fatalf("wide help = %q, want aligned two-column navigation", wide)
+	}
+	for _, line := range strings.Split(wide, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "↑/↓") && lipgloss.Width(line[:strings.Index(line, "enter")]) != 36 {
+			t.Fatalf("wide help = %q, enter column = %d, want 36", line, lipgloss.Width(line[:strings.Index(line, "enter")]))
+		}
+	}
+
+	model.width = 50
+	narrow := stripANSI(model.helpPanel())
+	for _, line := range strings.Split(narrow, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "↑/↓") && strings.Contains(line, "enter") {
+			t.Fatalf("narrow help = %q, must use one column", narrow)
+		}
+		if lipgloss.Width(line) > 40 {
+			t.Fatalf("narrow help line exceeds content width: %q", line)
 		}
 	}
 }
@@ -1996,43 +2027,9 @@ func TestSummaryHeaderShowsActiveModeAndFooterDropsShortcut(t *testing.T) {
 	}
 }
 
-func TestSummaryShowsAIUnconfiguredWhenDisabled(t *testing.T) {
-	m := modelWithPRs([]model.PullRequest{{Number: 1, Repo: "org/repo", Title: "title", Author: "author"}}, 0)
-	m.width = 100
-	m.height = 18
-	m.mode = ModeDetail
-	m.focus = FocusSummary
-	m.aiEnabled = false
-
-	if !strings.Contains(stripANSI(m.View()), "AI review not configured") {
-		t.Fatalf("summary should explain AI is not configured: %q", m.View())
-	}
-}
-
-func TestAIReviewHintsUseAICommand(t *testing.T) {
-	m := modelWithPRs([]model.PullRequest{{Number: 1, Repo: "org/repo", Title: "title", Author: "author"}}, 0)
-	m.width = 100
-	m.height = 18
-	m.mode = ModeDetail
-	m.focus = FocusSummary
-	m.aiEnabled = true
-
-	if got := stripANSI(m.footerView()); strings.Contains(got, "AI review") || !strings.Contains(got, "refresh") {
-		t.Fatalf("footer AI shortcut = %q, want refresh", got)
-	}
-	if got := stripANSI(m.summaryPanel(m.width, m.height)); !strings.Contains(got, "press :ai to run AI review") {
-		t.Fatalf("summary AI hint = %q, want :ai command", got)
-	}
-	m.width = 0
-	if got := m.detailView(); !strings.Contains(got, "r refresh  :ai run AI review") {
-		t.Fatalf("fallback detail hint = %q, want refresh and :ai commands", got)
-	}
-}
-
-func TestRKeyRefreshesSelectedPRWhenAIDisabled(t *testing.T) {
+func TestRKeyRefreshesSelectedPR(t *testing.T) {
 	m := modelWithPRs([]model.PullRequest{{Number: 1, Repo: "org/repo", Title: "title", Author: "author"}}, 0)
 	m.mode = ModeDetail
-	m.aiEnabled = false
 
 	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
 	m = next.(Model)
@@ -2042,27 +2039,6 @@ func TestRKeyRefreshesSelectedPRWhenAIDisabled(t *testing.T) {
 	}
 	if m.statusErr || m.statusText != "refreshing PR…" {
 		t.Fatalf("status = (%v, %q), want refreshing PR", m.statusErr, m.statusText)
-	}
-}
-
-func TestAICommandRunsAnalysisWhenEnabled(t *testing.T) {
-	m := modelWithPRs([]model.PullRequest{{Number: 1, Repo: "org/repo", Title: "title", Author: "author"}}, 0)
-	m.mode = ModeCommand
-	m.prevMode = ModeDetail
-	m.commandInput = "ai"
-	m.aiEnabled = true
-
-	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m = next.(Model)
-
-	if cmd == nil {
-		t.Fatal(":ai should return analysis command")
-	}
-	if !m.loading || !m.aiAnalyzing {
-		t.Fatalf("loading/aiAnalyzing = %v/%v, want true/true", m.loading, m.aiAnalyzing)
-	}
-	if m.statusText != "re-running analysis…" {
-		t.Fatalf("statusText = %q, want re-running analysis", m.statusText)
 	}
 }
 

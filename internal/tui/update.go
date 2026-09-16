@@ -20,7 +20,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case refreshMsg:
 		m.loading = false
-		m.aiAnalyzing = false
 		if msg.err != nil {
 			m.error = msg.err.Error()
 			m.allPRs = m.app.InboxRepo(m.repo, m.sortMode)
@@ -445,14 +444,6 @@ func (m Model) executeAction(action tuiAction) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(m.startStatus("commenting…"), commentCmd(m.app, pr, action.Comment))
 	}
 	switch action.ID {
-	case "ai-review":
-		if !m.aiEnabled {
-			return m, m.finishStatus("AI review not configured", true)
-		}
-		m.loading = true
-		m.message = "re-running analysis"
-		m.aiAnalyzing = true
-		return m, tea.Batch(m.startStatus("re-running analysis…"), analyzeCmd(m.app, pr))
 	case "toggle-draft":
 		status := "marking ready…"
 		if !pr.Draft {
@@ -723,28 +714,6 @@ func (m Model) executeAction(action tuiAction) (tea.Model, tea.Cmd) {
 	case "open-diff-pager":
 		if pr, ok := m.current(); ok {
 			return m, openDiffPagerCmd(pr.Repo, pr.Number)
-		}
-	case "next-file":
-		if len(m.diffFiles) > 0 && m.fileIndex < len(m.diffFiles)-1 {
-			m.fileIndex++
-			m.diffVP.GotoTop()
-			m.syncDiffVP()
-			m.syncSummaryVP()
-			m.syncSummaryVPScroll()
-		} else if pr, ok := m.current(); ok && m.fileIndex < len(pr.Files)-1 {
-			m.fileIndex++
-			m.diffVP.GotoTop()
-			m.syncDiffVP()
-			m.syncSummaryVP()
-			m.syncSummaryVPScroll()
-		}
-	case "prev-file":
-		if m.fileIndex > 0 {
-			m.fileIndex--
-			m.diffVP.GotoTop()
-			m.syncDiffVP()
-			m.syncSummaryVP()
-			m.syncSummaryVPScroll()
 		}
 	case "toggle-side-by-side":
 		if m.rawDiff != "" && (m.mode == ModeDiff || m.focus == FocusDiff) {

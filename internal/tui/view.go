@@ -102,7 +102,7 @@ func (m Model) detailView() string {
 	for _, file := range pr.Files {
 		fmt.Fprintf(&b, "%-8s %s (+%d -%d)\n", file.Status, file.Path, file.Additions, file.Deletions)
 	}
-	fmt.Fprintf(&b, "\n%s refresh  %s run AI review  %s toggle diff  %s full diff pager  %s/%s/%s/%s summary  %s inbox\n", m.actionAlias("refresh-pr"), m.actionCommandAlias("ai-review"), m.actionAlias("toggle-diff"), m.actionAlias("open-diff-pager"), m.actionAlias("summary-files"), m.actionAlias("summary-commits"), m.actionAlias("summary-comments"), m.actionAlias("summary-atlantis"), m.actionAlias("back-to-inbox"))
+	fmt.Fprintf(&b, "\n%s refresh  %s toggle diff  %s full diff pager  %s/%s/%s/%s summary  %s inbox\n", m.actionAlias("refresh-pr"), m.actionAlias("toggle-diff"), m.actionAlias("open-diff-pager"), m.actionAlias("summary-files"), m.actionAlias("summary-commits"), m.actionAlias("summary-comments"), m.actionAlias("summary-atlantis"), m.actionAlias("back-to-inbox"))
 	return b.String()
 }
 
@@ -155,24 +155,59 @@ func (m Model) settingsView() string {
 
 func (m Model) helpPanel() string {
 	var b strings.Builder
-	b.WriteString("zappr help\n")
-	for _, group := range []struct {
-		title string
-		match func(tuiAction) bool
-	}{
-		{"Keys", func(action tuiAction) bool { return action.Context == actionContextNormal && len(action.Keys) > 0 }},
-		{"Modal keys", func(action tuiAction) bool { return action.Context != actionContextNormal && len(action.Keys) > 0 }},
-		{"Commands", func(action tuiAction) bool { return len(action.Commands) > 0 }},
-	} {
-		b.WriteString("\n" + group.title + ":\n")
-		for _, action := range m.actions.actions {
-			if !group.match(action) {
-				continue
-			}
-			b.WriteString(m.actionHelpLine(action))
-			b.WriteByte('\n')
-		}
+	width := 66
+	if m.width > 0 {
+		width = min(66, max(1, m.width-10))
 	}
+	line := func(format string, args ...any) {
+		b.WriteString(truncateANSIWidth(fmt.Sprintf(format, args...), width))
+		b.WriteByte('\n')
+	}
+	type shortcut struct{ key, label string }
+	section := func(title string, shortcuts ...shortcut) {
+		line("%s", m.theme.Styles.Title.Render(title))
+		cell := func(shortcut shortcut, cellWidth int) string {
+			key := truncateANSIWidth(shortcut.key, 11)
+			labelWidth := max(1, cellWidth-14)
+			label := truncateANSIWidth(shortcut.label, labelWidth)
+			return "  " + m.theme.Styles.TitleStrong.Render(key+strings.Repeat(" ", max(0, 11-ansi.StringWidth(key)))) + " " + fmt.Sprintf("%-*s", labelWidth, label)
+		}
+		columns := 1
+		if width >= 60 {
+			columns = 2
+		}
+		cellWidth := width
+		if columns == 2 {
+			cellWidth = (width - 2) / 2
+		}
+		for i := 0; i < len(shortcuts); i += columns {
+			row := cell(shortcuts[i], cellWidth)
+			if columns == 2 && i+1 < len(shortcuts) {
+				row += "  " + cell(shortcuts[i+1], cellWidth)
+			}
+			line("%s", row)
+		}
+		line("")
+	}
+
+	line("zappr help")
+	line("")
+	section("Navigate",
+		shortcut{"↑/↓", "move"},
+		shortcut{m.actionAlias("inspect-pr"), "inspect"},
+		shortcut{m.actionAlias("focus-next"), "switch pane"},
+		shortcut{"shift+↑/↓", "summary"},
+		shortcut{m.actionAlias("help"), "close help"},
+		shortcut{m.actionAlias("quit"), "quit"},
+	)
+	section("Review",
+		shortcut{m.actionAlias("toggle-diff"), "diff"},
+		shortcut{"←/→", "pan diff"},
+		shortcut{m.actionAlias("refresh-pr"), "refresh"},
+		shortcut{m.actionAlias("approve"), "approve [confirm]"},
+		shortcut{m.actionAlias("comment"), "comment"},
+	)
+	section("More", shortcut{m.actionAlias("command-palette"), "command palette"})
 	return strings.TrimSuffix(b.String(), "\n")
 }
 
@@ -431,16 +466,13 @@ func fitScreen(content string, width int, height int) string {
 func (m Model) headerView() string {
 	parts := []string{m.theme.Styles.Title.Render("zappr ⚡"), m.repo}
 	// Status indicator: shown inline in header so it never overlaps pane borders.
-	// AI analysis progress is shown in the Summary pane instead.
-	if m.statusActive && !m.aiAnalyzing {
+	if m.statusActive {
 		if m.statusErr {
 			parts = append(parts, m.theme.Styles.Error.Render("✗ "+m.statusText))
 		} else {
 			parts = append(parts, strings.TrimRight(m.statusSpinner.View(), " ")+" "+m.theme.Styles.Pending.Render(m.statusText))
 		}
-	} else if m.statusActive && m.aiAnalyzing && m.statusErr {
-		parts = append(parts, m.theme.Styles.Error.Render("✗ "+m.statusText))
-	} else if m.loading && !m.aiAnalyzing {
+	} else if m.loading {
 		parts = append(parts, m.theme.Styles.Pending.Render("loading"))
 	} else if m.error != "" {
 		parts = append(parts, m.theme.Styles.Error.Render(m.error))
@@ -458,14 +490,6 @@ func (m Model) actionAlias(id string) string {
 		return ""
 	}
 	return truncateANSIWidth(strings.Join(action.Keys, "/"), 18)
-}
-
-func (m Model) actionCommandAlias(id string) string {
-	action, ok := m.actions.actionByID(id)
-	if !ok || len(action.Commands) == 0 {
-		return ""
-	}
-	return truncateANSIWidth(":"+strings.Join(action.Commands, "/:"), 18)
 }
 
 func (m Model) footerView() string {
@@ -943,7 +967,6 @@ func truncatePaneLineWidth(s string, width int) string {
 }
 
 func (m Model) summaryContent(pr model.PullRequest, innerW int) string {
-	s := m.theme.Styles
 	var b strings.Builder
 
 	switch m.summaryMode {
@@ -956,20 +979,8 @@ func (m Model) summaryContent(pr model.PullRequest, innerW int) string {
 	default:
 		m.writeFileSummary(&b, pr, innerW)
 	}
-	if m.aiAnalyzing {
-		b.WriteByte('\n')
-		b.WriteString(m.statusSpinner.View() + s.Pending.Render("Running AI analysis"))
-		b.WriteByte('\n')
-	} else if pr.Triage.AI != nil {
+	if pr.Triage.AI != nil {
 		writeStyledAINotes(&b, m, pr.Triage)
-	} else if !m.aiEnabled {
-		b.WriteByte('\n')
-		b.WriteString(s.Muted.Render("AI review not configured"))
-		b.WriteByte('\n')
-	} else {
-		b.WriteByte('\n')
-		b.WriteString(s.Muted.Render("press :ai to run AI review"))
-		b.WriteByte('\n')
 	}
 
 	return b.String()

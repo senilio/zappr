@@ -5,12 +5,11 @@
 
 Terminal-first pull request inbox for fast, human-owned GitHub review triage.
 
-zappr watches open pull requests, optionally runs shell-command AI triage on demand, and lets you inspect files, commits, PR conversation comments, diffs, comment, or approve from a keyboard-driven Bubble Tea UI.
+zappr watches open pull requests and lets you inspect files, commits, PR conversation comments, diffs, comment, or approve from a keyboard-driven Bubble Tea UI.
 
 ## Principles
 
 - Human approves; zappr only recommends.
-- AI review is manual and advisory.
 - Terminal-only, local-first, no SaaS.
 - Fast triage over deep autonomous review.
 - `gh` CLI is the initial GitHub provider.
@@ -128,7 +127,6 @@ Press `:` to open the command palette. Type a command prefix to filter; press
 | `:update`| Update PR branch with base branch (prompts for confirmation) |
 | `:block` | Request changes on PR to block merge (prompts for confirmation) |
 | `:merge` | Merge active PR via squash and delete branch (prompts for confirmation) |
-| `:ai` | Run manual AI review on selected PR |
 | `:refresh-all` | Refresh full inbox |
 | `:colorscheme` | Change color scheme |
 
@@ -137,49 +135,12 @@ Press `:` to open the command palette. Type a command prefix to filter; press
 Click an Inbox item to select it. Click Summary or Diff pane to move focus to
 that pane; item selection stays Inbox-only.
 
-## AI Review
-
-AI review is opt-in and never runs automatically. Run `:ai` on a selected PR
-to invoke the configured shell command. `r` refreshes PR data only.
-
-Sample config:
-
-```yaml
-ai:
-  command: "llm"
-  prompt: |
-    Return a JSON object with this schema:
-    {"summary":"...","risk_notes":["..."],"suggested_focus":["..."],"comment_drafts":["..."]}
-```
-
-- AI output is advisory only.
-- Approval remains a human decision.
-- The configured command receives PR JSON on standard input and `ZAPPR_AI_PROMPT`
-  from `ai.prompt` when that setting is non-empty.
-- When no AI result exists, use `:ai` to request analysis.
-- When AI is not configured, the summary pane reports that it is unavailable.
-- AI results are persisted in SQLite; a subsequent `:ai` re-runs analysis.
-
 ## Safety
 
 - Local-only app; data stays in `gh` CLI, local cache, and terminal.
 - GitHub actions use `gh` CLI only.
-- AI is opt-in, manual, advisory.
 - Approval stays human-owned.
 - Actions fire only from explicit key/command.
-
-### Trusted authors
-
-Authors listed under `trust.authors` are treated as trusted. For trusted-author
-PRs the deterministic classifier softens a `Review` result to `Safe` and raises
-confidence on already-`Safe` results. A `Block` result is never overridden.
-
-```yaml
-trust:
-  authors:
-    - alice
-    - bob
-```
 
 ## Config
 
@@ -200,14 +161,8 @@ Example:
 ```yaml
 refresh:
   interval: 2m0s
-ai:
-  command: ""
-  prompt: ""
-  timeout: 1m0s
 cache:
   path: /Users/you/.cache/zappr/zappr.db
-trust:
-  authors: []
 ```
 
 ### TUI actions
@@ -222,7 +177,6 @@ that field.
 ```yaml
 actions:
   refresh-inbox: { keys: [R], commands: [refresh-all] }
-  ai-review: { commands: [review] }
   approve: { operation: approve, keys: [a], confirm: true }
   approve-now: { operation: approve, keys: [A], confirm: false }
   comment: { operation: comment, keys: [c] }
@@ -232,7 +186,7 @@ actions:
 Configurable built-in IDs: `open-pr`, `copy-pr-url`, `refresh-pr`,
 `refresh-inbox`, `toggle-diff`, `open-diff-pager`, `next-file`, `prev-file`,
 `toggle-side-by-side`, `toggle-file-content`, `toggle-draft`, `close-pr`,
-`update-branch`, `request-changes`, `merge-pr`, and `ai-review`. Generic action
+`update-branch`, `request-changes`, and `merge-pr`. Generic action
 IDs include the default `approve`, `approve-now`, and `comment` entries.
 
 Custom generic actions require `operation: approve` or `operation: comment`
@@ -257,13 +211,6 @@ match if needed).
 zappr rewrites the entire YAML file when saving theme or sort settings. YAML
 comments, formatting, and field ordering are not preserved.
 
-Environment overrides:
-
-| Variable           | Config field  | Description                       |
-|--------------------|---------------|-----------------------------------|
-| `ZAPPR_AI_COMMAND` | `ai.command`  | Overrides the shell command for AI triage |
-| `ZAPPR_AI_PROMPT`  | N/A           | Child-command variable. An `ai.prompt` value replaces any inherited value; does not alter configuration |
-
 ## Release
 
 GitHub Releases contain prebuilt Darwin and Linux archives, `checksums.txt`,
@@ -280,7 +227,7 @@ git push origin vX.Y.Z
 
 ## Cache
 
-zappr stores PR metadata and AI triage output in SQLite.
+zappr stores PR metadata in SQLite.
 
 Default path:
 
