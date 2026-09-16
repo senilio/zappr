@@ -80,9 +80,6 @@ var actionDescriptors = []tuiAction{
 	{"prev-file", "previous file", actionContextNormal, nil, nil, true, confirmationNone, "prev-file", ""},
 	{"toggle-side-by-side", "toggle side-by-side", actionContextNormal, nil, nil, true, confirmationNone, "toggle-side-by-side", ""},
 	{"toggle-file-content", "toggle file content", actionContextNormal, nil, nil, true, confirmationNone, "toggle-file-content", ""},
-	{"approve-with-confirmation", "approve pull request", actionContextNormal, nil, nil, true, confirmationMandatory, "approve-with-confirmation", ""},
-	{"approve-immediately", "approve pull request immediately", actionContextNormal, nil, nil, true, confirmationNone, "approve-immediately", ""},
-	{"write-comment", "write comment", actionContextNormal, nil, nil, true, confirmationNone, "write-comment", ""},
 	{"command-palette", "open command palette", actionContextNormal, nil, nil, false, confirmationNone, "command-palette", ""},
 	{"help-close", "close help", actionContextHelp, nil, nil, false, confirmationNone, "help-close", ""},
 	{"diff-close", "close diff", actionContextDiff, nil, nil, false, confirmationNone, "diff-close", ""},
@@ -106,9 +103,6 @@ var actionDescriptors = []tuiAction{
 	{"command-backspace", "delete command character", actionContextCommand, nil, nil, false, confirmationNone, "command-backspace", ""},
 	{"command-confirm", "confirm command", actionContextCommandConfirmation, nil, nil, false, confirmationNone, "command-confirm", ""},
 	{"command-cancel-confirmation", "cancel command", actionContextCommandConfirmation, nil, nil, false, confirmationNone, "command-cancel-confirmation", ""},
-	{"atlantis-plan", "comment \"atlantis plan\" on selected PR", actionContextNormal, nil, nil, true, confirmationNone, "atlantis-plan", ""},
-	{"atlantis-apply", "comment \"atlantis apply\" on selected PR", actionContextNormal, nil, nil, true, confirmationMandatory, "atlantis-apply", ""},
-	{"atlantis-unlock", "comment \"atlantis unlock\" on selected PR", actionContextNormal, nil, nil, true, confirmationNone, "atlantis-unlock", ""},
 	{"toggle-draft", "toggle PR draft status", actionContextNormal, nil, nil, true, confirmationNone, "toggle-draft", ""},
 	{"close-pr", "close PR", actionContextNormal, nil, nil, true, confirmationMandatory, "close-pr", ""},
 	{"update-branch", "update branch with base branch", actionContextNormal, nil, nil, true, confirmationMandatory, "update-branch", ""},
@@ -146,17 +140,31 @@ func newActionRegistry(configured map[string]config.ActionConfig) (actionRegistr
 		if _, fixed := fixedActions[id]; fixed {
 			continue
 		}
+		if configuredAction.Operation != "" {
+			action := tuiAction{ID: id, Context: actionContextNormal, Keys: append([]string(nil), configuredAction.Keys...), Commands: append([]string(nil), configuredAction.Commands...), RequiresPR: true, Confirmation: confirmationMandatory, Operation: configuredAction.Operation, Comment: configuredAction.Comment, Label: configuredAction.Description}
+			if configuredAction.Operation == "comment" && configuredAction.Comment == "" {
+				action.Confirmation = confirmationNone
+			}
+			if configuredAction.Confirm != nil && !*configuredAction.Confirm {
+				action.Confirmation = confirmationNone
+			}
+			if action.Label == "" {
+				action.Label = genericActionLabel(action)
+			}
+			if err := registry.add(action); err != nil {
+				return actionRegistry{}, err
+			}
+			continue
+		}
 		action, builtin := descriptors[id]
 		if !builtin {
-			action = tuiAction{ID: id, Label: configuredAction.Comment, Context: actionContextNormal, RequiresPR: true, Confirmation: confirmationOptional, Comment: configuredAction.Comment}
-		} else if configuredAction.Comment != "" {
+			return actionRegistry{}, fmt.Errorf("action %q is not predefined", id)
+		}
+		if configuredAction.Comment != "" {
 			return actionRegistry{}, fmt.Errorf("action %q: built-in action comment is not allowed", id)
 		}
 		action.Keys = append([]string(nil), configuredAction.Keys...)
 		action.Commands = append([]string(nil), configuredAction.Commands...)
-		if !builtin && configuredAction.Confirm != nil && !*configuredAction.Confirm {
-			action.Confirmation = confirmationNone
-		}
 		if err := registry.add(action); err != nil {
 			return actionRegistry{}, err
 		}
@@ -174,6 +182,24 @@ func newActionRegistry(configured map[string]config.ActionConfig) (actionRegistr
 	}
 	registry.bindDiffFallbacks()
 	return registry, nil
+}
+
+func genericActionLabel(action tuiAction) string {
+	if action.Operation == "comment" {
+		if action.Comment == "" {
+			return "Write a comment on PR."
+		}
+		label := fmt.Sprintf("Comment %q on PR.", action.Comment)
+		if action.Confirmation == confirmationNone {
+			return label + " No confirmation."
+		}
+		return label + " Confirmation required."
+	}
+	label := "Approve PR."
+	if action.Confirmation == confirmationNone {
+		return label + " No confirmation."
+	}
+	return label + " Confirmation required."
 }
 
 // diffFallbackActionIDs are normal-context actions that stay reachable while the

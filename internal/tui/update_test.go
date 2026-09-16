@@ -161,7 +161,7 @@ func TestNewLoadsSortModeFromConfig(t *testing.T) {
 func TestActionRegistryResolvesCustomAliases(t *testing.T) {
 	cfg := config.Default()
 	cfg.Actions["hello"] = config.ActionConfig{
-		Keys: []string{"H"}, Commands: []string{"hello"}, Comment: "hello world",
+		Operation: "comment", Keys: []string{"H"}, Commands: []string{"hello"}, Comment: "hello world",
 	}
 
 	registry, err := newActionRegistry(cfg.Actions)
@@ -175,6 +175,69 @@ func TestActionRegistryResolvesCustomAliases(t *testing.T) {
 	byCommand, ok := registry.exactCommand("hello")
 	if !ok || byCommand.ID != byKey.ID {
 		t.Fatalf("exactCommand(hello) = %#v, %v; want hello, true", byCommand, ok)
+	}
+}
+
+func TestActionRegistryGenericActions(t *testing.T) {
+	configured := config.DefaultActions()
+	confirm := false
+	configured["deploy"] = config.ActionConfig{
+		Operation: "comment", Comment: "atlantis plan", Commands: []string{"ap"}, Confirm: &confirm,
+	}
+	configured["approve-now"] = config.ActionConfig{
+		Operation: "approve", Keys: []string{"A"}, Confirm: &confirm,
+		Description: "Approve selected PR without confirmation",
+	}
+
+	registry, err := newActionRegistry(configured)
+	if err != nil {
+		t.Fatal(err)
+	}
+	comment, ok := registry.exactCommand("ap")
+	if !ok || comment.Operation != "comment" || comment.Comment != "atlantis plan" || comment.Confirmation != confirmationNone {
+		t.Fatalf(":ap = %#v, %v", comment, ok)
+	}
+	approve, ok := registry.actionForKey(actionContextNormal, "A")
+	if !ok || approve.Operation != "approve" || approve.Label != "Approve selected PR without confirmation" {
+		t.Fatalf("A = %#v, %v", approve, ok)
+	}
+	for _, id := range []string{"approve-with-confirmation", "approve-immediately", "write-comment", "atlantis-plan", "atlantis-apply", "atlantis-unlock"} {
+		if _, ok := registry.actionByID(id); ok {
+			t.Errorf("removed action %q is registered", id)
+		}
+	}
+}
+
+func TestGenericActionDescriptions(t *testing.T) {
+	for _, test := range []struct {
+		action tuiAction
+		want   string
+	}{
+		{tuiAction{Operation: "comment"}, "Write a comment on PR."},
+		{tuiAction{Operation: "comment", Comment: "hello", Confirmation: confirmationNone}, `Comment "hello" on PR. No confirmation.`},
+		{tuiAction{Operation: "approve", Confirmation: confirmationMandatory}, "Approve PR. Confirmation required."},
+		{tuiAction{Operation: "approve", Label: "Use this", Confirmation: confirmationMandatory}, "Use this"},
+	} {
+		if got := actionDisplayLabel(test.action); got != test.want {
+			t.Errorf("actionDisplayLabel(%#v) = %q, want %q", test.action, got, test.want)
+		}
+	}
+	confirmed := false
+	cfg := config.Default()
+	cfg.Actions["deploy"] = config.ActionConfig{Operation: "comment", Comment: "hello", Commands: []string{"deploy"}, Confirm: &confirmed}
+	cfg.Actions["approve-now"] = config.ActionConfig{Operation: "approve", Commands: []string{"approve-now"}, Confirm: &confirmed, Description: "Use this"}
+	m, _ := configuredModel(t, cfg, true)
+	m.width = 100
+	m.height = 40
+	for _, want := range []string{`Comment "hello" on PR. No confirmation.`, "Use this"} {
+		if !strings.Contains(stripANSI(m.helpPanel()), want) {
+			t.Errorf("help is missing %q", want)
+		}
+	}
+	m.mode = ModeCommand
+	m.commandInput = "deploy"
+	if panel := stripANSI(m.commandPanel()); !strings.Contains(panel, `Comment "hello" on PR.`) {
+		t.Errorf("palette is missing generated label: %q", panel)
 	}
 }
 
@@ -223,7 +286,7 @@ func TestActionRegistryUsesConfiguredAliases(t *testing.T) {
 func TestActionRegistryRejectsNormalKeyCollision(t *testing.T) {
 	cfg := config.Default()
 	cfg.Actions["refresh-inbox"] = config.ActionConfig{Keys: []string{"H"}}
-	cfg.Actions["hello"] = config.ActionConfig{Keys: []string{"H"}, Comment: "hello world"}
+	cfg.Actions["hello"] = config.ActionConfig{Operation: "comment", Keys: []string{"H"}, Comment: "hello world"}
 
 	_, err := newActionRegistry(cfg.Actions)
 	if err == nil || !strings.Contains(err.Error(), "refresh-inbox") || !strings.Contains(err.Error(), "hello") {
@@ -233,7 +296,7 @@ func TestActionRegistryRejectsNormalKeyCollision(t *testing.T) {
 
 func TestActionRegistryRejectsCommandCollisionIgnoringCase(t *testing.T) {
 	cfg := config.Default()
-	cfg.Actions["hello"] = config.ActionConfig{Commands: []string{"AI"}, Comment: "hello world"}
+	cfg.Actions["hello"] = config.ActionConfig{Operation: "comment", Commands: []string{"AI"}, Comment: "hello world"}
 
 	_, err := newActionRegistry(cfg.Actions)
 	if err == nil || !strings.Contains(err.Error(), "ai-review") || !strings.Contains(err.Error(), "hello") {
@@ -271,7 +334,7 @@ func TestActionRegistryAllowsKeysInDifferentContexts(t *testing.T) {
 
 func TestConfiguredCommentAction(t *testing.T) {
 	cfg := config.Default()
-	cfg.Actions["hello"] = config.ActionConfig{Keys: []string{"H"}, Commands: []string{"hello"}, Comment: "hello world"}
+	cfg.Actions["hello"] = config.ActionConfig{Operation: "comment", Keys: []string{"H"}, Commands: []string{"hello"}, Comment: "hello world"}
 	m, provider := configuredModel(t, cfg, true)
 
 	m = updateKey(m, "H")
@@ -290,7 +353,7 @@ func TestConfiguredCommentAction(t *testing.T) {
 func TestConfiguredCommentActionWithoutConfirmation(t *testing.T) {
 	cfg := config.Default()
 	confirm := false
-	cfg.Actions["hello"] = config.ActionConfig{Keys: []string{"H"}, Comment: " hello world ", Confirm: &confirm}
+	cfg.Actions["hello"] = config.ActionConfig{Operation: "comment", Keys: []string{"H"}, Comment: " hello world ", Confirm: &confirm}
 	m, provider := configuredModel(t, cfg, true)
 
 	m = updateKey(m, "H")
@@ -320,7 +383,7 @@ func fullscreenDiffModel(t *testing.T, cfg config.Config) (Model, *commentRecord
 func TestFullscreenDiffIgnoresMutatingNormalActions(t *testing.T) {
 	cfg := config.Default()
 	confirm := false
-	cfg.Actions["hello"] = config.ActionConfig{Keys: []string{"H"}, Comment: "hello", Confirm: &confirm}
+	cfg.Actions["hello"] = config.ActionConfig{Operation: "comment", Keys: []string{"H"}, Comment: "hello", Confirm: &confirm}
 	m, provider := fullscreenDiffModel(t, cfg)
 
 	// "A" is approve-immediately, "H" is an unconfirmed custom comment action.
@@ -414,7 +477,7 @@ func TestDiffPaneClickKeepsNormalKeysAlive(t *testing.T) {
 		t.Run(fmt.Sprintf("width%d", width), func(t *testing.T) {
 			cfg := config.Default()
 			confirm := false
-			cfg.Actions["hello"] = config.ActionConfig{Keys: []string{"H"}, Comment: "hello", Confirm: &confirm}
+			cfg.Actions["hello"] = config.ActionConfig{Operation: "comment", Keys: []string{"H"}, Comment: "hello", Confirm: &confirm}
 			m, provider := paneDiffModel(t, cfg, width)
 
 			// Summary-mode switching via "2".
@@ -459,8 +522,8 @@ func TestDiffPaneClickKeepsNormalKeysAlive(t *testing.T) {
 func TestConfiguredActionSupportsCommandOnlyAndKeyOnly(t *testing.T) {
 	cfg := config.Default()
 	confirm := false
-	cfg.Actions["command-comment"] = config.ActionConfig{Commands: []string{"comment-only"}, Comment: "command", Confirm: &confirm}
-	cfg.Actions["key-comment"] = config.ActionConfig{Keys: []string{"H"}, Comment: "key", Confirm: &confirm}
+	cfg.Actions["command-comment"] = config.ActionConfig{Operation: "comment", Commands: []string{"comment-only"}, Comment: "command", Confirm: &confirm}
+	cfg.Actions["key-comment"] = config.ActionConfig{Operation: "comment", Keys: []string{"H"}, Comment: "key", Confirm: &confirm}
 	m, provider := configuredModel(t, cfg, true)
 
 	m = openCommandAndType(m, "comment-only")
@@ -475,7 +538,7 @@ func TestConfiguredActionSupportsCommandOnlyAndKeyOnly(t *testing.T) {
 func TestConfiguredActionWithoutSelectedPRShowsStatus(t *testing.T) {
 	cfg := config.Default()
 	confirm := false
-	cfg.Actions["hello"] = config.ActionConfig{Keys: []string{"H"}, Comment: "hello world", Confirm: &confirm}
+	cfg.Actions["hello"] = config.ActionConfig{Operation: "comment", Keys: []string{"H"}, Comment: "hello world", Confirm: &confirm}
 	m, provider := configuredModel(t, cfg, false)
 
 	m = updateKey(m, "H")
@@ -517,7 +580,7 @@ func TestSummaryTitleUsesFixedAliases(t *testing.T) {
 func TestCommandPaletteShowsMatchedAlias(t *testing.T) {
 	cfg := config.Default()
 	confirm := false
-	cfg.Actions["hello"] = config.ActionConfig{Commands: []string{"alpha", "zulu"}, Comment: "hi", Confirm: &confirm}
+	cfg.Actions["hello"] = config.ActionConfig{Operation: "comment", Commands: []string{"alpha", "zulu"}, Comment: "hi", Confirm: &confirm}
 	m, _ := configuredModel(t, cfg, true)
 	m.width = 100
 	m.height = 40
@@ -534,7 +597,7 @@ func TestCommandPaletteShowsMatchedAlias(t *testing.T) {
 
 func TestCommandPaletteConfirmsMatchedAlias(t *testing.T) {
 	cfg := config.Default()
-	cfg.Actions["hello"] = config.ActionConfig{Commands: []string{"alpha", "zulu"}, Comment: "hi"}
+	cfg.Actions["hello"] = config.ActionConfig{Operation: "comment", Commands: []string{"alpha", "zulu"}, Comment: "hi"}
 	m, _ := configuredModel(t, cfg, true)
 	m.width = 100
 	m.height = 40
@@ -552,7 +615,7 @@ func TestCommandPaletteConfirmsMatchedAlias(t *testing.T) {
 
 func TestCommandPaletteConfirmsExactAlias(t *testing.T) {
 	cfg := config.Default()
-	cfg.Actions["hello"] = config.ActionConfig{Commands: []string{"alpha", "zulu"}, Comment: "hi"}
+	cfg.Actions["hello"] = config.ActionConfig{Operation: "comment", Commands: []string{"alpha", "zulu"}, Comment: "hi"}
 	m, _ := configuredModel(t, cfg, true)
 	m.width = 100
 	m.height = 40
@@ -566,7 +629,7 @@ func TestCommandPaletteConfirmsExactAlias(t *testing.T) {
 
 func TestConfiguredActionHelp(t *testing.T) {
 	cfg := config.Default()
-	cfg.Actions["hello"] = config.ActionConfig{Keys: []string{"H"}, Commands: []string{"hello"}, Comment: "hello world"}
+	cfg.Actions["hello"] = config.ActionConfig{Operation: "comment", Keys: []string{"H"}, Commands: []string{"hello"}, Comment: "hello world"}
 	m, _ := configuredModel(t, cfg, true)
 
 	panel := stripANSI(m.helpPanel())
@@ -579,7 +642,7 @@ func TestConfiguredActionHelp(t *testing.T) {
 
 func TestPaletteOmitsKeyOnlyActions(t *testing.T) {
 	cfg := config.Default()
-	cfg.Actions["hello"] = config.ActionConfig{Keys: []string{"H"}, Comment: "hello world"}
+	cfg.Actions["hello"] = config.ActionConfig{Operation: "comment", Keys: []string{"H"}, Comment: "hello world"}
 	m, _ := configuredModel(t, cfg, true)
 	m.mode = ModeCommand
 
@@ -590,7 +653,7 @@ func TestPaletteOmitsKeyOnlyActions(t *testing.T) {
 
 func TestKeyOnlyActionConfirmation(t *testing.T) {
 	cfg := config.Default()
-	cfg.Actions["hello"] = config.ActionConfig{Keys: []string{"H"}, Comment: "hello"}
+	cfg.Actions["hello"] = config.ActionConfig{Operation: "comment", Keys: []string{"H"}, Comment: "hello"}
 	m, _ := configuredModel(t, cfg, true)
 	m = updateKey(m, "H")
 
@@ -603,7 +666,7 @@ func TestKeyOnlyActionConfirmation(t *testing.T) {
 func TestCustomCommentConfirmationEscapesAndTruncatesPreview(t *testing.T) {
 	cfg := config.Default()
 	comment := "first line\n" + strings.Repeat("long ", 40)
-	cfg.Actions["hello"] = config.ActionConfig{Keys: []string{"H"}, Comment: comment}
+	cfg.Actions["hello"] = config.ActionConfig{Operation: "comment", Keys: []string{"H"}, Comment: comment}
 	m, _ := configuredModel(t, cfg, true)
 	m.width = 40
 	m = updateKey(m, "H")
@@ -662,7 +725,7 @@ func TestRemainingModalAndFallbackHintsUseFixedActions(t *testing.T) {
 func TestSettingsSavePreservesActions(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(t.TempDir(), "config"))
 	cfg := config.Default()
-	cfg.Actions["hello"] = config.ActionConfig{Keys: []string{"H"}, Comment: "hello world"}
+	cfg.Actions["hello"] = config.ActionConfig{Operation: "comment", Keys: []string{"H"}, Comment: "hello world"}
 	m, _ := configuredModel(t, cfg, true)
 	m.settingsCursor = 1
 	if cmd := m.cycleSortMode(); cmd != nil {
@@ -1598,27 +1661,6 @@ func TestApprovalViewUsesModalOverlayWhenSized(t *testing.T) {
 	}
 	if !strings.Contains(view, m.actionAlias("approve-confirm")+" approve  "+m.actionAlias("approve-cancel")+" cancel") {
 		t.Fatalf("approval view missing modal controls: %q", view)
-	}
-}
-
-func TestAtlantisApplyWarningForUnsafePR(t *testing.T) {
-	m := modelWithPRs([]model.PullRequest{{
-		Number:         1,
-		Repo:           "org/repo",
-		Title:          "title",
-		Author:         "author",
-		CIStatus:       "failure",
-		ReviewDecision: "REVIEW_REQUIRED",
-	}}, 0)
-	m.mode = ModeConfirmCommand
-	m.pendingAction, _ = m.actions.actionByID("atlantis-apply")
-
-	panel := stripANSI(m.commandPanel())
-	if !strings.Contains(panel, "Warning: applying before PR is approved and CI is passing.") {
-		t.Fatalf("missing warning: %q", panel)
-	}
-	if !strings.Contains(panel, "Approval: awaiting approval") || !strings.Contains(panel, "CI: CI failed") {
-		t.Fatalf("missing unsafe details: %q", panel)
 	}
 }
 

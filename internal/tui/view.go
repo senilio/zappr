@@ -78,7 +78,7 @@ func (m Model) inboxView() string {
 		}
 		fmt.Fprintf(&b, "%s\n", line)
 	}
-	fmt.Fprintf(&b, "\n%s/%s navigate  %s inspect  %s approve, %s confirm  %s comment  %s refresh  %s toggle diff  %s/%s/%s/%s summary\n", m.actionAlias("move-down"), m.actionAlias("move-up"), m.actionAlias("inspect-pr"), m.actionAlias("approve-with-confirmation"), m.actionAlias("approve-confirm"), m.actionAlias("write-comment"), m.actionAlias("refresh-pr"), m.actionAlias("toggle-diff"), m.actionAlias("summary-files"), m.actionAlias("summary-commits"), m.actionAlias("summary-comments"), m.actionAlias("summary-atlantis"))
+	fmt.Fprintf(&b, "\n%s/%s navigate  %s inspect  %s refresh  %s toggle diff  %s/%s/%s/%s summary\n", m.actionAlias("move-down"), m.actionAlias("move-up"), m.actionAlias("inspect-pr"), m.actionAlias("refresh-pr"), m.actionAlias("toggle-diff"), m.actionAlias("summary-files"), m.actionAlias("summary-commits"), m.actionAlias("summary-comments"), m.actionAlias("summary-atlantis"))
 	return b.String()
 }
 
@@ -102,7 +102,7 @@ func (m Model) detailView() string {
 	for _, file := range pr.Files {
 		fmt.Fprintf(&b, "%-8s %s (+%d -%d)\n", file.Status, file.Path, file.Additions, file.Deletions)
 	}
-	fmt.Fprintf(&b, "\n%s approve, %s confirm  %s comment  %s refresh  %s run AI review  %s toggle diff  %s full diff pager  %s/%s/%s/%s summary  %s inbox\n", m.actionAlias("approve-with-confirmation"), m.actionAlias("approve-confirm"), m.actionAlias("write-comment"), m.actionAlias("refresh-pr"), m.actionCommandAlias("ai-review"), m.actionAlias("toggle-diff"), m.actionAlias("open-diff-pager"), m.actionAlias("summary-files"), m.actionAlias("summary-commits"), m.actionAlias("summary-comments"), m.actionAlias("summary-atlantis"), m.actionAlias("back-to-inbox"))
+	fmt.Fprintf(&b, "\n%s refresh  %s run AI review  %s toggle diff  %s full diff pager  %s/%s/%s/%s summary  %s inbox\n", m.actionAlias("refresh-pr"), m.actionCommandAlias("ai-review"), m.actionAlias("toggle-diff"), m.actionAlias("open-diff-pager"), m.actionAlias("summary-files"), m.actionAlias("summary-commits"), m.actionAlias("summary-comments"), m.actionAlias("summary-atlantis"), m.actionAlias("back-to-inbox"))
 	return b.String()
 }
 
@@ -198,7 +198,11 @@ func actionAliases(action tuiAction) string {
 }
 
 func actionDisplayLabel(action tuiAction) string {
-	return strings.NewReplacer("\n", `\n`, "\r", `\r`, "\t", `\t`).Replace(action.Label)
+	label := action.Label
+	if label == "" && action.Operation != "" {
+		label = genericActionLabel(action)
+	}
+	return strings.NewReplacer("\n", `\n`, "\r", `\r`, "\t", `\t`).Replace(label)
 }
 
 func (m Model) layoutView() string {
@@ -1380,16 +1384,14 @@ func (m Model) commandPanel() string {
 			return "no PR selected"
 		}
 		name := actionDisplayLabel(m.pendingAction)
+		if m.pendingAction.Operation == "comment" && m.pendingAction.Comment != "" {
+			name = actionDisplayLabel(tuiAction{Label: m.pendingAction.Comment})
+		}
 		if action, ok := m.actions.exactCommand(m.commandInput); ok && action.ID == m.pendingAction.ID {
 			name = ":" + m.commandInput
 		}
 		name = truncateANSIWidth(name, max(1, m.commandModalWidth()-ansi.StringWidth(fmt.Sprintf("Run  on %s #%d?", pr.Repo, pr.Number))))
 		fmt.Fprintf(&b, "Run %s on %s #%d?\n\n", name, pr.Repo, pr.Number)
-		if m.pendingAction.ID == "atlantis-apply" && (!reviewApproved(pr.ReviewDecision) || !ciPassing(pr.CIStatus)) {
-			b.WriteString(s.Error.Render("Warning: applying before PR is approved and CI is passing.") + "\n")
-			b.WriteString(s.Muted.Render("Approval: ") + m.theme.ReviewStatus(pr.ReviewDecision) + "\n")
-			b.WriteString(s.Muted.Render("CI: ") + m.theme.CIStatus(pr.CIStatus) + "\n\n")
-		}
 		b.WriteString(m.actionAlias("command-confirm") + " confirm  " + m.actionAlias("command-cancel-confirmation") + " cancel")
 		return b.String()
 	}
