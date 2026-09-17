@@ -214,7 +214,7 @@ func TestGenericActionDescriptions(t *testing.T) {
 		want   string
 	}{
 		{tuiAction{Operation: "comment"}, "Write a comment on PR."},
-		{tuiAction{Operation: "comment", Comment: "hello", Confirmation: confirmationNone}, `Comment "hello" on PR. No confirmation.`},
+		{tuiAction{Operation: "comment", Comment: "hello", Confirmation: confirmationNone}, `comment "hello"`},
 		{tuiAction{Operation: "approve", Confirmation: confirmationMandatory}, "Approve PR. Confirmation required."},
 		{tuiAction{Operation: "approve", Label: "Use this", Confirmation: confirmationMandatory}, "Use this"},
 	} {
@@ -231,10 +231,22 @@ func TestGenericActionDescriptions(t *testing.T) {
 	m.height = 40
 	m.mode = ModeCommand
 	panel := stripANSI(m.commandPanel())
-	for _, want := range []string{`Comment "hello" on PR.`, "Use this"} {
+	for _, want := range []string{`comment "hello"`, "Use this"} {
 		if !strings.Contains(panel, want) {
 			t.Errorf("palette is missing generated label %q: %q", want, panel)
 		}
+	}
+}
+
+func TestCommandPaletteUsesConciseRequestChangesLabel(t *testing.T) {
+	m, _ := configuredModel(t, config.Default(), true)
+	m.width = 60
+	m.height = 40
+	m.mode = ModeCommand
+
+	panel := stripANSI(m.commandPanel())
+	if !strings.Contains(panel, ":block  block PR merge [confirm]") {
+		t.Fatalf("palette = %q, want concise block command label", panel)
 	}
 }
 

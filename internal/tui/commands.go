@@ -104,7 +104,7 @@ var actionDescriptors = []tuiAction{
 	{"toggle-draft", "toggle PR draft status", actionContextNormal, nil, nil, true, confirmationNone, "toggle-draft", ""},
 	{"close-pr", "close PR", actionContextNormal, nil, nil, true, confirmationMandatory, "close-pr", ""},
 	{"update-branch", "update branch with base branch", actionContextNormal, nil, nil, true, confirmationMandatory, "update-branch", ""},
-	{"request-changes", "request changes to block PR merge", actionContextNormal, nil, nil, true, confirmationMandatory, "request-changes", ""},
+	{"request-changes", "block PR merge", actionContextNormal, nil, nil, true, confirmationMandatory, "request-changes", ""},
 	{"merge-pr", "merge active PR (squash)", actionContextNormal, nil, nil, true, confirmationMandatory, "merge-pr", ""},
 	{"colorscheme", "pick color scheme", actionContextNormal, nil, nil, false, confirmationNone, "colorscheme", ""},
 }
@@ -186,11 +186,7 @@ func genericActionLabel(action tuiAction) string {
 		if action.Comment == "" {
 			return "Write a comment on PR."
 		}
-		label := fmt.Sprintf("Comment %q on PR.", action.Comment)
-		if action.Confirmation == confirmationNone {
-			return label + " No confirmation."
-		}
-		return label + " Confirmation required."
+		return fmt.Sprintf("comment %q", action.Comment)
 	}
 	label := "Approve PR."
 	if action.Confirmation == confirmationNone {
