@@ -145,9 +145,6 @@ func newActionRegistry(configured map[string]config.ActionConfig) (actionRegistr
 			if configuredAction.Confirm != nil && !*configuredAction.Confirm {
 				action.Confirmation = confirmationNone
 			}
-			if action.Label == "" {
-				action.Label = genericActionLabel(action)
-			}
 			if err := registry.add(action); err != nil {
 				return actionRegistry{}, err
 			}

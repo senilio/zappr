@@ -145,6 +145,27 @@ func TestSettingsSortModePersistsToConfig(t *testing.T) {
 	}
 }
 
+func TestSettingsHideDraftsPersistsToConfig(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(t.TempDir(), "config"))
+	m := modelWithPRs([]model.PullRequest{{Number: 1, Draft: true}, {Number: 2}}, 0)
+	m.mode = ModeSettings
+
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	m = next.(Model)
+	if cmd == nil {
+		t.Fatal("toggling draft visibility should return a save command")
+	}
+	cmd()
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+	if !cfg.HideDrafts || !m.hideDrafts {
+		t.Fatalf("hide drafts = config:%v model:%v, want true", cfg.HideDrafts, m.hideDrafts)
+	}
+}
+
 func TestNewLoadsSortModeFromConfig(t *testing.T) {
 	zappr := app.New(nil, nil, nil)
 	cfg := config.Default()
@@ -155,6 +176,19 @@ func TestNewLoadsSortModeFromConfig(t *testing.T) {
 	}
 	if m.sortMode != app.SortNumber {
 		t.Fatalf("sortMode = %s, want number", m.sortMode)
+	}
+}
+
+func TestNewLoadsHideDraftsFromConfig(t *testing.T) {
+	zappr := app.New(nil, nil, nil)
+	cfg := config.Default()
+	cfg.HideDrafts = true
+	m, err := New(zappr, "org/repo", 0, "", cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if !m.hideDrafts {
+		t.Fatal("hideDrafts = false, want true")
 	}
 }
 
@@ -650,8 +684,8 @@ func TestCommandPaletteConfirmsMatchedAlias(t *testing.T) {
 	if m.mode != ModeConfirmCommand {
 		t.Fatalf("mode = %v, want ModeConfirmCommand", m.mode)
 	}
-	if panel := stripANSI(m.commandPanel()); !strings.Contains(panel, "Run :zulu on org/repo #1?") {
-		t.Errorf("confirmation = %q, want matched alias :zulu", panel)
+	if panel := stripANSI(m.commandPanel()); !strings.Contains(panel, `Run Comment "hi" on org/repo #1?`) {
+		t.Errorf("confirmation = %q, want action description", panel)
 	}
 }
 
@@ -664,20 +698,20 @@ func TestCommandPaletteConfirmsExactAlias(t *testing.T) {
 
 	m = openCommandAndType(m, "zulu")
 	m = pressSpecial(m, tea.KeyEnter)
-	if panel := stripANSI(m.commandPanel()); !strings.Contains(panel, "Run :zulu on org/repo #1?") {
-		t.Errorf("confirmation = %q, want exact alias :zulu", panel)
+	if panel := stripANSI(m.commandPanel()); !strings.Contains(panel, `Run Comment "hi" on org/repo #1?`) {
+		t.Errorf("confirmation = %q, want action description", panel)
 	}
 }
 
-func TestConfiguredActionIsHiddenFromCuratedHelp(t *testing.T) {
+func TestConfiguredActionIsShownInHelp(t *testing.T) {
 	cfg := config.Default()
 	cfg.Actions["hello"] = config.ActionConfig{Operation: "comment", Keys: []string{"H"}, Commands: []string{"hello"}, Comment: "hello world"}
 	m, _ := configuredModel(t, cfg, true)
 
 	panel := stripANSI(m.helpPanel())
-	for _, unwanted := range []string{"H", ":hello", "hello world"} {
-		if strings.Contains(panel, unwanted) {
-			t.Fatalf("help = %q, unexpectedly contains %q", panel, unwanted)
+	for _, want := range []string{"H/:hello", `comment "hello world"`} {
+		if !strings.Contains(panel, want) {
+			t.Fatalf("help = %q, missing %q", panel, want)
 		}
 	}
 }
@@ -686,14 +720,9 @@ func TestHelpPanelShowsCuratedShortcuts(t *testing.T) {
 	model, _ := configuredModel(t, config.Default(), true)
 	panel := stripANSI(model.helpPanel())
 
-	for _, want := range []string{"Navigate", "↑/↓", "←/→", "shift+↑/↓", "Review", "diff", "approve [confirm]", "More", "command palette"} {
+	for _, want := range []string{"Navigate", "↑/↓", "tab/shift+tab", "g/G", "pgdown/space", "Review", "1/2/3/4", "←/→", "next/previous file", "Actions", "open PR", "Command palette", ":draft", "Modals", "help: esc/?/enter", "confirm: y/enter", "settings: j/down"} {
 		if !strings.Contains(panel, want) {
 			t.Errorf("help = %q, missing %q", panel, want)
-		}
-	}
-	for _, unwanted := range []string{"Modal keys", "Commands", "colorscheme", "refresh full inbox", "j/k", "n/]/p/["} {
-		if strings.Contains(panel, unwanted) {
-			t.Errorf("help = %q, unexpectedly contains %q", panel, unwanted)
 		}
 	}
 }
@@ -703,20 +732,12 @@ func TestHelpPanelUsesResponsiveColumns(t *testing.T) {
 	model.width = 100
 	wide := stripANSI(model.helpPanel())
 	if !strings.Contains(wide, "↑/↓") {
-		t.Fatalf("wide help = %q, want aligned two-column navigation", wide)
-	}
-	for _, line := range strings.Split(wide, "\n") {
-		if strings.HasPrefix(strings.TrimSpace(line), "↑/↓") && lipgloss.Width(line[:strings.Index(line, "enter")]) != 36 {
-			t.Fatalf("wide help = %q, enter column = %d, want 36", line, lipgloss.Width(line[:strings.Index(line, "enter")]))
-		}
+		t.Fatalf("wide help = %q, want navigation", wide)
 	}
 
 	model.width = 50
 	narrow := stripANSI(model.helpPanel())
 	for _, line := range strings.Split(narrow, "\n") {
-		if strings.HasPrefix(strings.TrimSpace(line), "↑/↓") && strings.Contains(line, "enter") {
-			t.Fatalf("narrow help = %q, must use one column", narrow)
-		}
 		if lipgloss.Width(line) > 40 {
 			t.Fatalf("narrow help line exceeds content width: %q", line)
 		}
@@ -738,10 +759,11 @@ func TestKeyOnlyActionConfirmation(t *testing.T) {
 	cfg := config.Default()
 	cfg.Actions["hello"] = config.ActionConfig{Operation: "comment", Keys: []string{"H"}, Comment: "hello"}
 	m, _ := configuredModel(t, cfg, true)
+	m.width = 80
 	m = updateKey(m, "H")
 
 	panel := stripANSI(m.commandPanel())
-	if !strings.Contains(panel, "Run hello on org/repo #1?") || strings.Contains(panel, "Run : on") {
+	if !strings.Contains(panel, `Run Comment "hello" on org/repo #1?`) || strings.Contains(panel, "Run : on") {
 		t.Fatalf("confirmation = %q", panel)
 	}
 }
@@ -751,11 +773,11 @@ func TestCustomCommentConfirmationEscapesAndTruncatesPreview(t *testing.T) {
 	comment := "first line\n" + strings.Repeat("long ", 40)
 	cfg.Actions["hello"] = config.ActionConfig{Operation: "comment", Keys: []string{"H"}, Comment: comment}
 	m, _ := configuredModel(t, cfg, true)
-	m.width = 40
+	m.width = 80
 	m = updateKey(m, "H")
 
 	panel := stripANSI(m.commandPanel())
-	if !strings.Contains(panel, `first line\n`) || strings.Contains(panel, strings.Repeat("long ", 40)) {
+	if !strings.Contains(panel, `Comment "first line\n`) || strings.Contains(panel, strings.Repeat("long ", 40)) {
 		t.Fatalf("confirmation preview = %q", panel)
 	}
 }

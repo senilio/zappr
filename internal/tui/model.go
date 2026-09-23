@@ -150,7 +150,7 @@ func New(zappr *app.App, repo string, pollEvery time.Duration, themeName string,
 	dvp := viewport.New(0, 0)
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
-	return Model{app: zappr, repo: repo, loading: true, pollEvery: pollEvery, sortMode: app.ParseSortMode(cfg.Sort), theme: uitheme.DefaultWithName(themeName), cfg: cfg, actions: actions, inboxVP: ivp, summaryVP: vp, diffVP: dvp, statusSpinner: sp, summaryMode: SummaryModeFiles}, nil
+	return Model{app: zappr, repo: repo, loading: true, pollEvery: pollEvery, sortMode: app.ParseSortMode(cfg.Sort), hideDrafts: cfg.HideDrafts, theme: uitheme.DefaultWithName(themeName), cfg: cfg, actions: actions, inboxVP: ivp, summaryVP: vp, diffVP: dvp, statusSpinner: sp, summaryMode: SummaryModeFiles}, nil
 }
 
 func (m Model) Init() tea.Cmd {
@@ -250,10 +250,10 @@ func saveThemeCmd(cfg config.Config) tea.Cmd {
 	}
 }
 
-func saveSortCmd(cfg config.Config) tea.Cmd {
+func saveSettingCmd(cfg config.Config, setting string) tea.Cmd {
 	return func() tea.Msg {
 		if err := config.Save(cfg); err != nil {
-			return actionMsg{message: "failed to save sort: " + err.Error(), err: err}
+			return actionMsg{message: "failed to save " + setting + ": " + err.Error(), err: err}
 		}
 		return nil
 	}

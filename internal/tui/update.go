@@ -1225,7 +1225,7 @@ func (m *Model) cycleSortMode() tea.Cmd {
 			}
 		}
 	}
-	return saveSortCmd(m.cfg)
+	return saveSettingCmd(m.cfg, "sort")
 }
 
 func (m *Model) applyPRSettings() {
@@ -1302,8 +1302,10 @@ func (m Model) handleSettingsKey(key string) (tea.Model, tea.Cmd) {
 	case "settings-toggle":
 		if m.settingsCursor == 0 {
 			m.hideDrafts = !m.hideDrafts
+			m.cfg.HideDrafts = m.hideDrafts
 			m.applyPRSettings()
 			m.message = draftFilterMessage(m.hideDrafts)
+			return m, saveSettingCmd(m.cfg, "draft visibility")
 		} else {
 			return m, m.cycleSortMode()
 		}

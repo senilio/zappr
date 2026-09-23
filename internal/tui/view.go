@@ -167,15 +167,13 @@ func (m Model) helpPanel() string {
 	section := func(title string, shortcuts ...shortcut) {
 		line("%s", m.theme.Styles.Title.Render(title))
 		cell := func(shortcut shortcut, cellWidth int) string {
-			key := truncateANSIWidth(shortcut.key, 11)
-			labelWidth := max(1, cellWidth-14)
+			keyWidth := min(24, max(11, cellWidth/2))
+			key := truncateANSIWidth(shortcut.key, keyWidth)
+			labelWidth := max(1, cellWidth-keyWidth-3)
 			label := truncateANSIWidth(shortcut.label, labelWidth)
-			return "  " + m.theme.Styles.TitleStrong.Render(key+strings.Repeat(" ", max(0, 11-ansi.StringWidth(key)))) + " " + fmt.Sprintf("%-*s", labelWidth, label)
+			return "  " + m.theme.Styles.TitleStrong.Render(key+strings.Repeat(" ", max(0, keyWidth-ansi.StringWidth(key)))) + " " + fmt.Sprintf("%-*s", labelWidth, label)
 		}
 		columns := 1
-		if width >= 60 {
-			columns = 2
-		}
 		cellWidth := width
 		if columns == 2 {
 			cellWidth = (width - 2) / 2
@@ -194,20 +192,77 @@ func (m Model) helpPanel() string {
 	line("")
 	section("Navigate",
 		shortcut{"↑/↓", "move"},
-		shortcut{m.actionAlias("inspect-pr"), "inspect"},
-		shortcut{m.actionAlias("focus-next"), "switch pane"},
-		shortcut{"shift+↑/↓", "summary"},
-		shortcut{m.actionAlias("help"), "close help"},
+		shortcut{"enter", "inspect"},
+		shortcut{"tab/shift+tab", "switch pane"},
+		shortcut{"g/G", "top/bottom"},
+		shortcut{"pgdown/space", "page down"},
+		shortcut{"pgup", "page up"},
+		shortcut{"esc", "back to inbox"},
 		shortcut{m.actionAlias("quit"), "quit"},
 	)
 	section("Review",
-		shortcut{m.actionAlias("toggle-diff"), "diff"},
-		shortcut{"←/→", "pan diff"},
-		shortcut{m.actionAlias("refresh-pr"), "refresh"},
-		shortcut{m.actionAlias("approve"), "approve [confirm]"},
-		shortcut{m.actionAlias("comment"), "comment"},
+		shortcut{"1/2/3/4", "files/commits/comments/Atlantis"},
+		shortcut{"shift+↑/↓", "next/previous file/commit"},
+		shortcut{m.actionAlias("toggle-diff"), "toggle diff"},
+		shortcut{"←/→", "pan diff/commits"},
+		shortcut{m.actionAlias("toggle-side-by-side"), "side-by-side diff"},
+		shortcut{m.actionAlias("toggle-file-content"), "file content/diff"},
+		shortcut{m.actionAlias("open-diff-pager"), "open diff pager"},
 	)
-	section("More", shortcut{m.actionAlias("command-palette"), "command palette"})
+	actions := []shortcut{
+		{m.actionAlias("open-pr"), "open PR"},
+		{m.actionAlias("copy-pr-url"), "copy PR URL"},
+		{m.actionAlias("refresh-pr"), "refresh PR"},
+		{m.actionAlias("refresh-inbox"), "refresh inbox"},
+		{m.actionAlias("approve"), "approve [confirm]"},
+		{m.actionAlias("approve-now"), "approve now"},
+		{m.actionAlias("comment"), "write comment"},
+		{m.actionAlias("settings"), "inbox settings"},
+	}
+	descriptors := make(map[string]bool, len(actionDescriptors))
+	for _, descriptor := range actionDescriptors {
+		descriptors[descriptor.ID] = true
+	}
+	for _, action := range m.actions.actions {
+		if action.Operation != "" && !descriptors[action.ID] {
+			actions = append(actions, shortcut{actionAliases(action), actionDisplayLabel(action)})
+		}
+	}
+	section("Actions", actions...)
+	section("Command palette",
+		shortcut{m.actionAlias("command-palette"), "open palette"},
+		shortcut{":draft", "toggle draft status"},
+		shortcut{":close", "close PR [confirm]"},
+		shortcut{":update", "update branch [confirm]"},
+		shortcut{":block", "request changes [confirm]"},
+		shortcut{":merge", "squash merge [confirm]"},
+		shortcut{":colorscheme", "pick color scheme"},
+	)
+	section("Modals",
+		shortcut{"help: esc/?/enter", "close"},
+		shortcut{"diff: esc/enter/v", "close"},
+		shortcut{"approve: y", "confirm"},
+		shortcut{"approve: esc/n", "cancel"},
+		shortcut{"comment: enter", "submit"},
+		shortcut{"comment: esc", "cancel"},
+		shortcut{"comment: bs/ctrl+h", "delete"},
+		shortcut{"command: enter", "execute"},
+		shortcut{"command: esc", "cancel"},
+		shortcut{"command: down/ctrl+j", "next"},
+		shortcut{"command: up/ctrl+k", "previous"},
+		shortcut{"command: bs/ctrl+h", "delete"},
+		shortcut{"confirm: y/enter", "confirm"},
+		shortcut{"confirm: esc/n", "cancel"},
+		shortcut{"settings: j/down", "next"},
+		shortcut{"settings: k/up", "previous"},
+		shortcut{"settings: space/enter", "toggle"},
+		shortcut{"settings: ←/→/h/l", "toggle"},
+		shortcut{"settings: esc/f", "close"},
+		shortcut{"colors: j/down", "next"},
+		shortcut{"colors: k/up", "previous"},
+		shortcut{"colors: enter/space", "select"},
+		shortcut{"colors: esc/q", "cancel"},
+	)
 	return strings.TrimSuffix(b.String(), "\n")
 }
 
@@ -238,6 +293,16 @@ func actionDisplayLabel(action tuiAction) string {
 		label = genericActionLabel(action)
 	}
 	return strings.NewReplacer("\n", `\n`, "\r", `\r`, "\t", `\t`).Replace(label)
+}
+
+func confirmationActionLabel(action tuiAction) string {
+	if action.Label != "" {
+		return actionDisplayLabel(action)
+	}
+	if action.Operation == "comment" && action.Comment != "" {
+		return fmt.Sprintf("Comment %q", action.Comment)
+	}
+	return actionDisplayLabel(action)
 }
 
 func (m Model) layoutView() string {
@@ -1394,13 +1459,7 @@ func (m Model) commandPanel() string {
 		if !ok {
 			return "no PR selected"
 		}
-		name := actionDisplayLabel(m.pendingAction)
-		if m.pendingAction.Operation == "comment" && m.pendingAction.Comment != "" {
-			name = actionDisplayLabel(tuiAction{Label: m.pendingAction.Comment})
-		}
-		if action, ok := m.actions.exactCommand(m.commandInput); ok && action.ID == m.pendingAction.ID {
-			name = ":" + m.commandInput
-		}
+		name := confirmationActionLabel(m.pendingAction)
 		name = truncateANSIWidth(name, max(1, m.commandModalWidth()-ansi.StringWidth(fmt.Sprintf("Run  on %s #%d?", pr.Repo, pr.Number))))
 		fmt.Fprintf(&b, "Run %s on %s #%d?\n\n", name, pr.Repo, pr.Number)
 		b.WriteString(m.actionAlias("command-confirm") + " confirm  " + m.actionAlias("command-cancel-confirmation") + " cancel")

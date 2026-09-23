@@ -312,6 +312,24 @@ func TestSavePreservesActions(t *testing.T) {
 	}
 }
 
+func TestSaveRoundTripsHideDrafts(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(t.TempDir(), "config"))
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(t.TempDir(), "cache"))
+
+	cfg := Default()
+	cfg.HideDrafts = true
+	if err := Save(cfg); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	got, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !got.HideDrafts {
+		t.Fatal("HideDrafts = false, want true")
+	}
+}
+
 func TestSaveGenericActions(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(t.TempDir(), "config"))
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(t.TempDir(), "cache"))

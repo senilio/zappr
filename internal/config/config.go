@@ -21,11 +21,12 @@ var (
 )
 
 type Config struct {
-	Refresh RefreshConfig           `yaml:"refresh"`
-	Cache   CacheConfig             `yaml:"cache"`
-	Theme   string                  `yaml:"theme,omitempty"`
-	Sort    string                  `yaml:"sort,omitempty"`
-	Actions map[string]ActionConfig `yaml:"actions"`
+	Refresh    RefreshConfig           `yaml:"refresh"`
+	Cache      CacheConfig             `yaml:"cache"`
+	Theme      string                  `yaml:"theme,omitempty"`
+	Sort       string                  `yaml:"sort,omitempty"`
+	HideDrafts bool                    `yaml:"hide_drafts,omitempty"`
+	Actions    map[string]ActionConfig `yaml:"actions"`
 }
 
 type ActionConfig struct {
@@ -219,16 +220,18 @@ func Load() (Config, error) {
 		return cfg, err
 	}
 	file := struct {
-		Refresh RefreshConfig             `yaml:"refresh"`
-		Cache   CacheConfig               `yaml:"cache"`
-		Theme   string                    `yaml:"theme,omitempty"`
-		Sort    string                    `yaml:"sort,omitempty"`
-		Actions map[string]actionOverride `yaml:"actions"`
+		Refresh    RefreshConfig             `yaml:"refresh"`
+		Cache      CacheConfig               `yaml:"cache"`
+		Theme      string                    `yaml:"theme,omitempty"`
+		Sort       string                    `yaml:"sort,omitempty"`
+		HideDrafts bool                      `yaml:"hide_drafts,omitempty"`
+		Actions    map[string]actionOverride `yaml:"actions"`
 	}{
-		Refresh: cfg.Refresh,
-		Cache:   cfg.Cache,
-		Theme:   cfg.Theme,
-		Sort:    cfg.Sort,
+		Refresh:    cfg.Refresh,
+		Cache:      cfg.Cache,
+		Theme:      cfg.Theme,
+		Sort:       cfg.Sort,
+		HideDrafts: cfg.HideDrafts,
 	}
 	if err := yaml.Unmarshal(data, &file); err != nil {
 		return cfg, fmt.Errorf("parse config %s: %w", path, err)
@@ -237,6 +240,7 @@ func Load() (Config, error) {
 	cfg.Cache = file.Cache
 	cfg.Theme = file.Theme
 	cfg.Sort = file.Sort
+	cfg.HideDrafts = file.HideDrafts
 	for id, override := range file.Actions {
 		if !actionIDPattern.MatchString(id) {
 			return cfg, fmt.Errorf("actions.%s: invalid action ID", id)
