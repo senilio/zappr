@@ -283,7 +283,7 @@ func TestCommandPaletteUsesConciseRequestChangesLabel(t *testing.T) {
 	m.mode = ModeCommand
 
 	panel := stripANSI(m.commandPanel())
-	if !strings.Contains(panel, ":block  block PR merge [confirm]") {
+	if !strings.Contains(panel, ":block  block PR merge [?]") {
 		t.Fatalf("palette = %q, want concise block command label", panel)
 	}
 }
@@ -707,16 +707,49 @@ func TestCommandPaletteConfirmsExactAlias(t *testing.T) {
 	}
 }
 
+func TestCommandPaletteMatchesDescription(t *testing.T) {
+	cfg := config.Default()
+	cfg.Actions["atlantis-apply"] = config.ActionConfig{Operation: "comment", Commands: []string{"aa"}, Comment: "atlantis apply"}
+	m, _ := configuredModel(t, cfg, true)
+	m.width = 100
+	m.height = 40
+
+	m = openCommandAndType(m, "apply")
+	panel := stripANSI(m.commandPanel())
+	if !strings.Contains(panel, `:aa  comment "atlantis apply"`) || strings.Contains(panel, "[confirm]") {
+		t.Fatalf("palette = %q", panel)
+	}
+	m = pressSpecial(m, tea.KeyEnter)
+	if m.mode != ModeConfirmCommand {
+		t.Fatalf("mode = %v, want ModeConfirmCommand", m.mode)
+	}
+}
+
+func TestCommandPaletteUsesShortUpdateLabel(t *testing.T) {
+	m, _ := configuredModel(t, config.Default(), true)
+	m.width = 100
+	m.height = 40
+
+	m = openCommandAndType(m, "update")
+	panel := stripANSI(m.commandPanel())
+	if !strings.Contains(panel, ":update  update branch [?]") || strings.Contains(panel, "base branch") {
+		t.Fatalf("palette = %q", panel)
+	}
+}
+
 func TestConfiguredActionIsShownInHelp(t *testing.T) {
 	cfg := config.Default()
 	cfg.Actions["hello"] = config.ActionConfig{Operation: "comment", Keys: []string{"H"}, Commands: []string{"hello"}, Comment: "hello world"}
 	m, _ := configuredModel(t, cfg, true)
 
 	panel := stripANSI(m.helpPanel())
-	for _, want := range []string{"H/:hello", `comment "hello world"`} {
+	for _, want := range []string{"H", `comment "hello world"`} {
 		if !strings.Contains(panel, want) {
 			t.Fatalf("help = %q, missing %q", panel, want)
 		}
+	}
+	if strings.Contains(panel, ":hello") || strings.Contains(panel, "Command palette") {
+		t.Fatalf("help = %q, should omit commands", panel)
 	}
 }
 
@@ -724,7 +757,7 @@ func TestHelpPanelShowsCuratedShortcuts(t *testing.T) {
 	model, _ := configuredModel(t, config.Default(), true)
 	panel := stripANSI(model.helpPanel())
 
-	for _, want := range []string{"Navigate", "↑/↓", "tab/shift+tab", "g/G", "pgdown/space", "Review", "1/2/3/4", "←/→", "next/previous file", "Actions", "open PR", "Command palette", ":draft"} {
+	for _, want := range []string{"Navigate", "↑/↓", "tab/shift+tab", "g/G", "pgdown/space", "Review", "1/2/3/4", "←/→", "next/previous file", "Actions", "open PR"} {
 		if !strings.Contains(panel, want) {
 			t.Errorf("help = %q, missing %q", panel, want)
 		}
@@ -739,11 +772,11 @@ func TestHelpSearchFiltersAndEscCloses(t *testing.T) {
 	if m.mode != ModeHelp {
 		t.Fatalf("mode = %v, want ModeHelp", m.mode)
 	}
-	for _, key := range "draft" {
+	for _, key := range "open" {
 		m = updateKey(m, string(key))
 	}
 	view := stripANSI(m.View())
-	if !strings.Contains(view, "toggle draft status") || strings.Contains(view, "Modals") {
+	if !strings.Contains(view, "open PR") || strings.Contains(view, "Command palette") {
 		t.Fatalf("help = %q", view)
 	}
 	m = updateKey(m, "esc")

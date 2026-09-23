@@ -212,7 +212,7 @@ func (m Model) helpPanel() string {
 		{m.actionAlias("copy-pr-url"), "copy PR URL"},
 		{m.actionAlias("refresh-pr"), "refresh PR"},
 		{m.actionAlias("refresh-inbox"), "refresh inbox"},
-		{m.actionAlias("approve"), "approve [confirm]"},
+		{m.actionAlias("approve"), "approve [?]"},
 		{m.actionAlias("approve-now"), "approve now"},
 		{m.actionAlias("comment"), "write comment"},
 		{m.actionAlias("settings"), "inbox settings"},
@@ -223,20 +223,11 @@ func (m Model) helpPanel() string {
 		descriptors[descriptor.ID] = true
 	}
 	for _, action := range m.actions.actions {
-		if action.Operation != "" && !descriptors[action.ID] && !builtInActions[action.ID] {
-			actions = append(actions, shortcut{actionAliases(action), actionDisplayLabel(action)})
+		if action.Operation != "" && !descriptors[action.ID] && !builtInActions[action.ID] && len(action.Keys) > 0 {
+			actions = append(actions, shortcut{strings.Join(action.Keys, "/"), actionDisplayLabel(action)})
 		}
 	}
 	section("Actions", actions...)
-	section("Command palette",
-		shortcut{m.actionAlias("command-palette"), "open palette"},
-		shortcut{":draft", "toggle draft status"},
-		shortcut{":close", "close PR [confirm]"},
-		shortcut{":update", "update branch [confirm]"},
-		shortcut{":block", "request changes [confirm]"},
-		shortcut{":merge", "squash merge [confirm]"},
-		shortcut{":colorscheme", "pick color scheme"},
-	)
 	content := strings.TrimSuffix(b.String(), "\n")
 	if m.helpInput == "" {
 		return content
@@ -255,7 +246,7 @@ func (m Model) actionHelpLine(action tuiAction) string {
 	aliases := truncateANSIWidth(actionAliases(action), 18)
 	label := actionDisplayLabel(action)
 	if action.Confirmation != confirmationNone {
-		label += " [confirm]"
+		label += " [?]"
 	}
 	width := min(66, m.width-10) - 22
 	if m.width <= 0 {
@@ -331,8 +322,10 @@ func (m Model) layoutView() string {
 func (m Model) renderHelpModal() string {
 	width := min(60, max(32, m.width-8))
 	height := m.helpModalHeight() - 3
-	content := fmt.Sprintf("zappr help\nSearch: %s_\n%s\nup/down pgup/pgdown  esc close", m.helpInput, m.helpViewportView())
-	return m.theme.Styles.Focused.Width(width).Height(height).Padding(1, 2).Render(content)
+	search := "Search: " + m.helpInput + "_"
+	padding := max(1, (m.helpVP.Width+1-ansi.StringWidth(search))/2-ansi.StringWidth("zappr help"))
+	content := fmt.Sprintf("zappr help%s%s\n\n%s\n\nup/down pgup/pgdown  esc close", strings.Repeat(" ", padding), search, m.helpViewportView())
+	return m.theme.Styles.Focused.Width(width).Height(height).Padding(0, 2).Render(content)
 }
 
 func (m Model) helpModalHeight() int {
@@ -351,7 +344,7 @@ func (m Model) helpViewportView() string {
 			bar = "█"
 		}
 		line = truncateANSIWidth(line, m.helpVP.Width)
-		lines[i] = line + strings.Repeat(" ", max(0, m.helpVP.Width-ansi.StringWidth(line))) + bar
+		lines[i] = line + strings.Repeat(" ", max(0, m.helpVP.Width-ansi.StringWidth(line))) + m.theme.Styles.Muted.Render(bar)
 	}
 	return strings.Join(lines, "\n")
 }
@@ -1493,7 +1486,7 @@ func (m Model) commandPanel() string {
 			descStyled := s.Muted.Render(truncateANSIWidth(actionDisplayLabel(match.action), max(1, width)))
 			confirmMark := ""
 			if match.action.Confirmation != confirmationNone {
-				confirmMark = s.Muted.Render(" [confirm]")
+				confirmMark = s.Muted.Render(" [?]")
 			}
 			if i == m.commandCursor {
 				cursor := s.File.Render(">")

@@ -103,7 +103,7 @@ var actionDescriptors = []tuiAction{
 	{"command-cancel-confirmation", "cancel command", actionContextCommandConfirmation, nil, nil, false, confirmationNone, "command-cancel-confirmation", ""},
 	{"toggle-draft", "toggle PR draft status", actionContextNormal, nil, nil, true, confirmationNone, "toggle-draft", ""},
 	{"close-pr", "close PR", actionContextNormal, nil, nil, true, confirmationMandatory, "close-pr", ""},
-	{"update-branch", "update branch with base branch", actionContextNormal, nil, nil, true, confirmationMandatory, "update-branch", ""},
+	{"update-branch", "update branch", actionContextNormal, nil, nil, true, confirmationMandatory, "update-branch", ""},
 	{"request-changes", "block PR merge", actionContextNormal, nil, nil, true, confirmationMandatory, "request-changes", ""},
 	{"merge-pr", "merge active PR (squash)", actionContextNormal, nil, nil, true, confirmationMandatory, "merge-pr", ""},
 	{"colorscheme", "pick color scheme", actionContextNormal, nil, nil, false, confirmationNone, "colorscheme", ""},
@@ -284,7 +284,7 @@ func (r actionRegistry) matchingCommands(prefix string) []commandMatch {
 	var matches []commandMatch
 	for _, action := range r.actions {
 		for _, command := range action.Commands {
-			if strings.HasPrefix(strings.ToLower(command), prefix) {
+			if strings.HasPrefix(strings.ToLower(command), prefix) || strings.Contains(strings.ToLower(actionDisplayLabel(action)), prefix) {
 				matches = append(matches, commandMatch{action: action, alias: command})
 				break
 			}
