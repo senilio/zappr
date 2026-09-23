@@ -755,19 +755,33 @@ func TestHelpSearchFiltersAndEscCloses(t *testing.T) {
 func TestHelpFitsScreenAndScrolls(t *testing.T) {
 	m, _ := configuredModel(t, config.Default(), true)
 	m.width = 80
-	m.height = 12
+	m.height = 30
 	m = updateKey(m, "?")
+	view := stripANSI(m.renderHelpModal())
+	if lines := len(strings.Split(strings.TrimRight(view, "\n"), "\n")); lines > 10 {
+		t.Fatalf("help has %d lines, want at most 10", lines)
+	}
+	if !strings.Contains(view, "│") {
+		t.Fatalf("help = %q, want scrollbar", view)
+	}
 	for _, line := range strings.Split(m.View(), "\n") {
 		if lipgloss.Width(stripANSI(line)) > m.width {
 			t.Fatalf("help line exceeds width: %q", line)
 		}
 	}
-	if lines := len(strings.Split(strings.TrimRight(m.View(), "\n"), "\n")); lines > m.height {
-		t.Fatalf("help has %d lines, want at most %d", lines, m.height)
-	}
 	m = updateKey(m, "down")
 	if m.helpVP.YOffset == 0 {
 		t.Fatal("down should scroll help")
+	}
+}
+
+func TestHelpListsBuiltInActionsOnce(t *testing.T) {
+	m, _ := configuredModel(t, config.Default(), true)
+	panel := stripANSI(m.helpPanel())
+	for _, duplicate := range []string{"Approve PR. Confirmation required.", "Approve PR. No confirmation.", "Write a comment on PR."} {
+		if strings.Contains(panel, duplicate) {
+			t.Fatalf("help = %q, duplicate action %q", panel, duplicate)
+		}
 	}
 }
 

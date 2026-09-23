@@ -1497,11 +1497,11 @@ func (m Model) handleHelpKey(key string) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) syncHelpVP() {
-	width := min(66, max(1, m.width-10))
+	width := min(54, max(1, m.width-12))
 	if m.width <= 0 {
-		width = 66
+		width = 54
 	}
-	m.helpVP.Width = width
-	m.helpVP.Height = max(1, m.height-chromeLines-8)
+	m.helpVP.Width = max(1, width-1)
+	m.helpVP.Height = max(1, m.helpModalHeight()-6)
 	m.helpVP.SetContent(m.helpPanel())
 }

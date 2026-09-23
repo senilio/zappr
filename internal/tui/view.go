@@ -167,7 +167,7 @@ func (m Model) helpPanel() string {
 	section := func(title string, shortcuts ...shortcut) {
 		line("%s", m.theme.Styles.Title.Render(title))
 		cell := func(shortcut shortcut, cellWidth int) string {
-			keyWidth := min(24, max(11, cellWidth/2))
+			keyWidth := min(16, max(11, cellWidth/3))
 			key := truncateANSIWidth(shortcut.key, keyWidth)
 			labelWidth := max(1, cellWidth-keyWidth-3)
 			label := truncateANSIWidth(shortcut.label, labelWidth)
@@ -217,12 +217,13 @@ func (m Model) helpPanel() string {
 		{m.actionAlias("comment"), "write comment"},
 		{m.actionAlias("settings"), "inbox settings"},
 	}
+	builtInActions := map[string]bool{"approve": true, "approve-now": true, "comment": true}
 	descriptors := make(map[string]bool, len(actionDescriptors))
 	for _, descriptor := range actionDescriptors {
 		descriptors[descriptor.ID] = true
 	}
 	for _, action := range m.actions.actions {
-		if action.Operation != "" && !descriptors[action.ID] {
+		if action.Operation != "" && !descriptors[action.ID] && !builtInActions[action.ID] {
 			actions = append(actions, shortcut{actionAliases(action), actionDisplayLabel(action)})
 		}
 	}
@@ -328,10 +329,31 @@ func (m Model) layoutView() string {
 }
 
 func (m Model) renderHelpModal() string {
-	width := min(72, max(32, m.width-4))
-	height := max(4, m.height-chromeLines)
-	content := fmt.Sprintf("zappr help\n\nSearch: %s_\n\n%s\n\nesc close", m.helpInput, m.helpVP.View())
+	width := min(60, max(32, m.width-8))
+	height := m.helpModalHeight() - 3
+	content := fmt.Sprintf("zappr help\nSearch: %s_\n%s\nup/down pgup/pgdown  esc close", m.helpInput, m.helpViewportView())
 	return m.theme.Styles.Focused.Width(width).Height(height).Padding(1, 2).Render(content)
+}
+
+func (m Model) helpModalHeight() int {
+	return max(8, (m.height-chromeLines)/3)
+}
+
+func (m Model) helpViewportView() string {
+	lines := strings.Split(m.helpVP.View(), "\n")
+	if m.helpVP.TotalLineCount() <= m.helpVP.Height {
+		return strings.Join(lines, "\n")
+	}
+	thumb := int(m.helpVP.ScrollPercent() * float64(max(0, len(lines)-1)))
+	for i, line := range lines {
+		bar := "│"
+		if i == thumb {
+			bar = "█"
+		}
+		line = truncateANSIWidth(line, m.helpVP.Width)
+		lines[i] = line + strings.Repeat(" ", max(0, m.helpVP.Width-ansi.StringWidth(line))) + bar
+	}
+	return strings.Join(lines, "\n")
 }
 
 // renderCommandModal renders the command palette box (border + padding + content).
