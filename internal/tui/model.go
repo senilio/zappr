@@ -157,7 +157,7 @@ func New(zappr *app.App, repo string, pollEvery time.Duration, themeName string,
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(refreshCmd(m.app, m.repo), tickCmd(m.pollEvery), uiTickCmd())
+	return tea.Batch(refreshCmd(m.app, m.repo, !m.hideDrafts), tickCmd(m.pollEvery), uiTickCmd())
 }
 
 type refreshMsg struct {
@@ -262,11 +262,11 @@ func saveSettingCmd(cfg config.Config, setting string) tea.Cmd {
 	}
 }
 
-func refreshCmd(app *app.App, repo string) tea.Cmd {
+func refreshCmd(app *app.App, repo string, includeDrafts bool) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 		defer cancel()
-		prs, err := app.Refresh(ctx, repo)
+		prs, err := app.Refresh(ctx, repo, includeDrafts)
 		return refreshMsg{prs: prs, err: err}
 	}
 }

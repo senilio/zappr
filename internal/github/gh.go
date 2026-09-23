@@ -23,7 +23,17 @@ func NewGHProvider() *GHProvider {
 }
 
 func (p *GHProvider) ListOpenPRs(ctx context.Context, repo string) ([]model.PullRequest, error) {
-	out, err := p.run(ctx, "pr", "list", "--repo", repo, "--state", "open", "--json", "number,title,author,url,labels,additions,deletions,changedFiles,isDraft,state,headRefOid,statusCheckRollup,reviewDecision,updatedAt")
+	return p.listPRs(ctx, repo, "--search", "draft:false")
+}
+
+func (p *GHProvider) ListDraftPRs(ctx context.Context, repo string) ([]model.PullRequest, error) {
+	return p.listPRs(ctx, repo, "--draft")
+}
+
+func (p *GHProvider) listPRs(ctx context.Context, repo string, filter ...string) ([]model.PullRequest, error) {
+	args := append([]string{"pr", "list", "--repo", repo, "--state", "open"}, filter...)
+	args = append(args, "--json", "number,title,author,url,labels,additions,deletions,changedFiles,isDraft,state,headRefOid,statusCheckRollup,reviewDecision,updatedAt")
+	out, err := p.run(ctx, args...)
 	if err != nil {
 		return nil, err
 	}

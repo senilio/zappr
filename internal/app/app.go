@@ -64,10 +64,17 @@ func New(githubProvider github.Provider, aiProvider ai.Provider, store cache.Sto
 	return &App{GitHub: githubProvider, AI: aiProvider, Cache: store}
 }
 
-func (a *App) Refresh(ctx context.Context, repo string) ([]model.PullRequest, error) {
+func (a *App) Refresh(ctx context.Context, repo string, includeDrafts bool) ([]model.PullRequest, error) {
 	prs, err := a.GitHub.ListOpenPRs(ctx, repo)
 	if err != nil {
 		return nil, err
+	}
+	if includeDrafts {
+		drafts, err := a.GitHub.ListDraftPRs(ctx, repo)
+		if err != nil {
+			return nil, err
+		}
+		prs = append(prs, drafts...)
 	}
 	for i := range prs {
 		// Preserve any existing AI triage from the cache so that a manual

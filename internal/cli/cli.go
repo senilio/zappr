@@ -108,7 +108,7 @@ func runInbox(zappr *app.App, args []string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
-	prs, err := zappr.Refresh(ctx, repo)
+	prs, err := zappr.Refresh(ctx, repo, false)
 	if err != nil {
 		return err
 	}

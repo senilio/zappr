@@ -52,7 +52,7 @@ func TestRefreshPrunesClosedPRs(t *testing.T) {
 	provider := fakeGitHub{prs: []model.PullRequest{{Repo: "owner/repo", Number: 2, Title: "open", Triage: model.Triage{Risk: model.RiskSafe}}}}
 	zappr := New(provider, ai.NoopProvider{}, store)
 
-	prs, err := zappr.Refresh(context.Background(), "owner/repo")
+	prs, err := zappr.Refresh(context.Background(), "owner/repo", false)
 	if err != nil {
 		t.Fatalf("Refresh: %v", err)
 	}
@@ -76,7 +76,7 @@ func TestRefreshPreservesAITriage(t *testing.T) {
 	provider := fakeGitHub{prs: []model.PullRequest{{Repo: "owner/repo", Number: 1, Title: "pr"}}}
 	zappr := New(provider, ai.NoopProvider{}, store)
 
-	prs, err := zappr.Refresh(context.Background(), "owner/repo")
+	prs, err := zappr.Refresh(context.Background(), "owner/repo", false)
 	if err != nil {
 		t.Fatalf("Refresh: %v", err)
 	}
@@ -194,6 +194,10 @@ type fakeGitHub struct {
 
 func (f fakeGitHub) ListOpenPRs(context.Context, string) ([]model.PullRequest, error) {
 	return f.prs, nil
+}
+
+func (f fakeGitHub) ListDraftPRs(context.Context, string) ([]model.PullRequest, error) {
+	return nil, nil
 }
 
 func (f fakeGitHub) GetPR(context.Context, string, int) (model.PullRequest, error) {

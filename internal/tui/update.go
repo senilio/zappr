@@ -165,7 +165,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.error = ""
 		m.message = msg.message
 		m.mode = ModeInbox
-		return m, tea.Batch(m.finishStatus(msg.message, false), refreshCmd(m.app, m.repo))
+		return m, tea.Batch(m.finishStatus(msg.message, false), refreshCmd(m.app, m.repo, !m.hideDrafts))
 
 	case pagerMsg:
 		m.loading = false
@@ -204,7 +204,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(refreshPRCmd(m.app, pr), tickCmd(m.pollEvery))
 		}
 		m.message = "polling inbox"
-		return m, tea.Batch(refreshCmd(m.app, m.repo), tickCmd(m.pollEvery))
+		return m, tea.Batch(refreshCmd(m.app, m.repo, !m.hideDrafts), tickCmd(m.pollEvery))
 
 	case uiTickMsg:
 		// Re-render every second so the "refreshed Xs ago" counter stays live.
@@ -663,11 +663,11 @@ func (m Model) executeAction(action tuiAction) (tea.Model, tea.Cmd) {
 		}
 		m.loading = true
 		m.message = "refreshing"
-		return m, tea.Batch(m.startStatus("refreshing…"), refreshCmd(m.app, m.repo))
+		return m, tea.Batch(m.startStatus("refreshing…"), refreshCmd(m.app, m.repo, !m.hideDrafts))
 	case "refresh-inbox":
 		m.loading = true
 		m.message = "refreshing"
-		return m, tea.Batch(m.startStatus("refreshing…"), refreshCmd(m.app, m.repo))
+		return m, tea.Batch(m.startStatus("refreshing…"), refreshCmd(m.app, m.repo, !m.hideDrafts))
 	case "toggle-diff":
 		if m.width > 0 && m.width < minMediumWidth {
 			// Narrow: toggle full-screen diff mode.
@@ -1305,6 +1305,9 @@ func (m Model) handleSettingsKey(key string) (tea.Model, tea.Cmd) {
 			m.cfg.HideDrafts = m.hideDrafts
 			m.applyPRSettings()
 			m.message = draftFilterMessage(m.hideDrafts)
+			if !m.hideDrafts {
+				return m, tea.Batch(saveSettingCmd(m.cfg, "draft visibility"), refreshCmd(m.app, m.repo, true))
+			}
 			return m, saveSettingCmd(m.cfg, "draft visibility")
 		} else {
 			return m, m.cycleSortMode()

@@ -24,6 +24,10 @@ func (f *commentRecordingGitHub) ListOpenPRs(context.Context, string) ([]model.P
 	return nil, nil
 }
 
+func (f *commentRecordingGitHub) ListDraftPRs(context.Context, string) ([]model.PullRequest, error) {
+	return nil, nil
+}
+
 func (f *commentRecordingGitHub) GetPR(context.Context, string, int) (model.PullRequest, error) {
 	return model.PullRequest{}, nil
 }
