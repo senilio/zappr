@@ -360,10 +360,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case ModeColorscheme:
 		return m.handleColorschemeKey(key)
 	case ModeHelp:
-		if action, ok := m.actions.actionForKey(actionContextHelp, key); ok && action.ID == "help-close" {
-			m.mode = m.prevMode
-		}
-		return m, nil
+		return m.handleHelpKey(key)
 	case ModeSettings:
 		return m.handleSettingsKey(key)
 	}
@@ -405,6 +402,8 @@ func (m Model) executeAction(action tuiAction) (tea.Model, tea.Cmd) {
 	if action.ID == "help" {
 		m.prevMode = m.mode
 		m.mode = ModeHelp
+		m.helpInput = ""
+		m.syncHelpVP()
 		return m, nil
 	}
 	if action.ID == "diff-close" {
@@ -920,6 +919,7 @@ func (m *Model) resizeViewports() {
 	m.diffVP.Width = mv.diffContentWidth(diffInnerW)
 	m.diffVP.SetHorizontalStep(max(1, m.diffVP.Width/2))
 	m.syncDiffVP()
+	m.syncHelpVP()
 }
 
 func (m *Model) nextFocus() {
@@ -1459,4 +1459,46 @@ func (m Model) handleConfirmCommandKey(key string) (tea.Model, tea.Cmd) {
 		return m.executeAction(m.pendingAction)
 	}
 	return m, nil
+}
+
+func (m Model) handleHelpKey(key string) (tea.Model, tea.Cmd) {
+	if key == "esc" {
+		m.mode = m.prevMode
+		return m, nil
+	}
+	switch key {
+	case "up":
+		m.helpVP.LineUp(1)
+	case "down":
+		m.helpVP.LineDown(1)
+	case "pgup":
+		m.helpVP.ViewUp()
+	case "pgdown", " ":
+		m.helpVP.ViewDown()
+	case "g":
+		m.helpVP.GotoTop()
+	case "G":
+		m.helpVP.GotoBottom()
+	case "backspace", "ctrl+h":
+		if len(m.helpInput) > 0 {
+			m.helpInput = m.helpInput[:len(m.helpInput)-1]
+			m.syncHelpVP()
+		}
+	default:
+		if len(key) == 1 {
+			m.helpInput += key
+			m.syncHelpVP()
+		}
+	}
+	return m, nil
+}
+
+func (m *Model) syncHelpVP() {
+	width := min(66, max(1, m.width-10))
+	if m.width <= 0 {
+		width = 66
+	}
+	m.helpVP.Width = width
+	m.helpVP.Height = max(1, m.height-chromeLines-8)
+	m.helpVP.SetContent(m.helpPanel())
 }

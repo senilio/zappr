@@ -188,8 +188,6 @@ func (m Model) helpPanel() string {
 		line("")
 	}
 
-	line("zappr help")
-	line("")
 	section("Navigate",
 		shortcut{"↑/↓", "move"},
 		shortcut{"enter", "inspect"},
@@ -238,32 +236,18 @@ func (m Model) helpPanel() string {
 		shortcut{":merge", "squash merge [confirm]"},
 		shortcut{":colorscheme", "pick color scheme"},
 	)
-	section("Modals",
-		shortcut{"help: esc/?/enter", "close"},
-		shortcut{"diff: esc/enter/v", "close"},
-		shortcut{"approve: y", "confirm"},
-		shortcut{"approve: esc/n", "cancel"},
-		shortcut{"comment: enter", "submit"},
-		shortcut{"comment: esc", "cancel"},
-		shortcut{"comment: bs/ctrl+h", "delete"},
-		shortcut{"command: enter", "execute"},
-		shortcut{"command: esc", "cancel"},
-		shortcut{"command: down/ctrl+j", "next"},
-		shortcut{"command: up/ctrl+k", "previous"},
-		shortcut{"command: bs/ctrl+h", "delete"},
-		shortcut{"confirm: y/enter", "confirm"},
-		shortcut{"confirm: esc/n", "cancel"},
-		shortcut{"settings: j/down", "next"},
-		shortcut{"settings: k/up", "previous"},
-		shortcut{"settings: space/enter", "toggle"},
-		shortcut{"settings: ←/→/h/l", "toggle"},
-		shortcut{"settings: esc/f", "close"},
-		shortcut{"colors: j/down", "next"},
-		shortcut{"colors: k/up", "previous"},
-		shortcut{"colors: enter/space", "select"},
-		shortcut{"colors: esc/q", "cancel"},
-	)
-	return strings.TrimSuffix(b.String(), "\n")
+	content := strings.TrimSuffix(b.String(), "\n")
+	if m.helpInput == "" {
+		return content
+	}
+	var matches []string
+	query := strings.ToLower(m.helpInput)
+	for _, line := range strings.Split(content, "\n") {
+		if strings.Contains(strings.ToLower(line), query) {
+			matches = append(matches, line)
+		}
+	}
+	return strings.Join(matches, "\n")
 }
 
 func (m Model) actionHelpLine(action tuiAction) string {
@@ -328,7 +312,7 @@ func (m Model) layoutView() string {
 	case m.mode == ModeComment:
 		modal = m.renderModalBox(m.commentPanel())
 	case m.mode == ModeHelp:
-		modal = m.renderModalBox(m.helpPanel())
+		modal = m.renderHelpModal()
 	case m.mode == ModeSettings:
 		modal = m.renderModalBox(m.settingsPanel())
 	case m.mode == ModeColorscheme:
@@ -341,6 +325,13 @@ func (m Model) layoutView() string {
 	}
 
 	return fit(lipgloss.JoinVertical(lipgloss.Left, header, body))
+}
+
+func (m Model) renderHelpModal() string {
+	width := min(72, max(32, m.width-4))
+	height := max(4, m.height-chromeLines)
+	content := fmt.Sprintf("zappr help\n\nSearch: %s_\n\n%s\n\nesc close", m.helpInput, m.helpVP.View())
+	return m.theme.Styles.Focused.Width(width).Height(height).Padding(1, 2).Render(content)
 }
 
 // renderCommandModal renders the command palette box (border + padding + content).
@@ -1461,7 +1452,7 @@ func (m Model) commandPanel() string {
 		}
 		name := confirmationActionLabel(m.pendingAction)
 		name = truncateANSIWidth(name, max(1, m.commandModalWidth()-ansi.StringWidth(fmt.Sprintf("Run  on %s #%d?", pr.Repo, pr.Number))))
-		fmt.Fprintf(&b, "Run %s on %s #%d?\n\n", name, pr.Repo, pr.Number)
+		fmt.Fprintf(&b, "%s on %s #%d?\n\n", name, pr.Repo, pr.Number)
 		b.WriteString(m.actionAlias("command-confirm") + " confirm  " + m.actionAlias("command-cancel-confirmation") + " cancel")
 		return b.String()
 	}

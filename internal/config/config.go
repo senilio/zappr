@@ -174,7 +174,7 @@ func FixedActions() map[string]ActionConfig {
 		"inspect-pr":                  {Keys: []string{"enter"}},
 		"back-to-inbox":               {Keys: []string{"esc"}},
 		"command-palette":             {Keys: []string{":"}},
-		"help-close":                  {Keys: []string{"esc", "?", "enter"}},
+		"help-close":                  {Keys: []string{"esc"}},
 		"diff-close":                  {Keys: []string{"esc", "enter", "v"}},
 		"approve-confirm":             {Keys: []string{"y"}},
 		"approve-cancel":              {Keys: []string{"esc", "n"}},

@@ -73,6 +73,7 @@ type Model struct {
 	inboxVP          viewport.Model
 	summaryVP        viewport.Model
 	diffVP           viewport.Model
+	helpVP           viewport.Model
 
 	statusActive       bool
 	statusText         string
@@ -85,7 +86,8 @@ type Model struct {
 	diffEnabled        bool
 	summaryMode        SummaryMode
 
-	commandInput  string    // typed input after ":"
+	commandInput  string // typed input after ":"
+	helpInput     string
 	pendingAction tuiAction // action awaiting confirmation
 	commandCursor int       // selected index in command palette list
 
@@ -148,9 +150,10 @@ func New(zappr *app.App, repo string, pollEvery time.Duration, themeName string,
 	vp := viewport.New(0, 0)
 	ivp := viewport.New(0, 0)
 	dvp := viewport.New(0, 0)
+	hvp := viewport.New(0, 0)
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
-	return Model{app: zappr, repo: repo, loading: true, pollEvery: pollEvery, sortMode: app.ParseSortMode(cfg.Sort), hideDrafts: cfg.HideDrafts, theme: uitheme.DefaultWithName(themeName), cfg: cfg, actions: actions, inboxVP: ivp, summaryVP: vp, diffVP: dvp, statusSpinner: sp, summaryMode: SummaryModeFiles}, nil
+	return Model{app: zappr, repo: repo, loading: true, pollEvery: pollEvery, sortMode: app.ParseSortMode(cfg.Sort), hideDrafts: cfg.HideDrafts, theme: uitheme.DefaultWithName(themeName), cfg: cfg, actions: actions, inboxVP: ivp, summaryVP: vp, diffVP: dvp, helpVP: hvp, statusSpinner: sp, summaryMode: SummaryModeFiles}, nil
 }
 
 func (m Model) Init() tea.Cmd {

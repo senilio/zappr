@@ -684,7 +684,7 @@ func TestCommandPaletteConfirmsMatchedAlias(t *testing.T) {
 	if m.mode != ModeConfirmCommand {
 		t.Fatalf("mode = %v, want ModeConfirmCommand", m.mode)
 	}
-	if panel := stripANSI(m.commandPanel()); !strings.Contains(panel, `Run Comment "hi" on org/repo #1?`) {
+	if panel := stripANSI(m.commandPanel()); !strings.Contains(panel, `Comment "hi" on org/repo #1?`) || strings.Contains(panel, "Run ") {
 		t.Errorf("confirmation = %q, want action description", panel)
 	}
 }
@@ -698,7 +698,7 @@ func TestCommandPaletteConfirmsExactAlias(t *testing.T) {
 
 	m = openCommandAndType(m, "zulu")
 	m = pressSpecial(m, tea.KeyEnter)
-	if panel := stripANSI(m.commandPanel()); !strings.Contains(panel, `Run Comment "hi" on org/repo #1?`) {
+	if panel := stripANSI(m.commandPanel()); !strings.Contains(panel, `Comment "hi" on org/repo #1?`) || strings.Contains(panel, "Run ") {
 		t.Errorf("confirmation = %q, want action description", panel)
 	}
 }
@@ -720,10 +720,50 @@ func TestHelpPanelShowsCuratedShortcuts(t *testing.T) {
 	model, _ := configuredModel(t, config.Default(), true)
 	panel := stripANSI(model.helpPanel())
 
-	for _, want := range []string{"Navigate", "↑/↓", "tab/shift+tab", "g/G", "pgdown/space", "Review", "1/2/3/4", "←/→", "next/previous file", "Actions", "open PR", "Command palette", ":draft", "Modals", "help: esc/?/enter", "confirm: y/enter", "settings: j/down"} {
+	for _, want := range []string{"Navigate", "↑/↓", "tab/shift+tab", "g/G", "pgdown/space", "Review", "1/2/3/4", "←/→", "next/previous file", "Actions", "open PR", "Command palette", ":draft"} {
 		if !strings.Contains(panel, want) {
 			t.Errorf("help = %q, missing %q", panel, want)
 		}
+	}
+}
+
+func TestHelpSearchFiltersAndEscCloses(t *testing.T) {
+	m, _ := configuredModel(t, config.Default(), true)
+	m.width = 80
+	m.height = 20
+	m = updateKey(m, "?")
+	if m.mode != ModeHelp {
+		t.Fatalf("mode = %v, want ModeHelp", m.mode)
+	}
+	for _, key := range "draft" {
+		m = updateKey(m, string(key))
+	}
+	view := stripANSI(m.View())
+	if !strings.Contains(view, "toggle draft status") || strings.Contains(view, "Modals") {
+		t.Fatalf("help = %q", view)
+	}
+	m = updateKey(m, "esc")
+	if m.mode == ModeHelp {
+		t.Fatal("esc should close help")
+	}
+}
+
+func TestHelpFitsScreenAndScrolls(t *testing.T) {
+	m, _ := configuredModel(t, config.Default(), true)
+	m.width = 80
+	m.height = 12
+	m = updateKey(m, "?")
+	for _, line := range strings.Split(m.View(), "\n") {
+		if lipgloss.Width(stripANSI(line)) > m.width {
+			t.Fatalf("help line exceeds width: %q", line)
+		}
+	}
+	if lines := len(strings.Split(strings.TrimRight(m.View(), "\n"), "\n")); lines > m.height {
+		t.Fatalf("help has %d lines, want at most %d", lines, m.height)
+	}
+	m = updateKey(m, "down")
+	if m.helpVP.YOffset == 0 {
+		t.Fatal("down should scroll help")
 	}
 }
 
@@ -763,7 +803,7 @@ func TestKeyOnlyActionConfirmation(t *testing.T) {
 	m = updateKey(m, "H")
 
 	panel := stripANSI(m.commandPanel())
-	if !strings.Contains(panel, `Run Comment "hello" on org/repo #1?`) || strings.Contains(panel, "Run : on") {
+	if !strings.Contains(panel, `Comment "hello" on org/repo #1?`) || strings.Contains(panel, "Run ") {
 		t.Fatalf("confirmation = %q", panel)
 	}
 }
