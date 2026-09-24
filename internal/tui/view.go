@@ -1466,8 +1466,7 @@ func (m Model) commandPanel() string {
 			return "no PR selected"
 		}
 		name := confirmationActionLabel(m.pendingAction)
-		name = truncateANSIWidth(name, max(1, m.commandModalWidth()-ansi.StringWidth(fmt.Sprintf("Run  on %s #%d?", pr.Repo, pr.Number))))
-		fmt.Fprintf(&b, "%s on %s #%d?\n\n", name, pr.Repo, pr.Number)
+		fmt.Fprintf(&b, "%s on #%d?\n\n", name, pr.Number)
 		b.WriteString(m.actionAlias("command-confirm") + " confirm  " + m.actionAlias("command-cancel-confirmation") + " cancel")
 		return b.String()
 	}

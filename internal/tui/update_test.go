@@ -688,7 +688,7 @@ func TestCommandPaletteConfirmsMatchedAlias(t *testing.T) {
 	if m.mode != ModeConfirmCommand {
 		t.Fatalf("mode = %v, want ModeConfirmCommand", m.mode)
 	}
-	if panel := stripANSI(m.commandPanel()); !strings.Contains(panel, `Comment "hi" on org/repo #1?`) || strings.Contains(panel, "Run ") {
+	if panel := stripANSI(m.commandPanel()); !strings.Contains(panel, `Comment "hi" on #1?`) || strings.Contains(panel, "org/repo") || strings.Contains(panel, "Run ") {
 		t.Errorf("confirmation = %q, want action description", panel)
 	}
 }
@@ -702,7 +702,7 @@ func TestCommandPaletteConfirmsExactAlias(t *testing.T) {
 
 	m = openCommandAndType(m, "zulu")
 	m = pressSpecial(m, tea.KeyEnter)
-	if panel := stripANSI(m.commandPanel()); !strings.Contains(panel, `Comment "hi" on org/repo #1?`) || strings.Contains(panel, "Run ") {
+	if panel := stripANSI(m.commandPanel()); !strings.Contains(panel, `Comment "hi" on #1?`) || strings.Contains(panel, "org/repo") || strings.Contains(panel, "Run ") {
 		t.Errorf("confirmation = %q, want action description", panel)
 	}
 }
@@ -854,12 +854,12 @@ func TestKeyOnlyActionConfirmation(t *testing.T) {
 	m = updateKey(m, "H")
 
 	panel := stripANSI(m.commandPanel())
-	if !strings.Contains(panel, `Comment "hello" on org/repo #1?`) || strings.Contains(panel, "Run ") {
+	if !strings.Contains(panel, `Comment "hello" on #1?`) || strings.Contains(panel, "org/repo") || strings.Contains(panel, "Run ") {
 		t.Fatalf("confirmation = %q", panel)
 	}
 }
 
-func TestCustomCommentConfirmationEscapesAndTruncatesPreview(t *testing.T) {
+func TestCustomCommentConfirmationEscapesWithoutTruncatingPreview(t *testing.T) {
 	cfg := config.Default()
 	comment := "first line\n" + strings.Repeat("long ", 40)
 	cfg.Actions["hello"] = config.ActionConfig{Operation: "comment", Keys: []string{"H"}, Comment: comment}
@@ -868,7 +868,7 @@ func TestCustomCommentConfirmationEscapesAndTruncatesPreview(t *testing.T) {
 	m = updateKey(m, "H")
 
 	panel := stripANSI(m.commandPanel())
-	if !strings.Contains(panel, `Comment "first line\n`) || strings.Contains(panel, strings.Repeat("long ", 40)) {
+	if !strings.Contains(panel, `Comment "first line\n`+strings.Repeat("long ", 40)+`" on #1?`) || strings.Contains(panel, "org/repo") {
 		t.Fatalf("confirmation preview = %q", panel)
 	}
 }
