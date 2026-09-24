@@ -60,6 +60,71 @@ func TestRefreshPrunesClosedPRs(t *testing.T) {
 	assertOrder(t, prs, []int{2})
 }
 
+func TestRefreshFiltersDraftsLocally(t *testing.T) {
+	store := cache.NewMemoryStore()
+	provider := fakeGitHub{prs: []model.PullRequest{
+		{Repo: "owner/repo", Number: 1, Draft: true},
+		{Repo: "owner/repo", Number: 2},
+	}}
+	zappr := New(provider, ai.NoopProvider{}, store)
+
+	prs, err := zappr.Refresh(context.Background(), "owner/repo", false)
+	if err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+
+	assertOrder(t, prs, []int{2})
+}
+
+func TestRefreshPreservesHiddenDraftCacheState(t *testing.T) {
+	store := cache.NewMemoryStore()
+	if err := store.Put(model.PullRequest{
+		Repo:    "owner/repo",
+		Number:  1,
+		Draft:   true,
+		Skipped: true,
+		Triage:  model.Triage{AI: &model.AITriage{Summary: "cached"}},
+	}); err != nil {
+		t.Fatalf("Put draft: %v", err)
+	}
+	provider := fakeGitHub{prs: []model.PullRequest{{Repo: "owner/repo", Number: 1, Title: "fresh", Draft: true}}}
+	zappr := New(provider, ai.NoopProvider{}, store)
+
+	prs, err := zappr.Refresh(context.Background(), "owner/repo", false)
+	if err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	if len(prs) != 0 {
+		t.Fatalf("visible PRs = %#v, want no drafts", prs)
+	}
+	cached, err := store.Get("owner/repo", 1)
+	if err != nil {
+		t.Fatalf("Get draft: %v", err)
+	}
+	if cached.Title != "fresh" || !cached.Skipped || cached.Triage.AI == nil || cached.Triage.AI.Summary != "cached" {
+		t.Fatalf("cached draft state not preserved: %#v", cached)
+	}
+}
+
+func TestRefreshDoesNotPruneIncompleteList(t *testing.T) {
+	store := cache.NewMemoryStore()
+	if err := store.Put(model.PullRequest{Repo: "owner/repo", Number: 1}); err != nil {
+		t.Fatalf("Put cached PR: %v", err)
+	}
+	provider := fakeGitHub{
+		prs:        []model.PullRequest{{Repo: "owner/repo", Number: 2}},
+		incomplete: true,
+	}
+	zappr := New(provider, ai.NoopProvider{}, store)
+
+	prs, err := zappr.Refresh(context.Background(), "owner/repo", false)
+	if err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+
+	assertOrder(t, prs, []int{2, 1})
+}
+
 // TestRefreshPreservesAITriage verifies that Refresh does not wipe an existing
 // AI triage result that was written by a prior Analyze call.
 func TestRefreshPreservesAITriage(t *testing.T) {
@@ -187,17 +252,14 @@ func assertOrder(t *testing.T, prs []model.PullRequest, want []int) {
 }
 
 type fakeGitHub struct {
-	prs  []model.PullRequest
-	pr   model.PullRequest
-	diff string
+	prs        []model.PullRequest
+	pr         model.PullRequest
+	diff       string
+	incomplete bool
 }
 
-func (f fakeGitHub) ListOpenPRs(context.Context, string) ([]model.PullRequest, error) {
-	return f.prs, nil
-}
-
-func (f fakeGitHub) ListDraftPRs(context.Context, string) ([]model.PullRequest, error) {
-	return nil, nil
+func (f fakeGitHub) ListPRs(context.Context, string) ([]model.PullRequest, bool, error) {
+	return f.prs, !f.incomplete, nil
 }
 
 func (f fakeGitHub) GetPR(context.Context, string, int) (model.PullRequest, error) {

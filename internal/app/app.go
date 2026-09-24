@@ -65,16 +65,9 @@ func New(githubProvider github.Provider, aiProvider ai.Provider, store cache.Sto
 }
 
 func (a *App) Refresh(ctx context.Context, repo string, includeDrafts bool) ([]model.PullRequest, error) {
-	prs, err := a.GitHub.ListOpenPRs(ctx, repo)
+	prs, complete, err := a.GitHub.ListPRs(ctx, repo)
 	if err != nil {
 		return nil, err
-	}
-	if includeDrafts {
-		drafts, err := a.GitHub.ListDraftPRs(ctx, repo)
-		if err != nil {
-			return nil, err
-		}
-		prs = append(prs, drafts...)
 	}
 	for i := range prs {
 		// Preserve any existing AI triage from the cache so that a manual
@@ -91,10 +84,22 @@ func (a *App) Refresh(ctx context.Context, repo string, includeDrafts bool) ([]m
 	for _, pr := range prs {
 		openNumbers[pr.Number] = true
 	}
-	if err := a.Cache.PruneRepo(repo, openNumbers); err != nil {
-		return nil, err
+	if complete {
+		if err := a.Cache.PruneRepo(repo, openNumbers); err != nil {
+			return nil, err
+		}
 	}
-	return a.InboxRepo(repo, SortUpdated), nil
+	inbox := a.InboxRepo(repo, SortUpdated)
+	if includeDrafts {
+		return inbox, nil
+	}
+	visible := inbox[:0]
+	for _, pr := range inbox {
+		if !pr.Draft {
+			visible = append(visible, pr)
+		}
+	}
+	return visible, nil
 }
 
 func (a *App) RefreshPR(ctx context.Context, repo string, number int) (model.PullRequest, error) {

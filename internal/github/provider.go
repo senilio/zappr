@@ -7,8 +7,7 @@ import (
 )
 
 type Provider interface {
-	ListOpenPRs(ctx context.Context, repo string) ([]model.PullRequest, error)
-	ListDraftPRs(ctx context.Context, repo string) ([]model.PullRequest, error)
+	ListPRs(ctx context.Context, repo string) ([]model.PullRequest, bool, error)
 	GetPR(ctx context.Context, repo string, number int) (model.PullRequest, error)
 	GetDiff(ctx context.Context, repo string, number int) (string, error)
 	GetCommitDiff(ctx context.Context, repo string, sha string) (string, error)

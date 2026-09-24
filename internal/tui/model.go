@@ -63,7 +63,6 @@ type Model struct {
 	summaryXOffset   int
 	lastFetch        time.Time
 	pollEvery        time.Duration
-	pollCount        int
 	width            int
 	height           int
 	theme            uitheme.Theme
@@ -145,7 +144,7 @@ func New(zappr *app.App, repo string, pollEvery time.Duration, themeName string,
 		return Model{}, fmt.Errorf("configure TUI actions: %w", err)
 	}
 	if pollEvery == 0 {
-		pollEvery = 2 * time.Minute
+		pollEvery = 30 * time.Second
 	}
 	vp := viewport.New(0, 0)
 	ivp := viewport.New(0, 0)

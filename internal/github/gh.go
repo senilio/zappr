@@ -18,47 +18,42 @@ type GHProvider struct {
 	Bin string
 }
 
+const prListLimit = 30
+
 func NewGHProvider() *GHProvider {
 	return &GHProvider{Bin: "gh"}
 }
 
-func (p *GHProvider) ListOpenPRs(ctx context.Context, repo string) ([]model.PullRequest, error) {
-	return p.listPRs(ctx, repo, "--search", "draft:false")
+func (p *GHProvider) ListPRs(ctx context.Context, repo string) ([]model.PullRequest, bool, error) {
+	prs, openComplete, err := p.listPRs(ctx, repo, "--search", "draft:false sort:updated-desc")
+	if err != nil {
+		return nil, false, err
+	}
+	drafts, draftsComplete, err := p.listPRs(ctx, repo, "--search", "draft:true sort:updated-desc")
+	if err != nil {
+		return nil, false, err
+	}
+	return append(prs, drafts...), openComplete && draftsComplete, nil
 }
 
-func (p *GHProvider) ListDraftPRs(ctx context.Context, repo string) ([]model.PullRequest, error) {
-	return p.listPRs(ctx, repo, "--draft")
-}
-
-func (p *GHProvider) listPRs(ctx context.Context, repo string, filter ...string) ([]model.PullRequest, error) {
+func (p *GHProvider) listPRs(ctx context.Context, repo string, filter ...string) ([]model.PullRequest, bool, error) {
 	args := append([]string{"pr", "list", "--repo", repo, "--state", "open"}, filter...)
-	args = append(args, "--json", "number,title,author,url,labels,additions,deletions,changedFiles,isDraft,state,headRefOid,statusCheckRollup,reviewDecision,updatedAt")
+	args = append(args, "--limit", strconv.Itoa(prListLimit), "--json", "number,title,author,url,labels,additions,deletions,changedFiles,isDraft,state,headRefOid,statusCheckRollup,reviewDecision,files,commits,comments,updatedAt")
 	out, err := p.run(ctx, args...)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	var raw []ghPR
 	if err := json.Unmarshal(out, &raw); err != nil {
-		return nil, fmt.Errorf("parse gh pr list: %w", err)
+		return nil, false, fmt.Errorf("parse gh pr list: %w", err)
 	}
 
 	prs := make([]model.PullRequest, 0, len(raw))
 	for _, item := range raw {
-		pr := item.toModel(repo)
-		files, commits, comments, err := p.getDetails(ctx, repo, pr.Number)
-		if err == nil {
-			pr.Files = files
-			pr.Commits = commits
-			pr.Comments = comments
-			pr.AtlantisPlan = model.LatestAtlantisPlan(comments)
-			if pr.ChangedFiles == 0 {
-				pr.ChangedFiles = len(files)
-			}
-		}
-		prs = append(prs, pr)
+		prs = append(prs, item.toModel(repo))
 	}
-	return prs, nil
+	return prs, len(raw) < prListLimit, nil
 }
 
 func (p *GHProvider) GetPR(ctx context.Context, repo string, number int) (model.PullRequest, error) {
@@ -167,34 +162,6 @@ func (p *GHProvider) MergePR(ctx context.Context, repo string, number int) error
 	return err
 }
 
-func (p *GHProvider) getDetails(ctx context.Context, repo string, number int) ([]model.ChangedFile, []model.PRCommit, []model.PRComment, error) {
-	out, err := p.run(ctx, "pr", "view", strconv.Itoa(number), "--repo", repo, "--json", "files,commits,comments")
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	var raw struct {
-		Files    []ghFile    `json:"files"`
-		Commits  []ghCommit  `json:"commits"`
-		Comments []ghComment `json:"comments"`
-	}
-	if err := json.Unmarshal(out, &raw); err != nil {
-		return nil, nil, nil, fmt.Errorf("parse gh pr details: %w", err)
-	}
-	files := make([]model.ChangedFile, 0, len(raw.Files))
-	for _, file := range raw.Files {
-		files = append(files, model.ChangedFile{Path: file.Path, Additions: file.Additions, Deletions: file.Deletions, Status: file.Status})
-	}
-	commits := make([]model.PRCommit, 0, len(raw.Commits))
-	for _, commit := range raw.Commits {
-		commits = append(commits, commit.toModel())
-	}
-	comments := make([]model.PRComment, 0, len(raw.Comments))
-	for _, comment := range raw.Comments {
-		comments = append(comments, comment.toModel())
-	}
-	return files, commits, comments, nil
-}
-
 func (p *GHProvider) run(ctx context.Context, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, p.Bin, args...)
 	var stderr bytes.Buffer
@@ -239,10 +206,10 @@ type ghLabel struct {
 }
 
 type ghFile struct {
-	Path      string `json:"path"`
-	Additions int    `json:"additions"`
-	Deletions int    `json:"deletions"`
-	Status    string `json:"status"`
+	Path       string `json:"path"`
+	Additions  int    `json:"additions"`
+	Deletions  int    `json:"deletions"`
+	ChangeType string `json:"changeType"`
 }
 
 type ghCommit struct {
@@ -275,9 +242,17 @@ func (p ghPR) toModel(repo string) model.PullRequest {
 	}
 	files := make([]model.ChangedFile, 0, len(p.Files))
 	for _, file := range p.Files {
-		files = append(files, model.ChangedFile{Path: file.Path, Additions: file.Additions, Deletions: file.Deletions, Status: file.Status})
+		status := strings.ToLower(file.ChangeType)
+		if status == "deleted" {
+			status = "removed"
+		}
+		files = append(files, model.ChangedFile{Path: file.Path, Additions: file.Additions, Deletions: file.Deletions, Status: status})
 	}
 	comments := toModelComments(p.Comments)
+	changedFiles := p.ChangedFiles
+	if changedFiles == 0 {
+		changedFiles = len(files)
+	}
 	return model.PullRequest{
 		Repo:           repo,
 		Number:         p.Number,
@@ -288,7 +263,7 @@ func (p ghPR) toModel(repo string) model.PullRequest {
 		Files:          files,
 		Additions:      p.Additions,
 		Deletions:      p.Deletions,
-		ChangedFiles:   p.ChangedFiles,
+		ChangedFiles:   changedFiles,
 		CIStatus:       statusFromRollup(p.StatusCheckRollup),
 		ReviewDecision: p.ReviewDecision,
 		Draft:          p.Draft,

@@ -25,7 +25,7 @@ func TestInitAndLoad(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.Refresh.Interval.Duration() != 2*time.Minute {
+	if cfg.Refresh.Interval.Duration() != 30*time.Second {
 		t.Fatalf("interval = %s", cfg.Refresh.Interval.Duration())
 	}
 	if _, ok := cfg.Actions["ai-review"]; ok {

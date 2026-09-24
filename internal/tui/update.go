@@ -198,13 +198,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tickCmd(m.pollEvery)
 		}
 		m.loading = true
-		m.pollCount++
-		if pr, ok := m.current(); ok && m.pollCount%5 != 0 {
-			m.message = "polling PR"
-			return m, tea.Batch(refreshPRCmd(m.app, pr), tickCmd(m.pollEvery))
-		}
 		m.message = "polling inbox"
-		return m, tea.Batch(refreshCmd(m.app, m.repo, !m.hideDrafts), tickCmd(m.pollEvery))
+		if pr, ok := m.current(); ok {
+			return m, tea.Sequence(refreshCmd(m.app, m.repo, !m.hideDrafts), refreshPRCmd(m.app, pr), tickCmd(m.pollEvery))
+		}
+		return m, tea.Sequence(refreshCmd(m.app, m.repo, !m.hideDrafts), tickCmd(m.pollEvery))
 
 	case uiTickMsg:
 		// Re-render every second so the "refreshed Xs ago" counter stays live.

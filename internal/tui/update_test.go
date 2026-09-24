@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -20,12 +22,8 @@ type commentRecordingGitHub struct {
 	approvals int
 }
 
-func (f *commentRecordingGitHub) ListOpenPRs(context.Context, string) ([]model.PullRequest, error) {
-	return nil, nil
-}
-
-func (f *commentRecordingGitHub) ListDraftPRs(context.Context, string) ([]model.PullRequest, error) {
-	return nil, nil
+func (f *commentRecordingGitHub) ListPRs(context.Context, string) ([]model.PullRequest, bool, error) {
+	return nil, true, nil
 }
 
 func (f *commentRecordingGitHub) GetPR(context.Context, string, int) (model.PullRequest, error) {
@@ -180,6 +178,16 @@ func TestNewLoadsSortModeFromConfig(t *testing.T) {
 	}
 	if m.sortMode != app.SortNumber {
 		t.Fatalf("sortMode = %s, want number", m.sortMode)
+	}
+}
+
+func TestNewDefaultsPollInterval(t *testing.T) {
+	m, err := New(app.New(nil, nil, nil), "org/repo", 0, "", config.Default())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if m.pollEvery != 30*time.Second {
+		t.Fatalf("pollEvery = %s, want 30s", m.pollEvery)
 	}
 }
 
@@ -1449,28 +1457,9 @@ func TestDiffMsgIgnoresStaleHeadResult(t *testing.T) {
 	}
 }
 
-func TestTickPollsSelectedPRMostIntervals(t *testing.T) {
+func TestTickPollsInboxAndSelectedPR(t *testing.T) {
 	m := modelWithPRs([]model.PullRequest{{Number: 1, Repo: "org/repo", Title: "first"}}, 0)
 	m.loading = false
-
-	next, cmd := m.Update(tickMsg{})
-	m = next.(Model)
-
-	if cmd == nil {
-		t.Fatal("tick should schedule polling commands")
-	}
-	if !m.loading {
-		t.Fatal("tick should mark model loading")
-	}
-	if m.message != "polling PR" {
-		t.Fatalf("message = %q, want polling PR", m.message)
-	}
-}
-
-func TestTickPollsInboxPeriodically(t *testing.T) {
-	m := modelWithPRs([]model.PullRequest{{Number: 1, Repo: "org/repo", Title: "first"}}, 0)
-	m.loading = false
-	m.pollCount = 4
 
 	next, cmd := m.Update(tickMsg{})
 	m = next.(Model)
@@ -1483,6 +1472,11 @@ func TestTickPollsInboxPeriodically(t *testing.T) {
 	}
 	if m.message != "polling inbox" {
 		t.Fatalf("message = %q, want polling inbox", m.message)
+	}
+	sequence := cmd()
+	commands := reflect.ValueOf(sequence)
+	if fmt.Sprintf("%T", sequence) != "tea.sequenceMsg" || commands.Len() != 3 {
+		t.Fatalf("tick command = %#v, want sequential inbox, selected PR, and next tick", sequence)
 	}
 }
 

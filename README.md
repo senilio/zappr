@@ -160,7 +160,7 @@ Example:
 
 ```yaml
 refresh:
-  interval: 2m0s
+  interval: 30s
 cache:
   path: /Users/you/.cache/zappr/zappr.db
 ```

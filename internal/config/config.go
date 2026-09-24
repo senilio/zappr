@@ -122,7 +122,7 @@ type CacheConfig struct {
 func Default() Config {
 	cachePath, _ := DefaultCachePath()
 	return Config{
-		Refresh: RefreshConfig{Interval: Duration(2 * time.Minute)},
+		Refresh: RefreshConfig{Interval: Duration(30 * time.Second)},
 		Cache:   CacheConfig{Path: cachePath},
 		Actions: DefaultActions(),
 	}
