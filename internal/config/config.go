@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -49,13 +50,13 @@ func (a ActionConfig) MarshalYAML() (any, error) {
 	if a.Keys != nil {
 		node.Content = append(node.Content,
 			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "keys"},
-			&yaml.Node{Kind: yaml.SequenceNode, Content: stringNodes(a.Keys)},
+			&yaml.Node{Kind: yaml.SequenceNode, Style: yaml.FlowStyle, Content: stringNodes(a.Keys)},
 		)
 	}
 	if a.Commands != nil {
 		node.Content = append(node.Content,
 			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "commands"},
-			&yaml.Node{Kind: yaml.SequenceNode, Content: stringNodes(a.Commands)},
+			&yaml.Node{Kind: yaml.SequenceNode, Style: yaml.FlowStyle, Content: stringNodes(a.Commands)},
 		)
 	}
 	if a.Comment != "" {
@@ -122,9 +123,11 @@ type CacheConfig struct {
 func Default() Config {
 	cachePath, _ := DefaultCachePath()
 	return Config{
-		Refresh: RefreshConfig{Interval: Duration(30 * time.Second)},
-		Cache:   CacheConfig{Path: cachePath},
-		Actions: DefaultActions(),
+		Refresh:    RefreshConfig{Interval: Duration(30 * time.Second)},
+		Cache:      CacheConfig{Path: cachePath},
+		Sort:       "number",
+		HideDrafts: true,
+		Actions:    DefaultActions(),
 	}
 }
 
@@ -134,7 +137,7 @@ func DefaultActions() map[string]ActionConfig {
 		"open-pr":             {Keys: []string{"o"}},
 		"copy-pr-url":         {Keys: []string{"C"}},
 		"refresh-pr":          {Keys: []string{"r"}},
-		"refresh-inbox":       {Keys: []string{"R"}, Commands: []string{"refresh-all"}},
+		"refresh-inbox":       {Keys: []string{"R"}},
 		"toggle-diff":         {Keys: []string{"v"}},
 		"open-diff-pager":     {Keys: []string{"V"}},
 		"toggle-side-by-side": {Keys: []string{"s"}},
@@ -147,6 +150,11 @@ func DefaultActions() map[string]ActionConfig {
 		"update-branch":       {Commands: []string{"update"}},
 		"request-changes":     {Commands: []string{"block"}},
 		"merge-pr":            {Commands: []string{"merge"}},
+		"atlantis-apply":      {Operation: "comment", Commands: []string{"aa"}, Comment: "atlantis apply", Confirm: &confirmed},
+		"atlantis-cancel":     {Operation: "comment", Commands: []string{"ac"}, Comment: "atlantis cancel", Confirm: &confirmed},
+		"atlantis-plan":       {Operation: "comment", Keys: []string{"P"}, Commands: []string{"ap"}, Comment: "atlantis plan", Confirm: &immediate},
+		"atlantis-unlock":     {Operation: "comment", Keys: []string{"U"}, Commands: []string{"au"}, Comment: "atlantis unlock", Confirm: &confirmed},
+		"review":              {Operation: "comment", Commands: []string{"review"}, Comment: "review", Confirm: &confirmed},
 	}
 }
 
@@ -406,6 +414,19 @@ func (d *Duration) UnmarshalYAML(value *yaml.Node) error {
 	return nil
 }
 
+func marshalConfig(cfg Config) ([]byte, error) {
+	var buffer bytes.Buffer
+	encoder := yaml.NewEncoder(&buffer)
+	encoder.SetIndent(2)
+	if err := encoder.Encode(cfg); err != nil {
+		return nil, err
+	}
+	if err := encoder.Close(); err != nil {
+		return nil, err
+	}
+	return buffer.Bytes(), nil
+}
+
 // Save writes cfg back to the default config path. Overwrites the whole file.
 func Save(cfg Config) error {
 	path, err := DefaultConfigPath()
@@ -415,7 +436,7 @@ func Save(cfg Config) error {
 	if err := privateDir(filepath.Dir(path)); err != nil {
 		return err
 	}
-	data, err := yaml.Marshal(cfg)
+	data, err := marshalConfig(cfg)
 	if err != nil {
 		return err
 	}
@@ -443,7 +464,7 @@ func Init(force bool) (string, error) {
 			return path, err
 		}
 	}
-	data, err := yaml.Marshal(Default())
+	data, err := marshalConfig(Default())
 	if err != nil {
 		return path, err
 	}

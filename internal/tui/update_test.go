@@ -241,7 +241,7 @@ func TestActionRegistryGenericActions(t *testing.T) {
 	configured := config.DefaultActions()
 	confirm := false
 	configured["deploy"] = config.ActionConfig{
-		Operation: "comment", Comment: "atlantis plan", Commands: []string{"ap"}, Confirm: &confirm,
+		Operation: "comment", Comment: "deploy preview", Commands: []string{"deploy"}, Confirm: &confirm,
 	}
 	configured["approve-now"] = config.ActionConfig{
 		Operation: "approve", Keys: []string{"A"}, Confirm: &confirm,
@@ -252,9 +252,9 @@ func TestActionRegistryGenericActions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	comment, ok := registry.exactCommand("ap")
-	if !ok || comment.Operation != "comment" || comment.Comment != "atlantis plan" || comment.Confirmation != confirmationNone {
-		t.Fatalf(":ap = %#v, %v", comment, ok)
+	comment, ok := registry.exactCommand("deploy")
+	if !ok || comment.Operation != "comment" || comment.Comment != "deploy preview" || comment.Confirmation != confirmationNone {
+		t.Fatalf(":deploy = %#v, %v", comment, ok)
 	}
 	approve, ok := registry.actionForKey(actionContextNormal, "A")
 	if !ok || approve.Operation != "approve" || approve.Label != "Approve selected PR without confirmation" {
@@ -968,7 +968,7 @@ func TestSettingsSavePreservesActions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("config.Load: %v", err)
 	}
-	if got.Sort != app.SortNumber.String() || got.Actions["hello"].Comment != "hello world" {
+	if got.Sort != app.SortUpdated.String() || got.Actions["hello"].Comment != "hello world" {
 		t.Fatalf("saved config = %#v, want sort and hello action", got)
 	}
 }
@@ -2181,7 +2181,11 @@ func TestRKeyRefreshesSelectedPR(t *testing.T) {
 }
 
 func TestRefreshAllCommandRefreshesInbox(t *testing.T) {
-	m := modelWithPRs([]model.PullRequest{{Number: 1, Repo: "org/repo", Title: "title", Author: "author"}}, 0)
+	cfg := config.Default()
+	action := cfg.Actions["refresh-inbox"]
+	action.Commands = []string{"refresh-all"}
+	cfg.Actions["refresh-inbox"] = action
+	m, _ := configuredModel(t, cfg, true)
 	m.mode = ModeCommand
 	m.prevMode = ModeDetail
 	m.commandInput = "refresh-all"

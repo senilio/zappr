@@ -130,6 +130,88 @@ func TestLoadCreatesConfig(t *testing.T) {
 	if strings.Contains(string(data), "ai:") || strings.Contains(string(data), "trust:") {
 		t.Fatalf("generated config contains removed settings: %q", data)
 	}
+	want := `refresh:
+  interval: 30s
+cache:
+  path: ` + cfg.Cache.Path + `
+sort: number
+hide_drafts: true
+actions:
+  approve:
+    operation: approve
+    keys: [a]
+    confirm: true
+  approve-now:
+    operation: approve
+    keys: [A]
+    confirm: false
+  atlantis-apply:
+    operation: comment
+    commands: [aa]
+    comment: atlantis apply
+    confirm: true
+  atlantis-cancel:
+    operation: comment
+    commands: [ac]
+    comment: atlantis cancel
+    confirm: true
+  atlantis-plan:
+    operation: comment
+    keys: [P]
+    commands: [ap]
+    comment: atlantis plan
+    confirm: false
+  atlantis-unlock:
+    operation: comment
+    keys: [U]
+    commands: [au]
+    comment: atlantis unlock
+    confirm: true
+  close-pr:
+    commands: [close]
+  comment:
+    operation: comment
+    keys: [c]
+  copy-pr-url:
+    keys: [C]
+  merge-pr:
+    commands: [merge]
+  open-diff-pager:
+    keys: [V]
+  open-pr:
+    keys: [o]
+  refresh-inbox:
+    keys: [R]
+  refresh-pr:
+    keys: [r]
+  request-changes:
+    commands: [block]
+  review:
+    operation: comment
+    commands: [review]
+    comment: review
+    confirm: true
+  toggle-diff:
+    keys: [v]
+  toggle-draft:
+    commands: [draft]
+  toggle-file-content:
+    keys: [x]
+  toggle-side-by-side:
+    keys: [s]
+  update-branch:
+    commands: [update]
+`
+	if string(data) != want {
+		t.Fatalf("generated config:\n%s\nwant:\n%s", data, want)
+	}
+	loaded, err := Load()
+	if err != nil {
+		t.Fatalf("reload generated config: %v", err)
+	}
+	if !reflect.DeepEqual(loaded, cfg) {
+		t.Fatalf("reloaded config = %#v, want %#v", loaded, cfg)
+	}
 }
 
 func TestActionDefaultsSeparateFixedActions(t *testing.T) {
@@ -365,7 +447,7 @@ func TestSaveGenericActions(t *testing.T) {
 	if strings.Contains(string(data), "move-down:") {
 		t.Fatal("generated config contains fixed move-down action")
 	}
-	for _, field := range []string{"deploy-preview:\n", "operation: comment\n", "keys:\n", "commands:\n", "comment: deploy preview\n", "confirm: false\n", "description: Deploy preview\n"} {
+	for _, field := range []string{"deploy-preview:\n", "operation: comment\n", "keys: [P]\n", "commands: [preview]\n", "comment: deploy preview\n", "confirm: false\n", "description: Deploy preview\n"} {
 		if !strings.Contains(string(data), field) {
 			t.Fatalf("generated config missing %q: %q", field, data)
 		}
@@ -405,7 +487,7 @@ func TestSaveRoundTripsEmptyActionAliases(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read config: %v", err)
 	}
-	if !strings.Contains(string(data), "refresh-inbox:\n        keys: []") {
+	if !strings.Contains(string(data), "refresh-inbox:\n    keys: []") {
 		t.Fatalf("refresh-inbox = %q, want explicit empty keys", data)
 	}
 
