@@ -728,17 +728,23 @@ func TestCommandPaletteConfirmsExactAlias(t *testing.T) {
 	}
 }
 
-func TestCommandPaletteMatchesDescription(t *testing.T) {
+func TestCommandPaletteMatchesAliasNotDescription(t *testing.T) {
 	cfg := config.Default()
+	cfg.Actions["atlantis-plan"] = config.ActionConfig{Operation: "comment", Commands: []string{"ap"}, Comment: "atlantis plan"}
 	cfg.Actions["atlantis-apply"] = config.ActionConfig{Operation: "comment", Commands: []string{"aa"}, Comment: "atlantis apply"}
 	m, _ := configuredModel(t, cfg, true)
 	m.width = 100
 	m.height = 40
 
-	m = openCommandAndType(m, "apply")
+	// Typing the "ap" alias must match atlantis-plan only. It must not also
+	// match atlantis-apply just because its description contains "ap".
+	m = openCommandAndType(m, "ap")
 	panel := stripANSI(m.commandPanel())
-	if !strings.Contains(panel, `:aa  comment "atlantis apply"`) || strings.Contains(panel, "[confirm]") {
-		t.Fatalf("palette = %q", panel)
+	if !strings.Contains(panel, `:ap  comment "atlantis plan"`) {
+		t.Fatalf("palette = %q, want :ap match for atlantis-plan", panel)
+	}
+	if strings.Contains(panel, ":aa") {
+		t.Fatalf("palette = %q, should not match atlantis-apply via description", panel)
 	}
 	m = pressSpecial(m, tea.KeyEnter)
 	if m.mode != ModeConfirmCommand {

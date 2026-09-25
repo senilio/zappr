@@ -284,7 +284,7 @@ func (r actionRegistry) matchingCommands(prefix string) []commandMatch {
 	var matches []commandMatch
 	for _, action := range r.actions {
 		for _, command := range action.Commands {
-			if strings.HasPrefix(strings.ToLower(command), prefix) || strings.Contains(strings.ToLower(actionDisplayLabel(action)), prefix) {
+			if strings.HasPrefix(strings.ToLower(command), prefix) {
 				matches = append(matches, commandMatch{action: action, alias: command})
 				break
 			}
