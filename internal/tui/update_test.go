@@ -64,6 +64,19 @@ func (f *commentRecordingGitHub) RequestChanges(context.Context, string, int, st
 
 func (f *commentRecordingGitHub) MergePR(context.Context, string, int) error { return nil }
 
+func TestMergePRCmdReportsMergeRequested(t *testing.T) {
+	provider := &commentRecordingGitHub{}
+	msg := mergePRCmd(app.New(provider, nil, nil), model.PullRequest{Repo: "owner/repo", Number: 123})()
+
+	action, ok := msg.(actionMsg)
+	if !ok {
+		t.Fatalf("message = %T, want actionMsg", msg)
+	}
+	if action.message != "merge requested for owner/repo#123" {
+		t.Fatalf("message = %q, want merge requested status", action.message)
+	}
+}
+
 func TestFilterPRsShowsDraftsByDefault(t *testing.T) {
 	prs := []model.PullRequest{
 		{Number: 1, Draft: true},

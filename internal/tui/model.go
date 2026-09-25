@@ -406,7 +406,7 @@ func mergePRCmd(a *app.App, pr model.PullRequest) tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		err := a.MergePR(ctx, pr.Repo, pr.Number)
-		return actionMsg{message: fmt.Sprintf("merged %s#%d", pr.Repo, pr.Number), err: err}
+		return actionMsg{message: fmt.Sprintf("merge requested for %s#%d", pr.Repo, pr.Number), err: err}
 	}
 }
 

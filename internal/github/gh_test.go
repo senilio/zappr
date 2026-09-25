@@ -88,6 +88,31 @@ func TestApproveOmitsBodyWhenEmpty(t *testing.T) {
 	}
 }
 
+func TestMergePREnablesAutoMerge(t *testing.T) {
+	dir := t.TempDir()
+	argsPath := filepath.Join(dir, "args")
+	bin := filepath.Join(dir, "gh")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + testShellQuote(argsPath) + "\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake gh: %v", err)
+	}
+
+	provider := &GHProvider{Bin: bin}
+	if err := provider.MergePR(context.Background(), "owner/repo", 123); err != nil {
+		t.Fatalf("MergePR: %v", err)
+	}
+
+	data, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatalf("read args: %v", err)
+	}
+	got := strings.Fields(string(data))
+	want := []string{"pr", "merge", "123", "--repo", "owner/repo", "--auto", "--squash", "--delete-branch"}
+	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("args = %#v, want %#v", got, want)
+	}
+}
+
 func testShellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }

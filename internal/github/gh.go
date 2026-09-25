@@ -158,7 +158,7 @@ func (p *GHProvider) RequestChanges(ctx context.Context, repo string, number int
 }
 
 func (p *GHProvider) MergePR(ctx context.Context, repo string, number int) error {
-	_, err := p.run(ctx, "pr", "merge", strconv.Itoa(number), "--repo", repo, "--squash", "--delete-branch")
+	_, err := p.run(ctx, "pr", "merge", strconv.Itoa(number), "--repo", repo, "--auto", "--squash", "--delete-branch")
 	return err
 }
 
