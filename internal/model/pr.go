@@ -72,8 +72,11 @@ type PullRequest struct {
 	Commits        []PRCommit
 	Comments       []PRComment
 	AtlantisPlan   *AtlantisPlan `json:"atlantis_plan,omitempty"`
-	Triage         Triage
-	Skipped        bool
+	// DetailsLoaded reports whether Commits, Comments, and AtlantisPlan were
+	// fetched; inbox list refreshes do not include them.
+	DetailsLoaded bool `json:"details_loaded,omitempty"`
+	Triage        Triage
+	Skipped       bool
 }
 
 func (pr PullRequest) Size() int {

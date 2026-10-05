@@ -24,11 +24,11 @@ func TestParseTimeInvalid(t *testing.T) {
 	}
 }
 
-func TestListPRsFetchesCompletePRsWithoutDetailCalls(t *testing.T) {
+func TestListPRsUsesSingleListCallWithoutCommitsOrComments(t *testing.T) {
 	dir := t.TempDir()
 	callsPath := filepath.Join(dir, "calls")
 	bin := filepath.Join(dir, "gh")
-	response := `[{"number":7,"title":"Draft","isDraft":true,"files":[{"path":"old.go","additions":0,"deletions":4,"changeType":"DELETED"}],"commits":[{"oid":"abc","messageHeadline":"change","committedDate":"2024-01-02T03:04:05Z","authors":[{"user":{"login":"octocat"}}]}],"comments":[{"author":{"login":"octocat"},"body":"ready","createdAt":"2024-01-02T03:04:05Z"}]}]`
+	response := `[{"number":7,"title":"Draft","isDraft":true,"files":[{"path":"old.go","additions":0,"deletions":4,"changeType":"DELETED"}]}]`
 	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + testShellQuote(callsPath) + "\nprintf '%s' " + testShellQuote(response) + "\n"
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatalf("write fake gh: %v", err)
@@ -41,7 +41,7 @@ func TestListPRsFetchesCompletePRsWithoutDetailCalls(t *testing.T) {
 	if !complete {
 		t.Fatal("complete = false, want true")
 	}
-	if len(prs) != 2 || !prs[0].Draft || len(prs[0].Files) != 1 || len(prs[0].Commits) != 1 || len(prs[0].Comments) != 1 {
+	if len(prs) != 1 || !prs[0].Draft || len(prs[0].Files) != 1 {
 		t.Fatalf("PRs not fully decoded: %#v", prs)
 	}
 	if prs[0].Files[0].Status != "removed" {
@@ -53,10 +53,9 @@ func TestListPRsFetchesCompletePRsWithoutDetailCalls(t *testing.T) {
 		t.Fatalf("read calls: %v", err)
 	}
 	got := strings.Split(strings.TrimSpace(string(data)), "\n")
-	fields := "number,title,author,url,labels,additions,deletions,changedFiles,isDraft,state,headRefOid,statusCheckRollup,reviewDecision,files,commits,comments,updatedAt"
+	fields := "number,title,author,url,labels,additions,deletions,changedFiles,isDraft,state,headRefOid,statusCheckRollup,reviewDecision,files,updatedAt"
 	want := []string{
-		"pr list --repo owner/repo --state open --search draft:false sort:updated-desc --limit 30 --json " + fields,
-		"pr list --repo owner/repo --state open --search draft:true sort:updated-desc --limit 30 --json " + fields,
+		"pr list --repo owner/repo --state open --search sort:updated-desc --limit 60 --json " + fields,
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("args = %#v, want %#v", got, want)

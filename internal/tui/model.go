@@ -80,6 +80,7 @@ type Model struct {
 	statusSpinner      spinner.Model
 	statusToken        int
 	diffLoadKey        string
+	detailsLoadKey     string
 	commitDiffKey      string
 	renderedCommitDiff string
 	diffEnabled        bool

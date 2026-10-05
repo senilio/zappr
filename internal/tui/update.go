@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -58,7 +59,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.statusActive {
 			cmds = append(cmds, m.finishStatus("refreshed", false))
 		}
-		if cmd := m.autoDiffCmd(); cmd != nil {
+		if cmd := m.selectionCmd(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
 		// Sync summary viewport content so TotalLineCount is accurate for
@@ -95,7 +96,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.statusActive {
 			cmds = append(cmds, m.finishStatus("refreshed PR", false))
 		}
-		if cmd := m.autoDiffCmd(); cmd != nil {
+		if cmd := m.selectionCmd(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
 		m.syncSummaryVP()
@@ -319,7 +320,7 @@ func (m Model) handleMouseClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			m.selected = idx
 			m.resizeViewports()
 			m.resetPRViewState()
-			return m, m.autoDiffCmd()
+			return m, m.selectionCmd()
 		}
 	case FocusSummary:
 		if _, ok := m.current(); ok {
@@ -485,7 +486,7 @@ func (m Model) executeAction(action tuiAction) (tea.Model, tea.Cmd) {
 			if m.selected != 0 {
 				m.selected = 0
 				m.resetPRViewState()
-				return m, m.autoDiffCmd()
+				return m, m.selectionCmd()
 			}
 		}
 	case "go-bottom":
@@ -499,7 +500,7 @@ func (m Model) executeAction(action tuiAction) (tea.Model, tea.Cmd) {
 			if last >= 0 && m.selected != last {
 				m.selected = last
 				m.resetPRViewState()
-				return m, m.autoDiffCmd()
+				return m, m.selectionCmd()
 			}
 		}
 	case "open-pr":
@@ -543,7 +544,7 @@ func (m Model) executeAction(action tuiAction) (tea.Model, tea.Cmd) {
 			if m.selected < len(m.prs)-1 {
 				m.selected++
 				m.resetPRViewState()
-				return m, m.autoDiffCmd()
+				return m, m.selectionCmd()
 			}
 		}
 	case "move-up":
@@ -573,7 +574,7 @@ func (m Model) executeAction(action tuiAction) (tea.Model, tea.Cmd) {
 			if m.selected > 0 {
 				m.selected--
 				m.resetPRViewState()
-				return m, m.autoDiffCmd()
+				return m, m.selectionCmd()
 			}
 		}
 	case "pan-left":
@@ -647,7 +648,7 @@ func (m Model) executeAction(action tuiAction) (tea.Model, tea.Cmd) {
 			m.mode = ModeDetail
 			m.focus = FocusSummary
 			m.resizeViewports()
-			return m, m.autoDiffCmd()
+			return m, m.selectionCmd()
 		}
 	case "back-to-inbox":
 		m.mode = ModeInbox
@@ -701,7 +702,7 @@ func (m Model) executeAction(action tuiAction) (tea.Model, tea.Cmd) {
 				m.mode = ModeDetail
 			}
 			m.syncDiffVP()
-			return m, m.autoDiffCmd()
+			return m, m.selectionCmd()
 		}
 		// Turned off: unfocus diff pane if it was focused.
 		if m.focus == FocusDiff {
@@ -836,6 +837,26 @@ func prRefreshKey(pr model.PullRequest) string {
 		key += "@" + pr.HeadRefOID
 	}
 	return key
+}
+
+// selectionCmd loads whatever the currently selected PR still needs.
+func (m *Model) selectionCmd() tea.Cmd {
+	return tea.Batch(m.autoDiffCmd(), m.autoDetailsCmd())
+}
+
+// autoDetailsCmd fetches commits and comments for the selected PR when the
+// inbox list refresh did not include them. It fetches each PR version once.
+func (m *Model) autoDetailsCmd() tea.Cmd {
+	pr, ok := m.current()
+	if !ok || pr.DetailsLoaded {
+		return nil
+	}
+	key := fmt.Sprintf("%s#%d@%s", pr.Repo, pr.Number, pr.UpdatedAt.Format(time.RFC3339Nano))
+	if m.detailsLoadKey == key {
+		return nil
+	}
+	m.detailsLoadKey = key
+	return refreshPRCmd(m.app, pr)
 }
 
 // autoDiffCmd fetches the diff for the currently selected PR if diff is

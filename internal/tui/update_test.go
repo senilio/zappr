@@ -2317,3 +2317,25 @@ func contains(s, sub string) bool {
 			return false
 		}())
 }
+
+func TestAutoDetailsCmdFetchesMissingDetailsOnce(t *testing.T) {
+	m := modelWithPRs([]model.PullRequest{
+		{Number: 1, Repo: "org/repo", DetailsLoaded: true},
+		{Number: 2, Repo: "org/repo"},
+	}, 0)
+
+	if cmd := m.autoDetailsCmd(); cmd != nil {
+		t.Fatal("loaded PR should not refetch details")
+	}
+	m.selected = 1
+	if cmd := m.autoDetailsCmd(); cmd == nil {
+		t.Fatal("PR without details should fetch them")
+	}
+	if cmd := m.autoDetailsCmd(); cmd != nil {
+		t.Fatal("details fetch should not repeat for the same PR version")
+	}
+	m.prs[1].UpdatedAt = time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	if cmd := m.autoDetailsCmd(); cmd == nil {
+		t.Fatal("updated PR should fetch details again")
+	}
+}

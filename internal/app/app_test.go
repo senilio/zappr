@@ -156,6 +156,56 @@ func TestRefreshPreservesAITriage(t *testing.T) {
 	}
 }
 
+func TestRefreshKeepsCachedDetailsWhenPRUnchanged(t *testing.T) {
+	store := cache.NewMemoryStore()
+	updated := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	if err := store.Put(model.PullRequest{
+		Repo:          "owner/repo",
+		Number:        1,
+		UpdatedAt:     updated,
+		Commits:       []model.PRCommit{{OID: "abc"}},
+		Comments:      []model.PRComment{{Body: "hi"}},
+		AtlantisPlan:  &model.AtlantisPlan{},
+		DetailsLoaded: true,
+	}); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	provider := fakeGitHub{prs: []model.PullRequest{{Repo: "owner/repo", Number: 1, Title: "fresh", UpdatedAt: updated}}}
+	zappr := New(provider, ai.NoopProvider{}, store)
+
+	prs, err := zappr.Refresh(context.Background(), "owner/repo", false)
+	if err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	if len(prs) != 1 || prs[0].Title != "fresh" || !prs[0].DetailsLoaded || len(prs[0].Commits) != 1 || len(prs[0].Comments) != 1 || prs[0].AtlantisPlan == nil {
+		t.Fatalf("cached details not preserved: %#v", prs)
+	}
+}
+
+func TestRefreshDropsCachedDetailsWhenPRUpdated(t *testing.T) {
+	store := cache.NewMemoryStore()
+	updated := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	if err := store.Put(model.PullRequest{
+		Repo:          "owner/repo",
+		Number:        1,
+		UpdatedAt:     updated,
+		Commits:       []model.PRCommit{{OID: "abc"}},
+		DetailsLoaded: true,
+	}); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	provider := fakeGitHub{prs: []model.PullRequest{{Repo: "owner/repo", Number: 1, UpdatedAt: updated.Add(time.Minute)}}}
+	zappr := New(provider, ai.NoopProvider{}, store)
+
+	prs, err := zappr.Refresh(context.Background(), "owner/repo", false)
+	if err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	if len(prs) != 1 || prs[0].DetailsLoaded || len(prs[0].Commits) != 0 {
+		t.Fatalf("stale details kept: %#v", prs)
+	}
+}
+
 func TestRefreshPRPreservesAITriage(t *testing.T) {
 	store := cache.NewMemoryStore()
 	aiResult := &model.AITriage{Summary: "looks fine"}

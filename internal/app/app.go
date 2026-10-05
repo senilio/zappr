@@ -73,8 +73,18 @@ func (a *App) Refresh(ctx context.Context, repo string, includeDrafts bool) ([]m
 		// Preserve any existing AI triage from the cache so that a manual
 		// "r" analysis is not silently wiped on the next background refresh.
 		// AI is only (re-)run by Analyze, which has the full diff available.
-		if cached, err := a.Cache.Get(prs[i].Repo, prs[i].Number); err == nil && cached.Triage.AI != nil {
-			prs[i].Triage.AI = cached.Triage.AI
+		if cached, err := a.Cache.Get(prs[i].Repo, prs[i].Number); err == nil {
+			if cached.Triage.AI != nil {
+				prs[i].Triage.AI = cached.Triage.AI
+			}
+			// List refreshes omit commits and comments; keep the cached ones
+			// until the PR changes, after which GetPR must refetch them.
+			if cached.DetailsLoaded && cached.UpdatedAt.Equal(prs[i].UpdatedAt) {
+				prs[i].Commits = cached.Commits
+				prs[i].Comments = cached.Comments
+				prs[i].AtlantisPlan = cached.AtlantisPlan
+				prs[i].DetailsLoaded = true
+			}
 		}
 		if err := a.Cache.Put(prs[i]); err != nil {
 			return nil, err

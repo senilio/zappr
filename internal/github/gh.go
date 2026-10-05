@@ -18,27 +18,16 @@ type GHProvider struct {
 	Bin string
 }
 
-const prListLimit = 30
+const prListLimit = 60
 
 func NewGHProvider() *GHProvider {
 	return &GHProvider{Bin: "gh"}
 }
 
 func (p *GHProvider) ListPRs(ctx context.Context, repo string) ([]model.PullRequest, bool, error) {
-	prs, openComplete, err := p.listPRs(ctx, repo, "--search", "draft:false sort:updated-desc")
-	if err != nil {
-		return nil, false, err
-	}
-	drafts, draftsComplete, err := p.listPRs(ctx, repo, "--search", "draft:true sort:updated-desc")
-	if err != nil {
-		return nil, false, err
-	}
-	return append(prs, drafts...), openComplete && draftsComplete, nil
-}
-
-func (p *GHProvider) listPRs(ctx context.Context, repo string, filter ...string) ([]model.PullRequest, bool, error) {
-	args := append([]string{"pr", "list", "--repo", repo, "--state", "open"}, filter...)
-	args = append(args, "--limit", strconv.Itoa(prListLimit), "--json", "number,title,author,url,labels,additions,deletions,changedFiles,isDraft,state,headRefOid,statusCheckRollup,reviewDecision,files,commits,comments,updatedAt")
+	// Commits and comments are omitted: their nested connections dominate the
+	// GraphQL cost of a list query. GetPR fetches them for the selected PR.
+	args := []string{"pr", "list", "--repo", repo, "--state", "open", "--search", "sort:updated-desc", "--limit", strconv.Itoa(prListLimit), "--json", "number,title,author,url,labels,additions,deletions,changedFiles,isDraft,state,headRefOid,statusCheckRollup,reviewDecision,files,updatedAt"}
 	out, err := p.run(ctx, args...)
 	if err != nil {
 		return nil, false, err
@@ -65,7 +54,9 @@ func (p *GHProvider) GetPR(ctx context.Context, repo string, number int) (model.
 	if err := json.Unmarshal(out, &raw); err != nil {
 		return model.PullRequest{}, fmt.Errorf("parse gh pr view: %w", err)
 	}
-	return raw.toModel(repo), nil
+	pr := raw.toModel(repo)
+	pr.DetailsLoaded = true
+	return pr, nil
 }
 
 func (p *GHProvider) GetDiff(ctx context.Context, repo string, number int) (string, error) {
