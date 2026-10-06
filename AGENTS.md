@@ -13,6 +13,11 @@ zappr is a Go terminal app for pull request triage. It uses Bubble Tea for TUI, 
 - TUI panes must hard-truncate long lines; no soft wrapping in Inbox, Summary, or Diff panes. Diff uses horizontal scrolling.
 - Prefer `gh` CLI integration until a concrete reason exists to replace it.
 
+## Git Workflow
+
+- Work on a normal branch in the main checkout; do not use git worktrees.
+- When the work is done and validated, merge the branch into local `main` and delete the branch.
+
 ## Development Commands
 
 ```sh
