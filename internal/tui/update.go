@@ -866,6 +866,9 @@ func prRefreshKey(pr model.PullRequest) string {
 
 // selectionCmd loads whatever the currently selected PR still needs.
 func (m *Model) selectionCmd() tea.Cmd {
+	if m.summaryMode == SummaryModeCommits {
+		return tea.Batch(m.autoDiffCmd(), m.autoDetailsCmd(), m.autoCommitDiffCmd())
+	}
 	return tea.Batch(m.autoDiffCmd(), m.autoDetailsCmd())
 }
 

@@ -1,14 +1,101 @@
 package tui
 
 import (
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 	"github.com/senilio/zappr/internal/app"
+	"github.com/senilio/zappr/internal/cache"
 	"github.com/senilio/zappr/internal/model"
+	uitheme "github.com/senilio/zappr/internal/tui/theme"
 )
+
+func TestSelectedCommitHighlightsBothRows(t *testing.T) {
+	profile := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	t.Cleanup(func() { lipgloss.SetColorProfile(profile) })
+	pr := model.PullRequest{Commits: []model.PRCommit{
+		{OID: "first", Headline: "selected headline", Author: "selected author"},
+		{OID: "second", Headline: "other headline", Author: "other author"},
+	}}
+	m := modelWithPRs([]model.PullRequest{pr}, 0)
+	m.theme = uitheme.New(uitheme.DarkDefault(), termenv.TrueColor, false)
+	for _, index := range []int{0, 1} {
+		m.commitIndex = index
+		var b strings.Builder
+		m.writeCommitSummary(&b, pr, 80)
+		rows := strings.Split(strings.TrimSuffix(b.String(), "\n"), "\n")
+		for i, commit := range pr.Commits {
+			style := m.theme.Styles.Muted
+			if i == index {
+				style = m.theme.Styles.TitleStrong
+			}
+			if !strings.Contains(rows[i*2], style.Render(commit.Headline)) {
+				t.Errorf("commit %d headline does not use expected selection style: %q", i, rows[i*2])
+			}
+			if rows[i*2+1] != style.Render(commit.Author) {
+				t.Errorf("commit %d metadata does not use expected selection style: %q", i, rows[i*2+1])
+			}
+		}
+	}
+}
+
+func TestPRSelectionLoadsCommitDiff(t *testing.T) {
+	for _, detailsLoaded := range []bool{true, false} {
+		t.Run(fmt.Sprintf("detailsLoaded=%t", detailsLoaded), func(t *testing.T) {
+			selected := model.PullRequest{Repo: "org/repo", Number: 2, DetailsLoaded: detailsLoaded}
+			commits := []model.PRCommit{{OID: "newest", Date: time.Now()}, {OID: "older"}}
+			if detailsLoaded {
+				selected.Commits = commits
+			}
+			m := modelWithPRs([]model.PullRequest{{Repo: "org/repo", Number: 1, DetailsLoaded: true}, selected}, 0)
+			provider := &commentRecordingGitHub{}
+			m.app = app.New(provider, nil, cache.NewMemoryStore())
+			m.diffEnabled = true
+			m.summaryMode = SummaryModeCommits
+			m.focus = FocusInbox
+			m.commitDiffKey = "previous"
+			m.renderedCommitDiff = "previous diff"
+			next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+			m = next.(Model)
+			if cmd != nil {
+				runCmd(cmd)
+			}
+			if !detailsLoaded {
+				if len(provider.commitDiffSHAs) != 0 {
+					t.Fatal("requested commit diff before details arrived")
+				}
+				selected.DetailsLoaded = true
+				selected.Commits = commits
+				next, cmd = m.Update(refreshPRMsg{pr: selected})
+				m = next.(Model)
+				if cmd != nil {
+					runCmd(cmd)
+				}
+			}
+			if !reflect.DeepEqual(provider.commitDiffSHAs, []string{"newest"}) {
+				t.Fatalf("requested commit diffs = %v, want [newest]", provider.commitDiffSHAs)
+			}
+			next, _ = m.Update(commitDiffMsg{sha: "newest", rendered: "loaded commit diff"})
+			m = next.(Model)
+			if m.renderedCommitDiff != "loaded commit diff" || strings.Contains(stripANSI(m.diffPanel(80, 20)), "loading commit diff") {
+				t.Fatal("selected commit diff still loading after response")
+			}
+			if cmd := m.selectionCmd(); cmd != nil {
+				runCmd(cmd)
+			}
+			if len(provider.commitDiffSHAs) != 1 {
+				t.Fatal("repeated selection requested the same commit again")
+			}
+		})
+	}
+}
 
 func TestSummaryChronologyAndTimestamps(t *testing.T) {
 	now := time.Now()

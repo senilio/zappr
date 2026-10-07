@@ -1138,7 +1138,11 @@ func (m Model) writeCommitSummary(b *strings.Builder, pr model.PullRequest, inne
 		if !commit.Date.IsZero() {
 			meta += " · " + summaryTimestamp(commit.Date, now)
 		}
-		b.WriteString(s.Muted.Render(meta) + "\n")
+		if selected {
+			b.WriteString(s.TitleStrong.Render(meta) + "\n")
+		} else {
+			b.WriteString(s.Muted.Render(meta) + "\n")
+		}
 	}
 }
 
