@@ -1117,7 +1117,8 @@ func (m Model) writeCommitSummary(b *strings.Builder, pr model.PullRequest, inne
 		b.WriteString(s.Muted.Render("no commits") + "\n")
 		return
 	}
-	for i, commit := range pr.Commits {
+	now := time.Now()
+	for i, commit := range newestCommits(pr.Commits) {
 		sha := commit.OID
 		if len(sha) > 7 {
 			sha = sha[:7]
@@ -1135,7 +1136,7 @@ func (m Model) writeCommitSummary(b *strings.Builder, pr model.PullRequest, inne
 		fmt.Fprintf(b, "%s\n", fmt.Sprintf("%s %s", shaStyled, headline))
 		meta := commit.Author
 		if !commit.Date.IsZero() {
-			meta += " · " + commit.Date.Format("2006-01-02")
+			meta += " · " + summaryTimestamp(commit.Date, now)
 		}
 		b.WriteString(s.Muted.Render(meta) + "\n")
 	}
@@ -1147,10 +1148,11 @@ func (m Model) writeCommentSummary(b *strings.Builder, pr model.PullRequest, inn
 		b.WriteString(s.Muted.Render("no conversation comments") + "\n")
 		return
 	}
-	for i, comment := range pr.Comments {
+	now := time.Now()
+	for i, comment := range newestComments(pr.Comments) {
 		meta := comment.Author
 		if !comment.CreatedAt.IsZero() {
-			meta += " · " + comment.CreatedAt.Format("2006-01-02 15:04")
+			meta += " · " + summaryTimestamp(comment.CreatedAt, now)
 		}
 		b.WriteString(truncatePaneLineWidth(s.File.Render(meta), innerW) + "\n")
 		for _, line := range strings.Split(comment.Body, "\n") {
@@ -1408,33 +1410,22 @@ func truncateANSIWidth(s string, maxW int) string {
 	return b.String()
 }
 
-// leftTruncatePath truncates a plain file path to fit within maxW columns by
-// removing leading path segments and prefixing with "…". If the full path fits,
-// it is returned unchanged. The result is always a plain string (no ANSI).
+// leftTruncatePath keeps the longest trailing path that fits within maxW terminal
+// columns, prefixing truncated paths with "…" without splitting graphemes.
 func leftTruncatePath(path string, maxW int) string {
 	if maxW <= 0 {
 		return ""
 	}
-	if len(path) <= maxW {
+	width := ansi.StringWidth(path)
+	if width <= maxW {
 		return path
 	}
-	// Split on "/" and rebuild from the right until it fits.
-	segments := strings.Split(path, "/")
-	for i := 1; i < len(segments); i++ {
-		candidate := "…/" + strings.Join(segments[i:], "/")
-		if len(candidate) <= maxW {
-			return candidate
-		}
+	for width > maxW-1 {
+		cluster, clusterWidth := ansi.FirstGraphemeCluster(path, ansi.GraphemeWidth)
+		path = path[len(cluster):]
+		width -= clusterWidth
 	}
-	// Even the last segment doesn't fit — hard-truncate from the right with ellipsis.
-	last := segments[len(segments)-1]
-	if maxW <= 1 {
-		return "…"
-	}
-	if len(last) <= maxW-1 {
-		return "…" + last
-	}
-	return "…" + last[len(last)-(maxW-1):]
+	return "…" + path
 }
 
 // renderModalBox renders a centered modal box (border + padding) without

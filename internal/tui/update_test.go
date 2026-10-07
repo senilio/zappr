@@ -27,6 +27,7 @@ type commentRecordingGitHub struct {
 	drafts           []bool
 	actionErr        error
 	listedPRs        []model.PullRequest
+	commitDiffSHAs   []string
 }
 
 func (f *commentRecordingGitHub) ListPRs(context.Context, string) ([]model.PullRequest, bool, error) {
@@ -41,7 +42,8 @@ func (f *commentRecordingGitHub) GetDiff(context.Context, string, int) (string, 
 	return "", nil
 }
 
-func (f *commentRecordingGitHub) GetCommitDiff(context.Context, string, string) (string, error) {
+func (f *commentRecordingGitHub) GetCommitDiff(_ context.Context, _ string, sha string) (string, error) {
+	f.commitDiffSHAs = append(f.commitDiffSHAs, sha)
 	return "", nil
 }
 
@@ -1976,21 +1978,55 @@ func TestLeftTruncatePath(t *testing.T) {
 	}{
 		// Fits: no truncation.
 		{"sa.tf", 20, "sa.tf"},
-		// First segment stripped.
-		{"terraform/accounts/sa.tf", 20, "…/accounts/sa.tf"},
-		// Two segments stripped.
-		{"terraform/accounts/emea/eks/sa.tf", 20, "…/emea/eks/sa.tf"},
-		// Falls back to last segment only.
-		{"terraform/accounts/emea/eks/sa.tf", 10, "…/sa.tf"},
+		// Whole trailing directories fit exactly.
+		{"terraform/accounts/sa.tf", 16, "…/accounts/sa.tf"},
+		{"terraform/accounts/emea/eks/sa.tf", 16, "…/emea/eks/sa.tf"},
+		// Include partial directories rather than leaving spare columns.
+		{"terraform/accounts/sa.tf", 20, "…form/accounts/sa.tf"},
+		{"terraform/accounts/emea/eks/sa.tf", 10, "…eks/sa.tf"},
+		// Measure terminal columns, not bytes, and keep Unicode intact.
+		{"配置/sa.tf", 10, "配置/sa.tf"},
+		{"root/配置/sa.tf", 11, "…配置/sa.tf"},
+		{"root/配置/sa.tf", 10, "…置/sa.tf"},
+		{"root/配置/sa.tf", 9, "…置/sa.tf"},
+		{"root/cafe\u0301.tf", 8, "…cafe\u0301.tf"},
+		{"café.tf", 5, "…é.tf"},
 		// Filename itself wider than maxW: hard right-truncate with ellipsis.
 		{"verylongfilename.tf", 5, "…e.tf"},
 		// Zero width.
 		{"terraform/sa.tf", 0, ""},
+		{"terraform/sa.tf", 1, "…"},
 	}
 	for _, tc := range cases {
 		got := leftTruncatePath(tc.path, tc.maxW)
 		if got != tc.want {
 			t.Errorf("leftTruncatePath(%q, %d) = %q, want %q", tc.path, tc.maxW, got, tc.want)
+		}
+		if lipgloss.Width(got) > tc.maxW {
+			t.Errorf("leftTruncatePath(%q, %d) exceeds available columns: %q", tc.path, tc.maxW, got)
+		}
+	}
+}
+
+func TestFileSummaryUsesAvailablePathWidth(t *testing.T) {
+	pr := model.PullRequest{Files: []model.ChangedFile{{
+		Path: "terraform/accounts/sa.tf", Status: "modified", Additions: 5,
+	}}}
+	m := modelWithPRs([]model.PullRequest{pr}, 0)
+	m.summaryMode = SummaryModeFiles
+	view := stripANSI(m.summaryPanel(40, 6))
+	lines := strings.Split(view, "\n")
+	if got, want := strings.TrimRight(lines[0], " "), "…form/accounts/sa.tf modified +5 -0"; got != want {
+		t.Fatalf("file summary row = %q, want %q", got, want)
+	}
+	for _, line := range lines {
+		if lipgloss.Width(line) > 36 {
+			t.Fatalf("file summary exceeds pane width: %q", line)
+		}
+	}
+	for _, line := range lines[1:] {
+		if strings.TrimSpace(line) != "" {
+			t.Fatalf("file summary wrapped: %q", view)
 		}
 	}
 }
