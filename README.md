@@ -114,6 +114,7 @@ The summary pane starts on changed files and can switch to commits, PR
 conversation comments, or Atlantis plan output with `1`, `2`, `3`, and `4`.
 Long lines are hard-truncated in all panes; diffs use horizontal scrolling
 instead of wrapping. Keyboard shortcuts are always available via `?`.
+Inbox title badges show `[auto]` when auto-merge is enabled and `[draft]` for draft PRs.
 
 ### Command palette
 
@@ -123,6 +124,7 @@ Press `:` to open the command palette. Type a command prefix to filter; press
 | Command | Action |
 |---------|--------|
 | `:draft` | Toggle PR draft status (draft ↔ ready for review) |
+| `:automerge` | Toggle auto-merge; enabling prompts for confirmation because GitHub may merge immediately |
 | `:close` | Close PR (prompts for confirmation) |
 | `:update`| Update PR branch with base branch (prompts for confirmation) |
 | `:block` | Request changes on PR to block merge (prompts for confirmation) |
@@ -185,7 +187,7 @@ actions:
 
 Configurable built-in IDs: `open-pr`, `copy-pr-url`, `refresh-pr`,
 `refresh-inbox`, `toggle-diff`, `open-diff-pager`, `next-file`, `prev-file`,
-`toggle-side-by-side`, `toggle-file-content`, `toggle-draft`, `close-pr`,
+`toggle-side-by-side`, `toggle-file-content`, `toggle-draft`, `toggle-automerge`, `close-pr`,
 `update-branch`, `request-changes`, and `merge-pr`. Generic action
 IDs include the default `approve`, `approve-now`, and `comment` entries.
 

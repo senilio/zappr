@@ -376,6 +376,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) triggerAction(action tuiAction) (tea.Model, tea.Cmd) {
+	action = m.selectedPRAction(action)
 	if action.RequiresPR {
 		if _, ok := m.current(); !ok {
 			return m, m.finishStatus("no PR selected", true)
@@ -388,6 +389,9 @@ func (m Model) triggerAction(action tuiAction) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.pendingAction = action
+		if action.ID == "toggle-automerge" {
+			m.pendingPR, _ = m.current()
+		}
 		m.mode = ModeConfirmCommand
 		return m, nil
 	}
@@ -412,6 +416,22 @@ func (m Model) executeAction(action tuiAction) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	fromCommand := m.mode == ModeCommand || m.mode == ModeConfirmCommand
+	pr, _ := m.current()
+	if m.mode == ModeConfirmCommand && action.ID == "toggle-automerge" {
+		pr = m.pendingPR
+		found := false
+		for _, candidate := range m.prs {
+			if candidate.Repo == pr.Repo && candidate.Number == pr.Number {
+				found = true
+				break
+			}
+		}
+		if !found {
+			m.mode = m.prevMode
+			m.commandInput = ""
+			return m, m.finishStatus("auto-merge cancelled: PR is no longer in the inbox", true)
+		}
+	}
 	if fromCommand {
 		m.mode = m.prevMode
 		m.commandInput = ""
@@ -428,7 +448,6 @@ func (m Model) executeAction(action tuiAction) (tea.Model, tea.Cmd) {
 		m.mode = ModeColorscheme
 		return m, nil
 	}
-	pr, _ := m.current()
 	switch action.Operation {
 	case "approve":
 		m.loading = true
@@ -448,6 +467,12 @@ func (m Model) executeAction(action tuiAction) (tea.Model, tea.Cmd) {
 			status = "marking draft…"
 		}
 		return m, tea.Batch(m.startStatus(status), toggleDraftCmd(m.app, pr))
+	case "toggle-automerge":
+		status := "enabling auto-merge…"
+		if pr.AutoMerge {
+			status = "disabling auto-merge…"
+		}
+		return m, tea.Batch(m.startStatus(status), toggleAutoMergeCmd(m.app, pr))
 	case "close-pr":
 		return m, tea.Batch(m.startStatus("closing…"), closePRCmd(m.app, pr, ""))
 	case "update-branch":

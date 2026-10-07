@@ -216,6 +216,10 @@ func (a *App) ToggleDraft(ctx context.Context, repo string, number int, isDraft 
 	return a.GitHub.ToggleDraft(ctx, repo, number, isDraft)
 }
 
+func (a *App) ToggleAutoMerge(ctx context.Context, repo string, number int, enabled bool) error {
+	return a.GitHub.ToggleAutoMerge(ctx, repo, number, enabled)
+}
+
 func (a *App) ClosePR(ctx context.Context, repo string, number int, comment string) error {
 	return a.GitHub.ClosePR(ctx, repo, number, comment)
 }

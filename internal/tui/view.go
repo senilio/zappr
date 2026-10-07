@@ -215,6 +215,8 @@ func (m Model) helpPanel() string {
 		{m.actionAlias("approve"), "approve [?]"},
 		{m.actionAlias("approve-now"), "approve now"},
 		{m.actionAlias("comment"), "write comment"},
+		{m.actionAlias("toggle-draft"), "toggle draft/ready"},
+		{m.actionAlias("toggle-automerge"), "toggle auto-merge"},
 		{m.actionAlias("settings"), "inbox settings"},
 	}
 	builtInActions := map[string]bool{"approve": true, "approve-now": true, "comment": true}
@@ -228,6 +230,7 @@ func (m Model) helpPanel() string {
 		}
 	}
 	section("Actions", actions...)
+	section("PR badges", shortcut{"[auto]", "auto-merge enabled"}, shortcut{"[draft]", "draft pull request"})
 	content := strings.TrimSuffix(b.String(), "\n")
 	if m.helpInput == "" {
 		return content
@@ -925,22 +928,38 @@ func (m Model) inboxPanel(width int, height int) string {
 		}
 		selected := i == m.selected
 
-		// Line 1: title
-		title := truncateANSIWidth(pr.Title, innerW)
+		// Line 1: reserve space for state badges before truncating the title.
+		var badges []string
+		if pr.AutoMerge {
+			badges = append(badges, "[auto]")
+		}
+		if pr.Draft {
+			badges = append(badges, "[draft]")
+		}
+		badge := truncateANSIWidth(strings.Join(badges, " "), innerW)
+		titleWidth := innerW
+		if badge != "" {
+			titleWidth = max(0, innerW-ansi.StringWidth(badge)-1)
+		}
+		title := truncateANSIWidth(pr.Title, titleWidth)
 		titleStyle := s.Muted
 		if selected {
 			titleStyle = s.TitleStrong
 		}
 		titleStr := selectedStyle.Render(titleStyle.Render(title))
+		if badge != "" {
+			badgeStyle := s.Muted
+			if selected {
+				badgeStyle = s.Title
+			}
+			titleStr += strings.Repeat(" ", max(0, innerW-ansi.StringWidth(title)-ansi.StringWidth(badge))) + badgeStyle.Render(badge)
+		}
 		fmt.Fprintf(&b, "%s\n", truncatePaneLineWidth(titleStr, innerW))
 		lineCount++
 
 		// Line 2: #N · author · CI · review (consolidated)
 		dot := s.Muted.Render(" · ")
 		metaParts := []string{fmt.Sprintf("#%d", pr.Number), pr.Author}
-		if pr.Draft {
-			metaParts = append(metaParts, "[draft]")
-		}
 		metaBase := strings.Join(metaParts, stripANSI(dot))
 		ciStr := m.theme.CIStatus(pr.CIStatus)
 		reviewStr := m.theme.ReviewStatus(pr.ReviewDecision)
@@ -1462,11 +1481,17 @@ func (m Model) commandPanel() string {
 
 	if m.mode == ModeConfirmCommand {
 		pr, ok := m.current()
+		if m.pendingAction.ID == "toggle-automerge" {
+			pr, ok = m.pendingPR, true
+		}
 		if !ok {
 			return "no PR selected"
 		}
 		name := confirmationActionLabel(m.pendingAction)
 		fmt.Fprintf(&b, "%s on #%d?\n\n", name, pr.Number)
+		if m.pendingAction.ID == "toggle-automerge" {
+			b.WriteString("GitHub may merge immediately if requirements pass.\n\n")
+		}
 		b.WriteString(m.actionAlias("command-confirm") + " confirm  " + m.actionAlias("command-cancel-confirmation") + " cancel")
 		return b.String()
 	}
@@ -1479,9 +1504,10 @@ func (m Model) commandPanel() string {
 		b.WriteString(s.Muted.Render("no matching commands"))
 	} else {
 		for i, match := range matches {
+			match.action = m.selectedPRAction(match.action)
 			name := truncateANSIWidth(match.alias, 18)
 			nameStyled := s.TitleStrong.Render(":" + name)
-			width := min(48, m.width-12) - len(name) - 14
+			width := min(66, m.width-12) - len(name) - 6
 			descStyled := s.Muted.Render(truncateANSIWidth(actionDisplayLabel(match.action), max(1, width)))
 			confirmMark := ""
 			if match.action.Confirmation != confirmationNone {

@@ -102,6 +102,7 @@ var actionDescriptors = []tuiAction{
 	{"command-confirm", "confirm command", actionContextCommandConfirmation, nil, nil, false, confirmationNone, "command-confirm", ""},
 	{"command-cancel-confirmation", "cancel command", actionContextCommandConfirmation, nil, nil, false, confirmationNone, "command-cancel-confirmation", ""},
 	{"toggle-draft", "toggle PR draft status", actionContextNormal, nil, nil, true, confirmationNone, "toggle-draft", ""},
+	{"toggle-automerge", "toggle auto-merge", actionContextNormal, nil, nil, true, confirmationMandatory, "toggle-automerge", ""},
 	{"close-pr", "close PR", actionContextNormal, nil, nil, true, confirmationMandatory, "close-pr", ""},
 	{"update-branch", "update branch", actionContextNormal, nil, nil, true, confirmationMandatory, "update-branch", ""},
 	{"request-changes", "block PR merge", actionContextNormal, nil, nil, true, confirmationMandatory, "request-changes", ""},
@@ -190,6 +191,28 @@ func genericActionLabel(action tuiAction) string {
 		return label + " No confirmation."
 	}
 	return label + " Confirmation required."
+}
+
+// selectedPRAction describes the next toggle without changing its bindings.
+func (m Model) selectedPRAction(action tuiAction) tuiAction {
+	pr, ok := m.current()
+	if !ok {
+		return action
+	}
+	switch action.ID {
+	case "toggle-draft":
+		action.Label = "Mark as draft"
+		if pr.Draft {
+			action.Label = "Mark ready for review"
+		}
+	case "toggle-automerge":
+		action.Label = "Enable auto-merge"
+		if pr.AutoMerge {
+			action.Label = "Disable auto-merge"
+			action.Confirmation = confirmationNone
+		}
+	}
+	return action
 }
 
 // diffFallbackActionIDs are normal-context actions that stay reachable while the

@@ -88,12 +88,14 @@ func TestSQLiteStorePersistsPRs(t *testing.T) {
 	defer store.Close()
 
 	pr := model.PullRequest{
-		Repo:     "owner/repo",
-		Number:   7,
-		Title:    "Update docs",
-		Author:   "jane",
-		CIStatus: "passing",
-		Triage:   model.Triage{Risk: model.RiskSafe, Summary: "docs-only"},
+		Repo:      "owner/repo",
+		Number:    7,
+		Title:     "Update docs",
+		Author:    "jane",
+		CIStatus:  "passing",
+		Draft:     true,
+		AutoMerge: true,
+		Triage:    model.Triage{Risk: model.RiskSafe, Summary: "docs-only"},
 	}
 	if err := store.Put(pr); err != nil {
 		t.Fatalf("Put: %v", err)
@@ -117,6 +119,9 @@ func TestSQLiteStorePersistsPRs(t *testing.T) {
 	}
 	if !prs[0].Skipped {
 		t.Fatal("skipped state not persisted")
+	}
+	if !prs[0].Draft || !prs[0].AutoMerge {
+		t.Fatal("PR state badges not persisted")
 	}
 	if prs[0].Triage.Risk != model.RiskSafe {
 		t.Fatalf("risk = %s", prs[0].Triage.Risk)

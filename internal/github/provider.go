@@ -15,6 +15,7 @@ type Provider interface {
 	Approve(ctx context.Context, repo string, number int, body string) error
 	Comment(ctx context.Context, repo string, number int, body string) error
 	ToggleDraft(ctx context.Context, repo string, number int, isDraft bool) error
+	ToggleAutoMerge(ctx context.Context, repo string, number int, enabled bool) error
 	ClosePR(ctx context.Context, repo string, number int, comment string) error
 	UpdateBranch(ctx context.Context, repo string, number int) error
 	RequestChanges(ctx context.Context, repo string, number int, body string) error

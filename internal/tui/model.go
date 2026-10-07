@@ -88,8 +88,9 @@ type Model struct {
 
 	commandInput  string // typed input after ":"
 	helpInput     string
-	pendingAction tuiAction // action awaiting confirmation
-	commandCursor int       // selected index in command palette list
+	pendingAction tuiAction         // action awaiting confirmation
+	pendingPR     model.PullRequest // auto-merge confirmation target and original state
+	commandCursor int               // selected index in command palette list
 
 }
 
@@ -370,6 +371,20 @@ func toggleDraftCmd(app *app.App, pr model.PullRequest) tea.Cmd {
 		action := "marked ready"
 		if newDraft {
 			action = "marked draft"
+		}
+		return actionMsg{message: fmt.Sprintf("%s %s#%d", action, pr.Repo, pr.Number), err: err}
+	}
+}
+
+func toggleAutoMergeCmd(app *app.App, pr model.PullRequest) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		enabled := !pr.AutoMerge
+		err := app.ToggleAutoMerge(ctx, pr.Repo, pr.Number, enabled)
+		action := "auto-merge disabled for"
+		if enabled {
+			action = "auto-merge requested for"
 		}
 		return actionMsg{message: fmt.Sprintf("%s %s#%d", action, pr.Repo, pr.Number), err: err}
 	}

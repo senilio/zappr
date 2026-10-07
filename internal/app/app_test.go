@@ -336,6 +336,8 @@ func (f fakeGitHub) Comment(context.Context, string, int, string) error {
 	return nil
 }
 
+func (f fakeGitHub) ToggleAutoMerge(context.Context, string, int, bool) error { return nil }
+
 func (f fakeGitHub) ToggleDraft(context.Context, string, int, bool) error {
 	return nil
 }

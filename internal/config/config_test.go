@@ -191,6 +191,8 @@ actions:
     commands: [review]
     comment: review
     confirm: true
+  toggle-automerge:
+    commands: [automerge]
   toggle-diff:
     keys: [v]
   toggle-draft:

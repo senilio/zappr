@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"reflect"
@@ -12,18 +13,24 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/senilio/zappr/internal/app"
+	"github.com/senilio/zappr/internal/cache"
 	"github.com/senilio/zappr/internal/config"
 	"github.com/senilio/zappr/internal/model"
 	"github.com/senilio/zappr/internal/tui/theme"
 )
 
 type commentRecordingGitHub struct {
-	comments  []string
-	approvals int
+	comments         []string
+	approvals        int
+	autoMerge        []bool
+	autoMergeTargets []string
+	drafts           []bool
+	actionErr        error
+	listedPRs        []model.PullRequest
 }
 
 func (f *commentRecordingGitHub) ListPRs(context.Context, string) ([]model.PullRequest, bool, error) {
-	return nil, true, nil
+	return f.listedPRs, true, nil
 }
 
 func (f *commentRecordingGitHub) GetPR(context.Context, string, int) (model.PullRequest, error) {
@@ -52,7 +59,16 @@ func (f *commentRecordingGitHub) Comment(_ context.Context, _ string, _ int, bod
 	return nil
 }
 
-func (f *commentRecordingGitHub) ToggleDraft(context.Context, string, int, bool) error { return nil }
+func (f *commentRecordingGitHub) ToggleDraft(_ context.Context, _ string, _ int, draft bool) error {
+	f.drafts = append(f.drafts, draft)
+	return f.actionErr
+}
+
+func (f *commentRecordingGitHub) ToggleAutoMerge(_ context.Context, repo string, number int, enabled bool) error {
+	f.autoMerge = append(f.autoMerge, enabled)
+	f.autoMergeTargets = append(f.autoMergeTargets, fmt.Sprintf("%s#%d", repo, number))
+	return f.actionErr
+}
 
 func (f *commentRecordingGitHub) ClosePR(context.Context, string, int, string) error { return nil }
 
@@ -1079,6 +1095,195 @@ func TestInboxMarksDraftPRs(t *testing.T) {
 
 	if !strings.Contains(view, "[draft]") {
 		t.Fatalf("inbox missing draft marker: %q", view)
+	}
+	if !strings.Contains(strings.Split(view, "\n")[0], "[draft]") {
+		t.Fatal("draft badge must be on title line")
+	}
+}
+
+func TestInboxReservesStateBadges(t *testing.T) {
+	for _, width := range []int{18, 30, 80} {
+		for _, selected := range []int{0, 1} {
+			m := modelWithPRs([]model.PullRequest{{Number: 1, Title: strings.Repeat("界", 80), Author: "alice", Draft: true, AutoMerge: true}, {Number: 2, Title: "ordinary"}}, selected)
+			view := stripANSI(m.inboxPanel(width, 10))
+			lines := strings.Split(view, "\n")
+			if !strings.HasSuffix(strings.TrimRight(lines[0], " "), "[auto] [draft]") {
+				t.Fatalf("badges lost at width %d: %q", width, lines[0])
+			}
+			if strings.Contains(lines[1], "[draft]") || strings.Contains(lines[1], "[auto]") {
+				t.Fatal("badges duplicated in metadata")
+			}
+			for _, line := range lines {
+				if lipgloss.Width(line) > width-paneHFrame {
+					t.Fatalf("line exceeds pane width: %q", line)
+				}
+			}
+		}
+	}
+}
+
+func TestToggleActionsReflectCurrentState(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		m := modelWithPRs([]model.PullRequest{{Number: 1, Draft: enabled, AutoMerge: enabled}}, 0)
+		m.width = 120
+		m.mode = ModeCommand
+		m.prevMode = ModeInbox
+		m.commandInput = "draft"
+		want := "Mark as draft"
+		if enabled {
+			want = "Mark ready for review"
+		}
+		if view := stripANSI(m.commandPanel()); !strings.Contains(view, want) {
+			t.Fatalf("draft command: %q, want %q", view, want)
+		}
+		m.commandInput = "automerge"
+		want = "Enable auto-merge"
+		if enabled {
+			want = "Disable auto-merge"
+		}
+		if view := stripANSI(m.commandPanel()); !strings.Contains(view, want) {
+			t.Fatalf("auto-merge command: %q, want %q", view, want)
+		}
+		action, ok := m.actions.exactCommand("automerge")
+		if !ok {
+			t.Fatal("automerge command missing")
+		}
+		next, cmd := m.triggerAction(action)
+		got := next.(Model)
+		if !enabled {
+			if got.mode != ModeConfirmCommand || cmd != nil {
+				t.Fatal("enabling must require confirmation before remote action")
+			}
+			if view := stripANSI(got.commandPanel()); !strings.Contains(view, "may merge immediately") {
+				t.Fatalf("missing immediate-merge warning: %q", view)
+			}
+		} else if got.mode == ModeConfirmCommand || cmd == nil {
+			t.Fatal("disabling should run directly")
+		}
+	}
+}
+
+func TestToggleCommandsRefreshAuthoritativeState(t *testing.T) {
+	for _, id := range []string{"toggle-draft", "toggle-automerge"} {
+		for _, enabled := range []bool{false, true} {
+			for _, failed := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/%v/error=%v", id, enabled, failed), func(t *testing.T) {
+					pr := model.PullRequest{Repo: "org/repo", Number: 1, Draft: enabled, AutoMerge: enabled}
+					// Keep server state unchanged to prove there is no optimistic toggle.
+					provider := &commentRecordingGitHub{listedPRs: []model.PullRequest{pr}}
+					if failed {
+						provider.actionErr = errors.New("GitHub refused action")
+					}
+					application := app.New(provider, nil, cache.NewMemoryStore())
+					m := modelWithPRs([]model.PullRequest{pr}, 0)
+					m.app = application
+					m.repo = pr.Repo
+					cmd := toggleDraftCmd(application, pr)
+					if id == "toggle-automerge" {
+						cmd = toggleAutoMergeCmd(application, pr)
+					}
+					msg := cmd().(actionMsg)
+					calls := provider.drafts
+					if id == "toggle-automerge" {
+						calls = provider.autoMerge
+					}
+					if len(calls) != 1 || calls[0] != !enabled {
+						t.Fatalf("toggle calls = %v", calls)
+					}
+					if (msg.err != nil) != failed {
+						t.Fatalf("action error = %v", msg.err)
+					}
+					next, followup := m.Update(msg)
+					got := next.(Model)
+					if got.prs[0].AutoMerge != enabled || got.prs[0].Draft != enabled {
+						t.Fatal("action changed badges before refresh")
+					}
+					if failed {
+						if !strings.Contains(got.error, "GitHub refused action") {
+							t.Fatalf("error not surfaced: %q", got.error)
+						}
+						return
+					}
+					if followup == nil {
+						t.Fatal("successful action did not refresh")
+					}
+					batch := followup().(tea.BatchMsg)
+					var didRefresh bool
+					for _, command := range batch {
+						if refreshedMsg, ok := command().(refreshMsg); ok {
+							didRefresh = true
+							next, _ = got.Update(refreshedMsg)
+							got = next.(Model)
+						}
+					}
+					if !didRefresh {
+						t.Fatal("refresh command missing")
+					}
+					if got.prs[0].AutoMerge != pr.AutoMerge || got.prs[0].Draft != pr.Draft {
+						t.Fatal("badges do not match GitHub")
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestAutoMergeConfirmationKeepsTargetAndIntent(t *testing.T) {
+	for _, scenario := range []string{"selection changed", "state changed", "target removed"} {
+		t.Run(scenario, func(t *testing.T) {
+			provider := &commentRecordingGitHub{}
+			m := minimalModel()
+			m.app = app.New(provider, nil, cache.NewMemoryStore())
+			m.prevMode = ModeInbox
+			action, _ := m.actions.exactCommand("automerge")
+			next, _ := m.triggerAction(action)
+			m = next.(Model)
+			switch scenario {
+			case "selection changed":
+				m.prs = append(m.prs, model.PullRequest{Repo: "org/repo", Number: 2})
+				m.selected = 1
+			case "state changed":
+				m.prs[0].AutoMerge = true
+			case "target removed":
+				m.prs = []model.PullRequest{{Repo: "org/repo", Number: 2}}
+			}
+			if view := stripANSI(m.commandPanel()); !strings.Contains(view, "on #1?") {
+				t.Fatalf("confirmation target changed: %q", view)
+			}
+			next, cmd := m.handleConfirmCommandKey("y")
+			if scenario == "target removed" {
+				if next.(Model).mode == ModeConfirmCommand || len(provider.autoMerge) != 0 {
+					t.Fatal("removed target must cancel confirmation")
+				}
+				return
+			}
+			if cmd == nil {
+				t.Fatal("confirmation did not execute")
+			}
+			for _, command := range cmd().(tea.BatchMsg) {
+				command()
+			}
+			if len(provider.autoMerge) != 1 || !provider.autoMerge[0] {
+				t.Fatalf("confirmation changed enable intent: %v", provider.autoMerge)
+			}
+			if provider.autoMergeTargets[0] != "org/repo#1" {
+				t.Fatalf("confirmation changed target: %v", provider.autoMergeTargets)
+			}
+		})
+	}
+}
+
+func TestAutoMergeConfirmationCanBeCancelled(t *testing.T) {
+	m := minimalModel()
+	m.prevMode = ModeInbox
+	action, _ := m.actions.exactCommand("automerge")
+	next, cmd := m.triggerAction(action)
+	if cmd != nil {
+		t.Fatal("action ran before confirmation")
+	}
+	next, cmd = next.(Model).handleConfirmCommandKey("esc")
+	if cmd != nil || next.(Model).mode != ModeInbox {
+		t.Fatal("cancellation should return without action")
 	}
 }
 

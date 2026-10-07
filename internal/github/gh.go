@@ -27,7 +27,7 @@ func NewGHProvider() *GHProvider {
 func (p *GHProvider) ListPRs(ctx context.Context, repo string) ([]model.PullRequest, bool, error) {
 	// Commits and comments are omitted: their nested connections dominate the
 	// GraphQL cost of a list query. GetPR fetches them for the selected PR.
-	args := []string{"pr", "list", "--repo", repo, "--state", "open", "--search", "sort:updated-desc", "--limit", strconv.Itoa(prListLimit), "--json", "number,title,author,url,labels,additions,deletions,changedFiles,isDraft,state,headRefOid,statusCheckRollup,reviewDecision,files,updatedAt"}
+	args := []string{"pr", "list", "--repo", repo, "--state", "open", "--search", "sort:updated-desc", "--limit", strconv.Itoa(prListLimit), "--json", "number,title,author,url,labels,additions,deletions,changedFiles,isDraft,autoMergeRequest,state,headRefOid,statusCheckRollup,reviewDecision,files,updatedAt"}
 	out, err := p.run(ctx, args...)
 	if err != nil {
 		return nil, false, err
@@ -46,7 +46,7 @@ func (p *GHProvider) ListPRs(ctx context.Context, repo string) ([]model.PullRequ
 }
 
 func (p *GHProvider) GetPR(ctx context.Context, repo string, number int) (model.PullRequest, error) {
-	out, err := p.run(ctx, "pr", "view", strconv.Itoa(number), "--repo", repo, "--json", "number,title,author,url,labels,additions,deletions,changedFiles,isDraft,state,headRefOid,statusCheckRollup,reviewDecision,files,commits,comments,updatedAt")
+	out, err := p.run(ctx, "pr", "view", strconv.Itoa(number), "--repo", repo, "--json", "number,title,author,url,labels,additions,deletions,changedFiles,isDraft,autoMergeRequest,state,headRefOid,statusCheckRollup,reviewDecision,files,commits,comments,updatedAt")
 	if err != nil {
 		return model.PullRequest{}, err
 	}
@@ -153,6 +153,14 @@ func (p *GHProvider) MergePR(ctx context.Context, repo string, number int) error
 	return err
 }
 
+func (p *GHProvider) ToggleAutoMerge(ctx context.Context, repo string, number int, enabled bool) error {
+	if enabled {
+		return p.MergePR(ctx, repo, number)
+	}
+	_, err := p.run(ctx, "pr", "merge", strconv.Itoa(number), "--repo", repo, "--disable-auto")
+	return err
+}
+
 func (p *GHProvider) run(ctx context.Context, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, p.Bin, args...)
 	var stderr bytes.Buffer
@@ -178,6 +186,7 @@ type ghPR struct {
 	Deletions         int             `json:"deletions"`
 	ChangedFiles      int             `json:"changedFiles"`
 	Draft             bool            `json:"isDraft"`
+	AutoMergeRequest  *struct{}       `json:"autoMergeRequest"`
 	State             string          `json:"state"`
 	StatusCheckRollup json.RawMessage `json:"statusCheckRollup"`
 	ReviewDecision    string          `json:"reviewDecision"`
@@ -258,6 +267,7 @@ func (p ghPR) toModel(repo string) model.PullRequest {
 		CIStatus:       statusFromRollup(p.StatusCheckRollup),
 		ReviewDecision: p.ReviewDecision,
 		Draft:          p.Draft,
+		AutoMerge:      p.AutoMergeRequest != nil,
 		State:          p.State,
 		HeadRefOID:     p.HeadRefOID,
 		UpdatedAt:      parseTime(p.UpdatedAt),

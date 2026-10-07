@@ -146,6 +146,7 @@ func DefaultActions() map[string]ActionConfig {
 		"approve-now":         {Operation: "approve", Keys: []string{"A"}, Confirm: &immediate},
 		"comment":             {Operation: "comment", Keys: []string{"c"}},
 		"toggle-draft":        {Commands: []string{"draft"}},
+		"toggle-automerge":    {Commands: []string{"automerge"}},
 		"close-pr":            {Commands: []string{"close"}},
 		"update-branch":       {Commands: []string{"update"}},
 		"request-changes":     {Commands: []string{"block"}},
