@@ -1155,8 +1155,8 @@ func (m Model) writeCommentSummary(b *strings.Builder, pr model.PullRequest, inn
 			meta += " · " + summaryTimestamp(comment.CreatedAt, now)
 		}
 		b.WriteString(truncatePaneLineWidth(s.File.Render(meta), innerW) + "\n")
-		for _, line := range strings.Split(comment.Body, "\n") {
-			b.WriteString(truncatePaneLineWidth(stripEmojiShortcodes(line), innerW) + "\n")
+		for _, line := range strings.Split(m.renderCommentMarkdown(comment.Body), "\n") {
+			b.WriteString(truncatePaneLineWidth(line, innerW) + "\n")
 		}
 		if i < len(pr.Comments)-1 {
 			b.WriteByte('\n')
