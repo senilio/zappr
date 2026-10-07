@@ -918,7 +918,7 @@ func (m *Model) autoCommitDiffCmd() tea.Cmd {
 	if m.commitIndex < 0 || m.commitIndex >= len(pr.Commits) {
 		return nil
 	}
-	sha := pr.Commits[m.commitIndex].OID
+	sha := newestCommits(pr.Commits)[m.commitIndex].OID
 	if m.commitDiffKey == sha {
 		return nil
 	}
