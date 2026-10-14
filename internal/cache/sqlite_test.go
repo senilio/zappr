@@ -1,8 +1,10 @@
 package cache
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/senilio/zappr/internal/model"
@@ -158,6 +160,52 @@ func TestSQLiteStoreClear(t *testing.T) {
 	}
 	if len(prs) != 0 {
 		t.Fatalf("len = %d, want 0", len(prs))
+	}
+}
+
+func TestSQLiteStoreIgnoresRetiredCachedDetails(t *testing.T) {
+	store, err := OpenSQLite(filepath.Join(t.TempDir(), "zappr.db"))
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	defer store.Close()
+	if err := store.Put(model.PullRequest{Repo: "owner/repo", Number: 7}); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	// Old cached rows must remain readable without retaining removed details.
+	data := `{"Repo":"owner/repo","Number":7,"Title":"Cached PR","Comments":[{"Author":"bot","Body":"Plan: 1 to add, 0 to change, 0 to destroy."}],"details_loaded":true,"atlantis_plan":{"summary":"legacy plan"}}`
+	if _, err := store.db.Exec("update pull_requests set data = ? where repo = ? and number = ?", data, "owner/repo", 7); err != nil {
+		t.Fatalf("write legacy data: %v", err)
+	}
+	want := model.PullRequest{
+		Repo: "owner/repo", Number: 7, Title: "Cached PR", DetailsLoaded: true,
+		Comments: []model.PRComment{{Author: "bot", Body: "Plan: 1 to add, 0 to change, 0 to destroy."}},
+	}
+	pr, err := store.Get("owner/repo", 7)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if !reflect.DeepEqual(pr, want) {
+		t.Fatalf("cached PR = %#v, want %#v", pr, want)
+	}
+	for _, list := range []func() ([]model.PullRequest, error){store.List, func() ([]model.PullRequest, error) { return store.ListRepo("owner/repo") }} {
+		prs, err := list()
+		if err != nil || !reflect.DeepEqual(prs, []model.PullRequest{want}) {
+			t.Fatalf("cached PR list = %#v, err = %v", prs, err)
+		}
+	}
+	if err := store.Put(pr); err != nil {
+		t.Fatalf("rewrite cached PR: %v", err)
+	}
+	if err := store.db.QueryRow("select data from pull_requests where repo = ? and number = ?", "owner/repo", 7).Scan(&data); err != nil {
+		t.Fatalf("read rewritten data: %v", err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(data), &fields); err != nil {
+		t.Fatalf("decode rewritten data: %v", err)
+	}
+	if _, ok := fields["atlantis_plan"]; ok {
+		t.Fatal("rewritten cache still contains retired details")
 	}
 }
 

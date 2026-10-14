@@ -11,6 +11,6 @@
   <text x="60" y="164" fill="#94a3b8" font-family="Menlo, Consolas, monospace" font-size="20">Inbox  |  PR #128  Improve cache pruning</text>
   <text x="60" y="210" fill="#cbd5e1" font-family="Menlo, Consolas, monospace" font-size="18">• ci.yml  • README.md  • internal/cache/sqlite.go</text>
   <text x="60" y="250" fill="#cbd5e1" font-family="Menlo, Consolas, monospace" font-size="18">Summary: safe, low-risk change; review suggested</text>
-  <text x="60" y="300" fill="#93c5fd" font-family="Menlo, Consolas, monospace" font-size="18">Keys: j/k move  enter inspect  r AI  a approve  ? help</text>
+  <text x="60" y="300" fill="#93c5fd" font-family="Menlo, Consolas, monospace" font-size="18">Keys: j/k move  enter inspect  r refresh  a approve  ? help</text>
   <text x="60" y="560" fill="#64748b" font-family="Menlo, Consolas, monospace" font-size="16">Local-first GitHub triage from your terminal.</text>
 </svg>

@@ -115,7 +115,7 @@ func (p *GHProvider) Comment(ctx context.Context, repo string, number int, body 
 
 func (p *GHProvider) ToggleDraft(ctx context.Context, repo string, number int, isDraft bool) error {
 	if isDraft {
-		_, err := p.run(ctx, "pr", "edit", strconv.Itoa(number), "--repo", repo, "--draft")
+		_, err := p.run(ctx, "pr", "ready", strconv.Itoa(number), "--repo", repo, "--undo")
 		return err
 	}
 	_, err := p.run(ctx, "pr", "ready", strconv.Itoa(number), "--repo", repo)
@@ -273,7 +273,6 @@ func (p ghPR) toModel(repo string) model.PullRequest {
 		UpdatedAt:      parseTime(p.UpdatedAt),
 		Commits:        toModelCommits(p.Commits),
 		Comments:       comments,
-		AtlantisPlan:   model.LatestAtlantisPlan(comments),
 	}
 }
 

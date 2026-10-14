@@ -1109,10 +1109,19 @@ func (m *Model) syncSummaryVPScroll() {
 			m.summaryVP.SetYOffset(selectedLine + 2 - vpH)
 		}
 	case SummaryModeFiles:
-		// Each file renders as 1 line.
-		selectedLine := m.fileIndex
-		if selectedLine < m.summaryVP.YOffset {
-			m.summaryVP.SetYOffset(selectedLine)
+		pr, ok := m.current()
+		if !ok || m.fileIndex < 0 || m.fileIndex >= len(pr.Files) {
+			return
+		}
+		lines := fileSummaryLines(pr.Files)
+		selectedLine := lines[m.fileIndex]
+		// Keep a group's directory header visible when its first file is selected.
+		topLine := selectedLine
+		if m.fileIndex == 0 || lines[m.fileIndex-1] != selectedLine-1 {
+			topLine--
+		}
+		if topLine < m.summaryVP.YOffset {
+			m.summaryVP.SetYOffset(topLine)
 		} else if selectedLine >= m.summaryVP.YOffset+vpH {
 			m.summaryVP.SetYOffset(selectedLine - vpH + 1)
 		}
@@ -1243,8 +1252,6 @@ func (m *Model) setSummaryMode(actionID string) bool {
 		m.summaryMode = SummaryModeCommits
 	case "summary-comments":
 		m.summaryMode = SummaryModeComments
-	case "summary-atlantis":
-		m.summaryMode = SummaryModeAtlantis
 	default:
 		return false
 	}

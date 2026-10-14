@@ -82,7 +82,6 @@ func (a *App) Refresh(ctx context.Context, repo string, includeDrafts bool) ([]m
 			if cached.DetailsLoaded && cached.UpdatedAt.Equal(prs[i].UpdatedAt) {
 				prs[i].Commits = cached.Commits
 				prs[i].Comments = cached.Comments
-				prs[i].AtlantisPlan = cached.AtlantisPlan
 				prs[i].DetailsLoaded = true
 			}
 		}

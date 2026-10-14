@@ -301,6 +301,6 @@ Commands:
   zappr version                 print version
 
 Keys:
-	  j/k navigate  tab focus  enter inspect  a approve, y confirm  c comment  r refresh  v diff  1/2/3/4 summary  ? help  q quit
+	  j/k navigate  tab focus  enter inspect  a approve, y confirm  c comment  r refresh  v diff  1/2/3 summary  ? help  q quit
 `
 }

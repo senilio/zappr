@@ -691,7 +691,7 @@ func TestSummaryTitleUsesFixedAliases(t *testing.T) {
 	m.summaryMode = SummaryModeFiles
 
 	title := stripANSI(m.summaryTitle())
-	if want := "Summary [1 files] [2] [3] [4]"; title != want {
+	if want := "Summary [1 files] [2] [3]"; title != want {
 		t.Fatalf("summary title = %q, want %q", title, want)
 	}
 }
@@ -748,21 +748,21 @@ func TestCommandPaletteConfirmsExactAlias(t *testing.T) {
 
 func TestCommandPaletteMatchesAliasNotDescription(t *testing.T) {
 	cfg := config.Default()
-	cfg.Actions["atlantis-plan"] = config.ActionConfig{Operation: "comment", Commands: []string{"ap"}, Comment: "atlantis plan"}
-	cfg.Actions["atlantis-apply"] = config.ActionConfig{Operation: "comment", Commands: []string{"aa"}, Comment: "atlantis apply"}
+	cfg.Actions["workflow-plan"] = config.ActionConfig{Operation: "comment", Commands: []string{"ap"}, Comment: "workflow plan"}
+	cfg.Actions["workflow-apply"] = config.ActionConfig{Operation: "comment", Commands: []string{"aa"}, Comment: "workflow apply"}
 	m, _ := configuredModel(t, cfg, true)
 	m.width = 100
 	m.height = 40
 
-	// Typing the "ap" alias must match atlantis-plan only. It must not also
-	// match atlantis-apply just because its description contains "ap".
+	// Typing the "ap" alias must match workflow-plan only. It must not also
+	// match workflow-apply just because its description contains "ap".
 	m = openCommandAndType(m, "ap")
 	panel := stripANSI(m.commandPanel())
-	if !strings.Contains(panel, `:ap  comment "atlantis plan"`) {
-		t.Fatalf("palette = %q, want :ap match for atlantis-plan", panel)
+	if !strings.Contains(panel, `:ap  comment "workflow plan"`) {
+		t.Fatalf("palette = %q, want :ap match for workflow-plan", panel)
 	}
 	if strings.Contains(panel, ":aa") {
-		t.Fatalf("palette = %q, should not match atlantis-apply via description", panel)
+		t.Fatalf("palette = %q, should not match workflow-apply via description", panel)
 	}
 	m = pressSpecial(m, tea.KeyEnter)
 	if m.mode != ModeConfirmCommand {
@@ -802,7 +802,7 @@ func TestHelpPanelShowsCuratedShortcuts(t *testing.T) {
 	model, _ := configuredModel(t, config.Default(), true)
 	panel := stripANSI(model.helpPanel())
 
-	for _, want := range []string{"Navigate", "↑/↓", "tab/shift+tab", "g/G", "pgdown/space", "Review", "1/2/3/4", "←/→", "next/previous file", "Actions", "open PR"} {
+	for _, want := range []string{"Navigate", "↑/↓", "tab/shift+tab", "g/G", "pgdown/space", "Review", "1/2/3", "←/→", "next/previous file", "Actions", "open PR"} {
 		if !strings.Contains(panel, want) {
 			t.Errorf("help = %q, missing %q", panel, want)
 		}
@@ -2008,34 +2008,105 @@ func TestLeftTruncatePath(t *testing.T) {
 	}
 }
 
-func TestFileSummaryUsesAvailablePathWidth(t *testing.T) {
+func groupedFileSummaryPR() model.PullRequest {
+	return model.PullRequest{Files: []model.ChangedFile{
+		{Path: "terraform/accounts/emea-staging/db/_provider.tf", Status: "modified", Deletions: 6},
+		{Path: "terraform/accounts/emea-staging/db/main.tf", Status: "modified", Deletions: 13},
+		{Path: "terraform/accounts/emea-staging/storage/databases.yaml", Status: "modified", Deletions: 18},
+		{Path: "README.md", Status: "added", Additions: 5},
+	}}
+}
+
+func TestFileSummaryGroupsFilesByDirectoryInAlignedColumns(t *testing.T) {
+	pr := groupedFileSummaryPR()
+	m := modelWithPRs([]model.PullRequest{pr}, 0)
+	m.summaryMode = SummaryModeFiles
+	m.fileIndex = -1
+	got := strings.Split(strings.TrimRight(stripANSI(m.summaryContent(pr, 60)), "\n"), "\n")
+	for i := range got {
+		got[i] = strings.TrimRight(got[i], " ")
+	}
+	want := []string{
+		"terraform/accounts/emea-staging/db/",
+		"  _provider.tf   modified +0  -6",
+		"  main.tf        modified +0 -13",
+		"terraform/accounts/emea-staging/storage/",
+		"  databases.yaml modified +0 -18",
+		"./",
+		"  README.md      added    +5  -0",
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("grouped file summary =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+func TestFileSummaryTruncatesHeadersAndNamesWithinPane(t *testing.T) {
 	pr := model.PullRequest{Files: []model.ChangedFile{{
-		Path: "terraform/accounts/sa.tf", Status: "modified", Additions: 5,
+		Path: "terraform/accounts/emea-staging/db/very_long_filename.tf", Status: "modified", Additions: 5,
 	}}}
 	m := modelWithPRs([]model.PullRequest{pr}, 0)
 	m.summaryMode = SummaryModeFiles
-	view := stripANSI(m.summaryPanel(40, 6))
+	view := stripANSI(m.summaryPanel(30, 6))
 	lines := strings.Split(view, "\n")
-	if got, want := strings.TrimRight(lines[0], " "), "…form/accounts/sa.tf modified +5 -0"; got != want {
-		t.Fatalf("file summary row = %q, want %q", got, want)
+	if got, want := strings.TrimRight(lines[0], " "), "…ccounts/emea-staging/db/"; got != want {
+		t.Fatalf("directory header = %q, want %q", got, want)
+	}
+	if got, want := strings.TrimRight(lines[1], " "), "  very_lo… modified +5 -0"; got != want {
+		t.Fatalf("file row = %q, want %q", got, want)
 	}
 	for _, line := range lines {
-		if lipgloss.Width(line) > 36 {
+		if lipgloss.Width(line) > 26 {
 			t.Fatalf("file summary exceeds pane width: %q", line)
 		}
 	}
-	for _, line := range lines[1:] {
+	for _, line := range lines[2:] {
 		if strings.TrimSpace(line) != "" {
 			t.Fatalf("file summary wrapped: %q", view)
 		}
 	}
 }
 
+func TestFileSummaryScrollAccountsForDirectoryHeaders(t *testing.T) {
+	pr := groupedFileSummaryPR()
+	m := modelWithPRs([]model.PullRequest{pr}, 0)
+	m.summaryMode = SummaryModeFiles
+	m.width = 120
+	m.height = 40
+	m.syncSummaryVP()
+	m.summaryVP.Height = 3
+
+	// databases.yaml renders on line 4 (headers on lines 0 and 3).
+	m.fileIndex = 2
+	m.syncSummaryVPScroll()
+	if m.summaryVP.YOffset != 2 {
+		t.Fatalf("YOffset scrolling down = %d, want 2", m.summaryVP.YOffset)
+	}
+
+	// README.md renders on line 6.
+	m.fileIndex = 3
+	m.syncSummaryVPScroll()
+	if m.summaryVP.YOffset != 4 {
+		t.Fatalf("YOffset scrolling to last file = %d, want 4", m.summaryVP.YOffset)
+	}
+
+	// Scrolling up to the first file of a group keeps its header visible.
+	m.fileIndex = 2
+	m.syncSummaryVPScroll()
+	if m.summaryVP.YOffset != 3 {
+		t.Fatalf("YOffset scrolling up = %d, want 3", m.summaryVP.YOffset)
+	}
+	m.fileIndex = 1
+	m.syncSummaryVPScroll()
+	if m.summaryVP.YOffset != 2 {
+		t.Fatalf("YOffset scrolling up within group = %d, want 2", m.summaryVP.YOffset)
+	}
+}
+
 func TestLeftColumnHeightsShiftByFocus(t *testing.T) {
 	m := minimalModel()
 	inboxH, summaryH := m.leftColumnHeights(20)
-	if inboxH != 16 || summaryH != 4 {
-		t.Fatalf("inbox focus heights = %d/%d, want 16/4", inboxH, summaryH)
+	if inboxH != 12 || summaryH != 8 {
+		t.Fatalf("inbox focus heights = %d/%d, want 12/8", inboxH, summaryH)
 	}
 	m.focus = FocusSummary
 	m.mode = ModeDetail
@@ -2054,10 +2125,6 @@ func TestNumberKeysSwitchSummaryModeGlobally(t *testing.T) {
 	m = pressKey(m, "3")
 	if m.summaryMode != SummaryModeComments {
 		t.Fatalf("summaryMode after 3 = %v, want %v", m.summaryMode, SummaryModeComments)
-	}
-	m = pressKey(m, "4")
-	if m.summaryMode != SummaryModeAtlantis {
-		t.Fatalf("summaryMode after 4 = %v, want %v", m.summaryMode, SummaryModeAtlantis)
 	}
 	m = pressKey(m, "1")
 	if m.summaryMode != SummaryModeFiles {
@@ -2114,64 +2181,6 @@ func TestApprovalViewUsesModalOverlayWhenSized(t *testing.T) {
 	}
 }
 
-func TestAtlantisSummaryShowsCondensedPlan(t *testing.T) {
-	m := modelWithPRs([]model.PullRequest{{
-		Number: 1,
-		Repo:   "org/repo",
-		Title:  "title",
-		Author: "author",
-		AtlantisPlan: &model.AtlantisPlan{
-			Author:  "atlantis",
-			Summary: "Plan: 1 to add, 2 to change, 3 to destroy",
-			Add:     1,
-			Change:  2,
-			Destroy: 3,
-			Body:    "noisy raw body",
-			Layers: []model.AtlantisLayer{
-				{Name: "network/prod", Add: 1, Change: 2, Destroy: 3},
-				{Name: "app/dev", NoChanges: true},
-			},
-		},
-	}}, 0)
-	m.width = 60
-	m.height = 16
-	m.summaryMode = SummaryModeAtlantis
-
-	view := stripANSI(m.summaryPanel(m.width, m.height))
-	if !strings.Contains(view, "Atlantis plan") || !strings.Contains(view, "+1 ~2 -3") || !strings.Contains(view, "Changes") || !strings.Contains(view, "network/prod") || !strings.Contains(view, "No changes") || !strings.Contains(view, "app/dev") {
-		t.Fatalf("missing Atlantis summary: %q", view)
-	}
-	if strings.Contains(view, "noisy raw body") || strings.Contains(view, "Unknown") {
-		t.Fatalf("Atlantis summary should omit raw body and unknown label: %q", view)
-	}
-}
-
-func TestAtlantisSummaryUsesAffectedLayersForUncountedLayers(t *testing.T) {
-	m := modelWithPRs([]model.PullRequest{{
-		Number: 1,
-		Repo:   "org/repo",
-		AtlantisPlan: &model.AtlantisPlan{
-			Author:  "atlantis",
-			Summary: "Plan: 0 to add, 2 to change, 0 to destroy",
-			Change:  2,
-			Layers: []model.AtlantisLayer{
-				{Name: "terraform/accounts/prod / default", Unknown: true},
-			},
-		},
-	}}, 0)
-	m.width = 80
-	m.height = 16
-	m.summaryMode = SummaryModeAtlantis
-
-	view := stripANSI(m.summaryPanel(m.width, m.height))
-	if !strings.Contains(view, "Affected layers") || !strings.Contains(view, "terraform/accounts/prod / default") {
-		t.Fatalf("missing affected layers: %q", view)
-	}
-	if strings.Contains(view, "Unknown") || strings.Contains(view, "Plan Summary") || strings.Contains(view, "unchanged attributes hidden") {
-		t.Fatalf("Atlantis summary leaked noisy labels: %q", view)
-	}
-}
-
 func TestCommentSummaryStripsEmojiShortcodes(t *testing.T) {
 	m := modelWithPRs([]model.PullRequest{{
 		Number: 1,
@@ -2203,7 +2212,7 @@ func TestCommentSummaryWrapsLongLines(t *testing.T) {
 		Title:  "title",
 		Author: "author",
 		Comments: []model.PRComment{{
-			Author: "atlantis",
+			Author: "bot",
 			Body:   strings.Repeat("0123456789", 12),
 		}},
 	}}, 0)
@@ -2398,10 +2407,10 @@ func TestSummaryHeaderShowsActiveModeAndFooterDropsShortcut(t *testing.T) {
 	m.focus = FocusSummary
 	m.summaryMode = SummaryModeCommits
 	view := m.View()
-	if strings.Contains(view, "1/2/3/4 summary") {
+	if strings.Contains(view, "1/2/3 summary") {
 		t.Fatalf("footer still shows summary shortcut: %q", view)
 	}
-	if !strings.Contains(stripANSI(view), "Summary [1] [2 commits] [3] [4]") {
+	if !strings.Contains(stripANSI(view), "Summary [1] [2 commits] [3]") {
 		t.Fatalf("summary header missing mode numbers: %q", view)
 	}
 }

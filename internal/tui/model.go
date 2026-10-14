@@ -116,7 +116,6 @@ const (
 	SummaryModeFiles SummaryMode = iota
 	SummaryModeCommits
 	SummaryModeComments
-	SummaryModeAtlantis
 )
 
 func (m SummaryMode) String() string {
@@ -125,8 +124,6 @@ func (m SummaryMode) String() string {
 		return "commits"
 	case SummaryModeComments:
 		return "comments"
-	case SummaryModeAtlantis:
-		return "atlantis"
 	default:
 		return "files"
 	}

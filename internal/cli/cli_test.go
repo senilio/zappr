@@ -52,6 +52,13 @@ func TestUsageTextOmitsAIReview(t *testing.T) {
 	}
 }
 
+func TestUsageTextOnlyIncludesThreeSummaryShortcuts(t *testing.T) {
+	text := usageText()
+	if !strings.Contains(text, "1/2/3 summary") || strings.Contains(text, "1/2/3/4") {
+		t.Fatalf("usage text should show only three summary shortcuts: %q", text)
+	}
+}
+
 func TestNewAppUsesNoopAI(t *testing.T) {
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	zappr, err := newApp(config.Default())

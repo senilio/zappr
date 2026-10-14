@@ -11,16 +11,16 @@ import (
 )
 
 func TestCommentSummaryRendersMarkdown(t *testing.T) {
-	body := "# Plan\n\nTo **apply** this _plan_, use `atlantis apply`.\n\n" +
+	body := "# Plan\n\nTo **apply** this _plan_, use `make apply`.\n\n" +
 		"- First item\n- [Workflow](https://example.com/run)\n\n" +
 		"<details><summary>Show Output</summary>\n\n```diff\n+ added\n- removed\n unchanged\n```\n</details>\n\n" +
-		"<!-- hidden bot marker -->\n\n```shell\natlantis plan\n```"
+		"<!-- hidden bot marker -->\n\n```shell\nmake plan\n```"
 	pr := model.PullRequest{Comments: []model.PRComment{{Author: "bot", Body: body}}}
 	m := modelWithPRs([]model.PullRequest{pr}, 0)
 	var b strings.Builder
 	m.writeCommentSummary(&b, pr, 100)
 	view := stripANSI(b.String())
-	for _, want := range []string{"Plan", "To apply this plan, use atlantis apply.", "First item", "Workflow", "https://example.com/run", "Show Output", "+ added", "- removed", " unchanged", "atlantis plan"} {
+	for _, want := range []string{"Plan", "To apply this plan, use make apply.", "First item", "Workflow", "https://example.com/run", "Show Output", "+ added", "- removed", " unchanged", "make plan"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("rendered comment missing %q: %q", want, view)
 		}
@@ -85,7 +85,7 @@ func TestCommentMarkdownLooseAndNestedLists(t *testing.T) {
 		want []string
 	}{
 		{"- First\n\n- Second", []string{"• First", "• Second"}},
-		{"1. Apply\n\n   More context\n\n   ```shell\n   atlantis apply\n   ```\n\n2. Next", []string{"1. Apply", "   More context", "   atlantis apply", "2. Next"}},
+		{"1. Apply\n\n   More context\n\n   ```shell\n   make apply\n   ```\n\n2. Next", []string{"1. Apply", "   More context", "   make apply", "2. Next"}},
 		{"- Parent\n  - Nested\n\n    More detail\n- Next", []string{"• Parent", "  • Nested", "    More detail", "• Next"}},
 	} {
 		view := stripANSI(m.renderCommentMarkdown(tc.body))

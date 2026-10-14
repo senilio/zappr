@@ -1,7 +1,7 @@
 # zappr
 
 [![CI](https://github.com/senilio/zappr/actions/workflows/ci.yml/badge.svg)](https://github.com/senilio/zappr/actions/workflows/ci.yml)
-[![Go](https://img.shields.io/badge/Go-1.25%2B-00ADD8?logo=go)](https://go.dev/)
+[![Go](https://img.shields.io/badge/Go-1.26%2B-00ADD8?logo=go)](https://go.dev/)
 
 Terminal-first pull request inbox for fast, human-owned GitHub review triage.
 
@@ -57,7 +57,7 @@ Homebrew support not available yet; track releases or build from source.
 
 ## Requirements
 
-- Go 1.25+
+- Go 1.26+
 - GitHub CLI: `gh`
 - Authenticated GitHub CLI session: `gh auth login`
 
@@ -94,7 +94,7 @@ y            confirm
 tab          cycle focus
 g/G          top / bottom of list
 shift-up/down previous / next file or commit
-1/2/3/4      summary pane: files / commits / comments / Atlantis plan
+1/2/3        summary pane: files / commits / comments
 f            filters / settings
 ?            help
 :            command palette (vim-style colon commands)
@@ -110,8 +110,8 @@ diff, `x` expands file content, `n`/`p` and `[`/`]` move between files or
 commits, `o` opens the PR, and `C` copies its URL. Command palette operations
 below are also configurable where listed.
 
-The summary pane starts on changed files and can switch to commits, PR
-conversation comments, or Atlantis plan output with `1`, `2`, `3`, and `4`.
+The summary pane starts on changed files and can switch to commits or PR
+conversation comments with `1`, `2`, and `3`.
 Long lines are hard-truncated in all panes; diffs use horizontal scrolling
 instead of wrapping. Keyboard shortcuts are always available via `?`.
 Inbox title badges show `[auto]` when auto-merge is enabled and `[draft]` for draft PRs.
@@ -182,7 +182,6 @@ actions:
   approve: { operation: approve, keys: [a], confirm: true }
   approve-now: { operation: approve, keys: [A], confirm: false }
   comment: { operation: comment, keys: [c] }
-  plan: { operation: comment, keys: [P], commands: [ap], comment: "atlantis plan" }
 ```
 
 Configurable built-in IDs: `open-pr`, `copy-pr-url`, `refresh-pr`,
@@ -200,7 +199,7 @@ confirms by default. Set `confirm: false` for immediate approval or static
 comment actions.
 
 Custom IDs use lowercase letters, digits, and hyphens. Removed named action IDs
-such as `approve-with-confirmation`, `write-comment`, and `atlantis-plan` fail
+`approve-with-confirmation`, `approve-immediately`, and `write-comment` fail
 with a migration error: use `operation: approve` or `operation: comment`
 instead. Saving rewrites the YAML file, so comments and formatting are not
 preserved.
@@ -213,11 +212,72 @@ match if needed).
 zappr rewrites the entire YAML file when saving theme or sort settings. YAML
 comments, formatting, and field ordering are not preserved.
 
+### Optional configuration recipes
+
+These are personal configuration examples, not application defaults. Merge the
+fields you want into your config; combine action entries under a single
+`actions` mapping rather than adding duplicate mappings.
+
+#### Refresh, drafts, and shortcuts
+
+Refresh every minute, include draft PRs, and add `M` to merge and `U` to update
+the branch. The built-in `:merge` and `:update` commands and their confirmations
+remain unchanged. The custom `:review` command posts the literal comment
+`review` after confirmation; it does not submit a GitHub review.
+
+```yaml
+refresh:
+  interval: 1m
+hide_drafts: false
+actions:
+  merge-pr: { keys: [M] }
+  update-branch: { keys: [U] }
+  review:
+    operation: comment
+    commands: [review]
+    comment: review
+```
+
+#### Atlantis comment commands
+
+For repositories that already use Atlantis, generic comment actions can post
+its commands. The action IDs and aliases below are user-defined; zappr has no
+built-in Atlantis actions or dedicated plan view. Bot replies remain available
+in the Comments summary (`3`).
+
+```yaml
+actions:
+  atlantis-plan:
+    operation: comment
+    keys: [P]
+    commands: [ap]
+    comment: atlantis plan
+    confirm: false
+  atlantis-apply:
+    operation: comment
+    commands: [aa]
+    comment: atlantis apply
+  atlantis-cancel:
+    operation: comment
+    commands: [ac]
+    comment: atlantis cancel
+  atlantis-unlock:
+    operation: comment
+    commands: [au]
+    comment: atlantis unlock
+```
+
+In this example, `P` or `:ap` posts the plan command immediately because
+`confirm: false` is explicit. Omit that field to require confirmation. Apply,
+cancel, and unlock confirm by default; posting those comments may trigger
+infrastructure changes or affect Atlantis state.
+
 ## Release
 
-GitHub Releases contain prebuilt Darwin and Linux archives, `checksums.txt`,
-SBOM documents, and build provenance. Download the archive for your platform
-and verify it against `checksums.txt` before extracting it.
+Tagged releases are configured to publish prebuilt Darwin and Linux archives,
+`checksums.txt`, and SBOM documents to GitHub Releases, and generate GitHub
+build-provenance attestations. Download the archive for your platform and
+verify it against `checksums.txt` before extracting it.
 
 Maintainers update `CHANGELOG.md`, create an annotated `vX.Y.Z` tag, and push
 the tag to publish release artifacts:
@@ -226,6 +286,10 @@ the tag to publish release artifacts:
 git tag -a vX.Y.Z -m "vX.Y.Z"
 git push origin vX.Y.Z
 ```
+
+The release workflow runs the existing CI checks against the tagged commit
+before publishing. Private vulnerability reporting must be enabled and
+verified when making the repository public; see [SECURITY.md](SECURITY.md).
 
 ## Cache
 

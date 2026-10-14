@@ -151,11 +151,6 @@ func DefaultActions() map[string]ActionConfig {
 		"update-branch":       {Commands: []string{"update"}},
 		"request-changes":     {Commands: []string{"block"}},
 		"merge-pr":            {Commands: []string{"merge"}},
-		"atlantis-apply":      {Operation: "comment", Commands: []string{"aa"}, Comment: "atlantis apply", Confirm: &confirmed},
-		"atlantis-cancel":     {Operation: "comment", Commands: []string{"ac"}, Comment: "atlantis cancel", Confirm: &confirmed},
-		"atlantis-plan":       {Operation: "comment", Keys: []string{"P"}, Commands: []string{"ap"}, Comment: "atlantis plan", Confirm: &immediate},
-		"atlantis-unlock":     {Operation: "comment", Keys: []string{"U"}, Commands: []string{"au"}, Comment: "atlantis unlock", Confirm: &confirmed},
-		"review":              {Operation: "comment", Commands: []string{"review"}, Comment: "review", Confirm: &confirmed},
 	}
 }
 
@@ -166,7 +161,6 @@ func FixedActions() map[string]ActionConfig {
 		"summary-files":               {Keys: []string{"1"}},
 		"summary-commits":             {Keys: []string{"2"}},
 		"summary-comments":            {Keys: []string{"3"}},
-		"summary-atlantis":            {Keys: []string{"4"}},
 		"focus-next":                  {Keys: []string{"tab"}},
 		"focus-prev":                  {Keys: []string{"shift+tab"}},
 		"go-top":                      {Keys: []string{"g"}},

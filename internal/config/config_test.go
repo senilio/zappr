@@ -145,28 +145,6 @@ actions:
     operation: approve
     keys: [A]
     confirm: false
-  atlantis-apply:
-    operation: comment
-    commands: [aa]
-    comment: atlantis apply
-    confirm: true
-  atlantis-cancel:
-    operation: comment
-    commands: [ac]
-    comment: atlantis cancel
-    confirm: true
-  atlantis-plan:
-    operation: comment
-    keys: [P]
-    commands: [ap]
-    comment: atlantis plan
-    confirm: false
-  atlantis-unlock:
-    operation: comment
-    keys: [U]
-    commands: [au]
-    comment: atlantis unlock
-    confirm: true
   close-pr:
     commands: [close]
   comment:
@@ -186,11 +164,6 @@ actions:
     keys: [r]
   request-changes:
     commands: [block]
-  review:
-    operation: comment
-    commands: [review]
-    comment: review
-    confirm: true
   toggle-automerge:
     commands: [automerge]
   toggle-diff:
@@ -352,7 +325,7 @@ func TestLoadRejectsInvalidGenericActions(t *testing.T) {
 	}
 }
 
-func TestLoadAllowsAtlantisActionNames(t *testing.T) {
+func TestLoadAllowsCustomWorkflowActionOnFourthKey(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "config")
 	t.Setenv("XDG_CONFIG_HOME", dir)
 
@@ -363,7 +336,7 @@ func TestLoadAllowsAtlantisActionNames(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	data := "actions:\n  atlantis-plan:\n    operation: comment\n    comment: atlantis plan\n    commands: [ap]\n"
+	data := "actions:\n  workflow-plan:\n    operation: comment\n    comment: workflow plan\n    keys: ['4']\n    commands: [wp]\n"
 	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
@@ -372,8 +345,8 @@ func TestLoadAllowsAtlantisActionNames(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if action := cfg.Actions["atlantis-plan"]; action.Operation != "comment" || action.Comment != "atlantis plan" {
-		t.Fatalf("atlantis-plan = %#v", action)
+	if action := cfg.Actions["workflow-plan"]; action.Operation != "comment" || action.Comment != "workflow plan" || !reflect.DeepEqual(action.Keys, []string{"4"}) {
+		t.Fatalf("workflow-plan = %#v", action)
 	}
 }
 

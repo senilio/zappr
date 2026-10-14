@@ -78,7 +78,7 @@ func (m Model) inboxView() string {
 		}
 		fmt.Fprintf(&b, "%s\n", line)
 	}
-	fmt.Fprintf(&b, "\n%s/%s navigate  %s inspect  %s refresh  %s toggle diff  %s/%s/%s/%s summary\n", m.actionAlias("move-down"), m.actionAlias("move-up"), m.actionAlias("inspect-pr"), m.actionAlias("refresh-pr"), m.actionAlias("toggle-diff"), m.actionAlias("summary-files"), m.actionAlias("summary-commits"), m.actionAlias("summary-comments"), m.actionAlias("summary-atlantis"))
+	fmt.Fprintf(&b, "\n%s/%s navigate  %s inspect  %s refresh  %s toggle diff  %s/%s/%s summary\n", m.actionAlias("move-down"), m.actionAlias("move-up"), m.actionAlias("inspect-pr"), m.actionAlias("refresh-pr"), m.actionAlias("toggle-diff"), m.actionAlias("summary-files"), m.actionAlias("summary-commits"), m.actionAlias("summary-comments"))
 	return b.String()
 }
 
@@ -102,7 +102,7 @@ func (m Model) detailView() string {
 	for _, file := range pr.Files {
 		fmt.Fprintf(&b, "%-8s %s (+%d -%d)\n", file.Status, file.Path, file.Additions, file.Deletions)
 	}
-	fmt.Fprintf(&b, "\n%s refresh  %s toggle diff  %s full diff pager  %s/%s/%s/%s summary  %s inbox\n", m.actionAlias("refresh-pr"), m.actionAlias("toggle-diff"), m.actionAlias("open-diff-pager"), m.actionAlias("summary-files"), m.actionAlias("summary-commits"), m.actionAlias("summary-comments"), m.actionAlias("summary-atlantis"), m.actionAlias("back-to-inbox"))
+	fmt.Fprintf(&b, "\n%s refresh  %s toggle diff  %s full diff pager  %s/%s/%s summary  %s inbox\n", m.actionAlias("refresh-pr"), m.actionAlias("toggle-diff"), m.actionAlias("open-diff-pager"), m.actionAlias("summary-files"), m.actionAlias("summary-commits"), m.actionAlias("summary-comments"), m.actionAlias("back-to-inbox"))
 	return b.String()
 }
 
@@ -199,7 +199,7 @@ func (m Model) helpPanel() string {
 		shortcut{m.actionAlias("quit"), "quit"},
 	)
 	section("Review",
-		shortcut{"1/2/3/4", "files/commits/comments/Atlantis"},
+		shortcut{"1/2/3", "files/commits/comments"},
 		shortcut{"shift+↑/↓", "next/previous file/commit"},
 		shortcut{m.actionAlias("toggle-diff"), "toggle diff"},
 		shortcut{"←/→", "pan diff/commits"},
@@ -650,7 +650,7 @@ func (m Model) diffPaneOuterWidth() int {
 // leftColumnHeights returns stable pane heights for left column.
 func (m Model) leftColumnHeights(height int) (inboxH, summaryH int) {
 	if m.focus == FocusInbox || m.mode == ModeInbox {
-		inboxH = max(8, height*80/100)
+		inboxH = max(8, height*64/100)
 	} else {
 		summaryH = max(8, height*80/100)
 		inboxH = max(4, height-summaryH)
@@ -694,7 +694,6 @@ func (m Model) summaryTitle() string {
 		m.summaryModeTitle("summary-files", SummaryModeFiles),
 		m.summaryModeTitle("summary-commits", SummaryModeCommits),
 		m.summaryModeTitle("summary-comments", SummaryModeComments),
-		m.summaryModeTitle("summary-atlantis", SummaryModeAtlantis),
 	}
 	return "Summary " + strings.Join(parts, " ")
 }
@@ -1064,8 +1063,6 @@ func (m Model) summaryContent(pr model.PullRequest, innerW int) string {
 		m.writeCommitSummary(&b, pr, innerW)
 	case SummaryModeComments:
 		m.writeCommentSummary(&b, pr, innerW)
-	case SummaryModeAtlantis:
-		m.writeAtlantisSummary(&b, pr, innerW)
 	default:
 		m.writeFileSummary(&b, pr, innerW)
 	}
@@ -1076,38 +1073,73 @@ func (m Model) summaryContent(pr model.PullRequest, innerW int) string {
 	return b.String()
 }
 
+const fileSummaryIndent = "  "
+
+// splitFileDir splits a changed-file path into its directory (with a trailing
+// "/", or "./" for repository-root files) and its base name.
+func splitFileDir(path string) (dir, name string) {
+	i := strings.LastIndex(path, "/")
+	if i < 0 {
+		return "./", path
+	}
+	return path[:i+1], path[i+1:]
+}
+
+// fileSummaryLines returns the rendered line of each file in the Files
+// summary, where a directory header precedes each run of files sharing a
+// directory.
+func fileSummaryLines(files []model.ChangedFile) []int {
+	lines := make([]int, len(files))
+	line, prevDir := 0, ""
+	for i, file := range files {
+		dir, _ := splitFileDir(file.Path)
+		if i == 0 || dir != prevDir {
+			line++
+			prevDir = dir
+		}
+		lines[i] = line
+		line++
+	}
+	return lines
+}
+
 func (m Model) writeFileSummary(b *strings.Builder, pr model.PullRequest, innerW int) {
 	s := m.theme.Styles
-	for i, file := range pr.Files {
-		status := truncateANSIWidth(s.Muted.Render(file.Status), 10)
-		add := s.Add.Render(fmt.Sprintf("+%d", file.Additions))
-		del := s.Delete.Render(fmt.Sprintf("-%d", file.Deletions))
-		// Right-align: "add del" at innerW-1 (1 space from right edge).
-		rightPart := add + " " + del
-		rightW := lipgloss.Width(stripANSI(add)) + 1 + lipgloss.Width(stripANSI(del))
-		statusW := lipgloss.Width(stripANSI(status))
-		// pathW: available width for the path column.
-		// Layout: path [gap] status [space] rightPart [space from edge]
-		// Total used = statusW + 1 + rightW + 1 (right margin)
-		rightTotalW := statusW + 1 + rightW + 1
-		pathW := max(1, innerW-rightTotalW-1) // -1 for space between path and status
-		// Left-truncate so the filename (rightmost segment) stays visible.
-		truncPath := leftTruncatePath(file.Path, pathW)
-		var pathStr string
-		if i == m.fileIndex {
-			pathStr = s.File.Render(truncPath)
-		} else {
-			pathStr = truncPath
-		}
-		pathVisW := lipgloss.Width(truncPath)
-		// Right-align paths within the path column: left-pad so filename ends
-		// flush against the status column.
-		leftPad := max(0, pathW-pathVisW)
-		row := strings.Repeat(" ", leftPad) + pathStr + " " + status + " " + rightPart
-		fmt.Fprintf(b, "%s\n", truncateANSIWidth(row, innerW))
-	}
 	if len(pr.Files) == 0 {
 		b.WriteString(s.Muted.Render("no changed files") + "\n")
+		return
+	}
+	var nameW, statusW, addW, delW int
+	for _, file := range pr.Files {
+		_, name := splitFileDir(file.Path)
+		nameW = max(nameW, ansi.StringWidth(name))
+		statusW = max(statusW, min(10, ansi.StringWidth(file.Status)))
+		addW = max(addW, len(fmt.Sprintf("+%d", file.Additions)))
+		delW = max(delW, len(fmt.Sprintf("-%d", file.Deletions)))
+	}
+	// Layout: indent name [space] status [space] add [space] del [right margin]
+	rightW := 1 + statusW + 1 + addW + 1 + delW
+	nameW = max(1, min(nameW, innerW-len(fileSummaryIndent)-rightW-1))
+	prevDir := ""
+	for i, file := range pr.Files {
+		dir, name := splitFileDir(file.Path)
+		if i == 0 || dir != prevDir {
+			// Left-truncate directories so the deepest segments stay visible.
+			header := s.Muted.Render(leftTruncatePath(dir, max(1, innerW-1)))
+			fmt.Fprintf(b, "%s\n", truncateANSIWidth(header, innerW))
+			prevDir = dir
+		}
+		name = ansi.Truncate(name, nameW, "…")
+		namePad := strings.Repeat(" ", max(0, nameW-ansi.StringWidth(name)))
+		if i == m.fileIndex {
+			name = s.File.Render(name)
+		}
+		status := truncateANSIWidth(file.Status, statusW)
+		status += strings.Repeat(" ", max(0, statusW-ansi.StringWidth(status)))
+		add := fmt.Sprintf("%*s", addW, fmt.Sprintf("+%d", file.Additions))
+		del := fmt.Sprintf("%*s", delW, fmt.Sprintf("-%d", file.Deletions))
+		row := fileSummaryIndent + name + namePad + " " + s.Muted.Render(status) + " " + s.Add.Render(add) + " " + s.Delete.Render(del)
+		fmt.Fprintf(b, "%s\n", truncateANSIWidth(row, innerW))
 	}
 }
 
@@ -1164,77 +1196,6 @@ func (m Model) writeCommentSummary(b *strings.Builder, pr model.PullRequest, inn
 		}
 		if i < len(pr.Comments)-1 {
 			b.WriteByte('\n')
-		}
-	}
-}
-
-func (m Model) writeAtlantisSummary(b *strings.Builder, pr model.PullRequest, innerW int) {
-	s := m.theme.Styles
-	if pr.AtlantisPlan == nil {
-		b.WriteString(s.Muted.Render("no Atlantis plan output found") + "\n")
-		return
-	}
-	plan := pr.AtlantisPlan
-	b.WriteString(s.Subtitle.Render("Atlantis plan") + "\n")
-	if plan.Summary != "" {
-		b.WriteString(truncatePaneLineWidth(plan.Summary, innerW) + "\n")
-	}
-	meta := plan.Author
-	if !plan.CreatedAt.IsZero() {
-		meta += " · " + plan.CreatedAt.Format("2006-01-02 15:04")
-	}
-	if meta != "" {
-		b.WriteString(truncatePaneLineWidth(s.Muted.Render(meta), innerW) + "\n")
-	}
-	if !plan.NoChanges {
-		counts := fmt.Sprintf("+%d ~%d -%d", plan.Add, plan.Change, plan.Destroy)
-		b.WriteString(truncatePaneLineWidth(s.Add.Render(counts), innerW) + "\n")
-	}
-
-	changed, noChanges, affected := splitAtlantisLayers(plan.Layers)
-	if len(changed) == 0 && len(noChanges) == 0 && len(affected) == 0 {
-		if plan.NoChanges {
-			noChanges = []model.AtlantisLayer{{Name: "overall", NoChanges: true}}
-		} else {
-			affected = []model.AtlantisLayer{{Name: "overall", Add: plan.Add, Change: plan.Change, Destroy: plan.Destroy, Unknown: true}}
-		}
-	}
-	writeAtlantisLayerGroup(b, m, "Changes", changed, innerW)
-	writeAtlantisLayerGroup(b, m, "Affected layers", affected, innerW)
-	writeAtlantisLayerGroup(b, m, "No changes", noChanges, innerW)
-}
-
-func splitAtlantisLayers(layers []model.AtlantisLayer) (changed, noChanges, affected []model.AtlantisLayer) {
-	for _, layer := range layers {
-		hasCounts := layer.Add != 0 || layer.Change != 0 || layer.Destroy != 0
-		switch {
-		case hasCounts:
-			changed = append(changed, layer)
-		case layer.NoChanges:
-			noChanges = append(noChanges, layer)
-		default:
-			affected = append(affected, layer)
-		}
-	}
-	return changed, noChanges, affected
-}
-
-func writeAtlantisLayerGroup(b *strings.Builder, m Model, title string, layers []model.AtlantisLayer, innerW int) {
-	if len(layers) == 0 {
-		return
-	}
-	s := m.theme.Styles
-	b.WriteByte('\n')
-	b.WriteString(s.Subtitle.Render(title) + "\n")
-	for _, layer := range layers {
-		line := "- " + layer.Name
-		if layer.Add != 0 || layer.Change != 0 || layer.Destroy != 0 {
-			line += fmt.Sprintf(" (+%d ~%d -%d)", layer.Add, layer.Change, layer.Destroy)
-		}
-		if title == "Changes" {
-			b.WriteString(truncatePaneLineWidth(s.Add.Render(line), innerW) + "\n")
-		} else {
-			b.WriteString(truncatePaneLineWidth(line, innerW) + "\n")
 		}
 	}
 }

@@ -15,8 +15,12 @@ zappr is a Go terminal app for pull request triage. It uses Bubble Tea for TUI, 
 
 ## Git Workflow
 
-- Work on a normal branch in the main checkout; do not use git worktrees.
-- When the work is done and validated, merge the branch into local `main` and delete the branch.
+- Work directly on `main` in the primary checkout.
+- Do not create branches, worktrees, or pull requests unless explicitly requested.
+- This repository workflow overrides conflicting global Git workflow defaults and branch or isolation requirements in development skills.
+- Preserve unrelated changes. If another branch is checked out, ask before switching.
+- Run the required validation before committing.
+- Commit and push directly to `main` only when requested.
 
 ## Development Commands
 
@@ -66,7 +70,7 @@ Use `rtk go test ./...` if available in the environment.
 - Approvals and request changes use `gh pr review`; comments use `gh pr comment`.
 - Approval is permitted whenever the user chooses; zappr does not auto-gate by risk.
 - Network/auth/rate-limit failures should surface as user-readable errors.
-- `ToggleDraft`: uses `gh pr edit --draft` (to draft) or `gh pr ready` (to undraft).
+- `ToggleDraft`: uses `gh pr ready --undo` (to draft) or `gh pr ready` (to undraft).
 - `ClosePR`: uses `gh pr close`; optionally posts a comment first.
 - `UpdateBranch`: uses `gh pr update-branch`.
 - `RequestChanges`: uses `gh pr review --request-changes`.

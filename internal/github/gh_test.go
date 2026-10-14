@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/senilio/zappr/internal/model"
 )
 
 func TestParseTime(t *testing.T) {
@@ -117,6 +119,34 @@ func testShellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
 
+func TestToggleDraft(t *testing.T) {
+	for _, draft := range []bool{true, false} {
+		t.Run(fmt.Sprint(draft), func(t *testing.T) {
+			dir := t.TempDir()
+			argsPath := filepath.Join(dir, "args")
+			bin := filepath.Join(dir, "gh")
+			script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + testShellQuote(argsPath) + "\n"
+			if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := (&GHProvider{Bin: bin}).ToggleDraft(context.Background(), "owner/repo", 123, draft); err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(argsPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := "pr ready 123 --repo owner/repo"
+			if draft {
+				want = "pr ready 123 --repo owner/repo --undo"
+			}
+			if got := strings.Join(strings.Fields(string(data)), " "); got != want {
+				t.Fatalf("args = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
 func TestToggleAutoMerge(t *testing.T) {
 	for _, enabled := range []bool{true, false} {
 		t.Run(fmt.Sprint(enabled), func(t *testing.T) {
@@ -166,5 +196,22 @@ func TestGetPRAutoMergeState(t *testing.T) {
 				t.Fatalf("AutoMerge = %v, want %v", pr.AutoMerge, enabled)
 			}
 		})
+	}
+}
+
+func TestGetPRPreservesBotConversationComments(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "gh")
+	response := `{"number":7,"comments":[{"author":{"login":"bot"},"body":"Plan: 1 to add, 2 to change, 0 to destroy.","createdAt":"2026-01-02T03:04:05Z"}]}`
+	script := "#!/bin/sh\nprintf '%s' " + testShellQuote(response) + "\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake gh: %v", err)
+	}
+	pr, err := (&GHProvider{Bin: bin}).GetPR(context.Background(), "owner/repo", 7)
+	if err != nil {
+		t.Fatalf("GetPR: %v", err)
+	}
+	want := []model.PRComment{{Author: "bot", Body: "Plan: 1 to add, 2 to change, 0 to destroy.", CreatedAt: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)}}
+	if !pr.DetailsLoaded || !reflect.DeepEqual(pr.Comments, want) {
+		t.Fatalf("conversation comments not preserved: %#v", pr)
 	}
 }

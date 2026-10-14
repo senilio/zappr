@@ -165,7 +165,6 @@ func TestRefreshKeepsCachedDetailsWhenPRUnchanged(t *testing.T) {
 		UpdatedAt:     updated,
 		Commits:       []model.PRCommit{{OID: "abc"}},
 		Comments:      []model.PRComment{{Body: "hi"}},
-		AtlantisPlan:  &model.AtlantisPlan{},
 		DetailsLoaded: true,
 	}); err != nil {
 		t.Fatalf("Put: %v", err)
@@ -177,7 +176,7 @@ func TestRefreshKeepsCachedDetailsWhenPRUnchanged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Refresh: %v", err)
 	}
-	if len(prs) != 1 || prs[0].Title != "fresh" || !prs[0].DetailsLoaded || len(prs[0].Commits) != 1 || len(prs[0].Comments) != 1 || prs[0].AtlantisPlan == nil {
+	if len(prs) != 1 || prs[0].Title != "fresh" || !prs[0].DetailsLoaded || len(prs[0].Commits) != 1 || len(prs[0].Comments) != 1 {
 		t.Fatalf("cached details not preserved: %#v", prs)
 	}
 }
