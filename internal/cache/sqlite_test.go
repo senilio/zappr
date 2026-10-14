@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"database/sql"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -28,7 +29,7 @@ func TestOpenSQLitePrivateModes(t *testing.T) {
 	if mode := sqliteFileMode(t, path); mode != 0o600 {
 		t.Fatalf("database mode = %o, want 600", mode)
 	}
-	if err := store.Put(model.PullRequest{Repo: "owner/repo", Number: 1, Title: "T", Triage: model.Triage{Risk: model.RiskSafe}}); err != nil {
+	if err := store.Put(model.PullRequest{Repo: "owner/repo", Number: 1, Title: "T"}); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
 	sidecars := []string{path + "-wal", path + "-shm"}
@@ -97,7 +98,6 @@ func TestSQLiteStorePersistsPRs(t *testing.T) {
 		CIStatus:  "passing",
 		Draft:     true,
 		AutoMerge: true,
-		Triage:    model.Triage{Risk: model.RiskSafe, Summary: "docs-only"},
 	}
 	if err := store.Put(pr); err != nil {
 		t.Fatalf("Put: %v", err)
@@ -125,8 +125,8 @@ func TestSQLiteStorePersistsPRs(t *testing.T) {
 	if !prs[0].Draft || !prs[0].AutoMerge {
 		t.Fatal("PR state badges not persisted")
 	}
-	if prs[0].Triage.Risk != model.RiskSafe {
-		t.Fatalf("risk = %s", prs[0].Triage.Risk)
+	if prs[0].Title != "Update docs" || prs[0].Author != "jane" || prs[0].CIStatus != "passing" {
+		t.Fatalf("PR details not persisted: %#v", prs[0])
 	}
 
 	if err := store2.SetSkip("owner/repo", 7, false); err != nil {
@@ -148,7 +148,7 @@ func TestSQLiteStoreClear(t *testing.T) {
 	}
 	defer store.Close()
 
-	if err := store.Put(model.PullRequest{Repo: "owner/repo", Number: 1, Title: "T", Triage: model.Triage{Risk: model.RiskReview}}); err != nil {
+	if err := store.Put(model.PullRequest{Repo: "owner/repo", Number: 1, Title: "T"}); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
 	if err := store.Clear(); err != nil {
@@ -173,7 +173,7 @@ func TestSQLiteStoreIgnoresRetiredCachedDetails(t *testing.T) {
 		t.Fatalf("Put: %v", err)
 	}
 	// Old cached rows must remain readable without retaining removed details.
-	data := `{"Repo":"owner/repo","Number":7,"Title":"Cached PR","Comments":[{"Author":"bot","Body":"Plan: 1 to add, 0 to change, 0 to destroy."}],"details_loaded":true,"atlantis_plan":{"summary":"legacy plan"}}`
+	data := `{"Repo":"owner/repo","Number":7,"Title":"Cached PR","Comments":[{"Author":"bot","Body":"Plan: 1 to add, 0 to change, 0 to destroy."}],"details_loaded":true,"atlantis_plan":{"summary":"legacy plan"},"Triage":{"risk":"safe","confidence":0.9,"summary":"old recommendation","AI":{"summary":"old AI recommendation"}}}`
 	if _, err := store.db.Exec("update pull_requests set data = ? where repo = ? and number = ?", data, "owner/repo", 7); err != nil {
 		t.Fatalf("write legacy data: %v", err)
 	}
@@ -204,8 +204,55 @@ func TestSQLiteStoreIgnoresRetiredCachedDetails(t *testing.T) {
 	if err := json.Unmarshal([]byte(data), &fields); err != nil {
 		t.Fatalf("decode rewritten data: %v", err)
 	}
-	if _, ok := fields["atlantis_plan"]; ok {
-		t.Fatal("rewritten cache still contains retired details")
+	for _, retired := range []string{"atlantis_plan", "Triage"} {
+		if _, ok := fields[retired]; ok {
+			t.Fatalf("rewritten cache still contains retired field %q", retired)
+		}
+	}
+}
+
+func TestSQLiteStoreMigratesLegacyRiskWithoutLosingPRs(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "zappr.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open legacy database: %v", err)
+	}
+	defer db.Close()
+	_, err = db.Exec(`create table pull_requests (
+		repo text not null, number integer not null, title text not null,
+		author text not null, risk text not null, ci_status text not null,
+		skipped integer not null default 0, data text not null,
+		updated_at text not null, primary key (repo, number)
+	);
+	create index idx_pull_requests_risk on pull_requests(risk);
+	insert into pull_requests values ('owner/repo', 7, 'Cached PR', 'user', 'safe', 'passing', 1,
+		'{"Repo":"owner/repo","Number":7,"Title":"Cached PR","Comments":[{"Body":"Keep this comment"}],"Triage":{"AI":{"summary":"old recommendation"}}}',
+		'2026-01-01T00:00:00Z');`)
+	if err != nil {
+		t.Fatalf("create legacy schema: %v", err)
+	}
+	for i := 0; i < 2; i++ {
+		store, err := OpenSQLite(path)
+		if err != nil {
+			t.Fatalf("open migrated database: %v", err)
+		}
+		pr, err := store.Get("owner/repo", 7)
+		if err != nil || pr.Title != "Cached PR" || !pr.Skipped || len(pr.Comments) != 1 || pr.Comments[0].Body != "Keep this comment" {
+			t.Fatalf("legacy PR lost: %#v, err = %v", pr, err)
+		}
+		var columns int
+		if err := store.db.QueryRow("select count(*) from pragma_table_info('pull_requests') where name = 'risk'").Scan(&columns); err != nil {
+			t.Fatalf("inspect migrated schema: %v", err)
+		}
+		if columns != 0 {
+			t.Fatal("legacy risk column still present")
+		}
+		if err := store.Put(pr); err != nil {
+			t.Fatalf("update migrated PR: %v", err)
+		}
+		if err := store.Close(); err != nil {
+			t.Fatalf("close migrated database: %v", err)
+		}
 	}
 }
 
@@ -217,9 +264,9 @@ func TestSQLiteStorePruneRepo(t *testing.T) {
 	defer store.Close()
 
 	for _, pr := range []model.PullRequest{
-		{Repo: "owner/repo", Number: 1, Title: "closed", Triage: model.Triage{Risk: model.RiskSafe}},
-		{Repo: "owner/repo", Number: 2, Title: "open", Triage: model.Triage{Risk: model.RiskSafe}},
-		{Repo: "other/repo", Number: 1, Title: "other", Triage: model.Triage{Risk: model.RiskSafe}},
+		{Repo: "owner/repo", Number: 1, Title: "closed"},
+		{Repo: "owner/repo", Number: 2, Title: "open"},
+		{Repo: "other/repo", Number: 1, Title: "other"},
 	} {
 		if err := store.Put(pr); err != nil {
 			t.Fatalf("Put: %v", err)
@@ -252,9 +299,9 @@ func TestSQLiteStoreListRepoScopesToRepo(t *testing.T) {
 	defer store.Close()
 
 	for _, pr := range []model.PullRequest{
-		{Repo: "owner/repo", Number: 1, Title: "a", Triage: model.Triage{Risk: model.RiskSafe}},
-		{Repo: "owner/repo", Number: 2, Title: "b", Triage: model.Triage{Risk: model.RiskSafe}},
-		{Repo: "other/repo", Number: 9, Title: "leftover", Triage: model.Triage{Risk: model.RiskSafe}},
+		{Repo: "owner/repo", Number: 1, Title: "a"},
+		{Repo: "owner/repo", Number: 2, Title: "b"},
+		{Repo: "other/repo", Number: 9, Title: "leftover"},
 	} {
 		if err := store.Put(pr); err != nil {
 			t.Fatalf("Put: %v", err)

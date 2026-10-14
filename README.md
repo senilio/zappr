@@ -9,9 +9,9 @@ zappr watches open pull requests and lets you inspect files, commits, PR convers
 
 ## Principles
 
-- Human approves; zappr only recommends.
+- Humans review and approve; GitHub review actions are explicit.
 - Terminal-only, local-first, no SaaS.
-- Fast triage over deep autonomous review.
+- Fast triage, fully manual review.
 - `gh` CLI is the initial GitHub provider.
 
 ## Install
@@ -51,10 +51,6 @@ go build -ldflags "-X github.com/senilio/zappr/internal/cli.Version=$(git descri
 
 Homebrew support not available yet; track releases or build from source.
 
-## Preview
-
-![zappr terminal mockup](docs/demo.svg)
-
 ## Requirements
 
 - Go 1.26+
@@ -72,7 +68,6 @@ zappr doctor
 ```sh
 zappr watch owner/repo        # open keyboard inbox
 zappr inbox owner/repo        # refresh and print inbox
-zappr review owner/repo#123   # analyze one PR
 zappr approve owner/repo#123  # user-triggered approve via gh pr review
 zappr config path             # print config path
 zappr config init             # create default config
@@ -81,6 +76,10 @@ zappr cache clear             # clear cached PRs
 zappr doctor                  # check gh, auth, cache
 zappr version                 # print version (also --version)
 ```
+
+Review PRs manually with `zappr watch`. The legacy `zappr review` command and
+automated recommendations have been removed. Approvals, comments, and
+request-changes remain explicit user actions.
 
 ## TUI Keys
 

@@ -5,13 +5,11 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
-	"github.com/senilio/zappr/internal/model"
 )
 
 type Palette struct {
 	Name    string
 	Safe    lipgloss.AdaptiveColor
-	Review  lipgloss.AdaptiveColor
 	Block   lipgloss.AdaptiveColor
 	Pending lipgloss.AdaptiveColor
 	Muted   lipgloss.AdaptiveColor
@@ -44,9 +42,6 @@ type Styles struct {
 	Error       lipgloss.Style
 	Success     lipgloss.Style
 	SuccessCI   lipgloss.Style
-	RiskSafe    lipgloss.Style
-	RiskReview  lipgloss.Style
-	RiskBlock   lipgloss.Style
 	Pending     lipgloss.Style
 	Add         lipgloss.Style
 	Delete      lipgloss.Style
@@ -94,15 +89,11 @@ func New(p Palette, profile termenv.Profile, noColor bool) Theme {
 		Error:       base.Bold(true).Foreground(p.Error),
 		Success:     base.Bold(true).Foreground(p.Safe),
 		SuccessCI:   base.Foreground(p.Safe),
-		RiskSafe:    base.Bold(true).Foreground(p.Safe),
-		RiskReview: base.Bold(true).
-			Foreground(p.Review),
-		RiskBlock: base.Bold(true).Foreground(p.Block),
-		Pending:   base.Bold(true).Foreground(p.Pending),
-		Add:       base.Foreground(p.Safe),
-		Delete:    base.Foreground(p.Block),
-		Hunk:      base.Foreground(p.Focus).Bold(true),
-		File:      base.Foreground(p.Focus).Bold(true),
+		Pending:     base.Bold(true).Foreground(p.Pending),
+		Add:         base.Foreground(p.Safe),
+		Delete:      base.Foreground(p.Block),
+		Hunk:        base.Foreground(p.Focus).Bold(true),
+		File:        base.Foreground(p.Focus).Bold(true),
 	}
 	if noColor {
 		styles = Styles{
@@ -119,9 +110,6 @@ func New(p Palette, profile termenv.Profile, noColor bool) Theme {
 			Error:       lipgloss.NewStyle().Bold(true),
 			Success:     lipgloss.NewStyle().Bold(true),
 			SuccessCI:   lipgloss.NewStyle(),
-			RiskSafe:    lipgloss.NewStyle().Bold(true),
-			RiskReview:  lipgloss.NewStyle().Bold(true),
-			RiskBlock:   lipgloss.NewStyle().Bold(true),
 			Pending:     lipgloss.NewStyle().Bold(true),
 			Add:         lipgloss.NewStyle(),
 			Delete:      lipgloss.NewStyle(),
@@ -136,7 +124,6 @@ func DarkDefault() Palette {
 	return Palette{
 		Name:    "dark",
 		Safe:    lipgloss.AdaptiveColor{Light: "#047857", Dark: "#4ade80"},
-		Review:  lipgloss.AdaptiveColor{Light: "#92400e", Dark: "#facc15"},
 		Block:   lipgloss.AdaptiveColor{Light: "#b91c1c", Dark: "#f87171"},
 		Pending: lipgloss.AdaptiveColor{Light: "#1d4ed8", Dark: "#60a5fa"},
 		Muted:   lipgloss.AdaptiveColor{Light: "#6b7280", Dark: "#9ca3af"},
@@ -153,7 +140,6 @@ func DarkANSI() Palette {
 	return Palette{
 		Name:    "ansi",
 		Safe:    lipgloss.AdaptiveColor{Light: "2", Dark: "2"},
-		Review:  lipgloss.AdaptiveColor{Light: "3", Dark: "3"},
 		Block:   lipgloss.AdaptiveColor{Light: "1", Dark: "1"},
 		Pending: lipgloss.AdaptiveColor{Light: "4", Dark: "4"},
 		Muted:   lipgloss.AdaptiveColor{Light: "8", Dark: "8"},
@@ -170,7 +156,6 @@ func NordPalette() Palette {
 	return Palette{
 		Name:    "nord",
 		Safe:    lipgloss.AdaptiveColor{Light: "#4CAF7D", Dark: "#a3be8c"},
-		Review:  lipgloss.AdaptiveColor{Light: "#B8860B", Dark: "#ebcb8b"},
 		Block:   lipgloss.AdaptiveColor{Light: "#BF616A", Dark: "#bf616a"},
 		Pending: lipgloss.AdaptiveColor{Light: "#5E81AC", Dark: "#81a1c1"},
 		Muted:   lipgloss.AdaptiveColor{Light: "#7B8EA8", Dark: "#4c566a"},
@@ -187,7 +172,6 @@ func GruvboxPalette() Palette {
 	return Palette{
 		Name:    "gruvbox",
 		Safe:    lipgloss.AdaptiveColor{Light: "#79740E", Dark: "#b8bb26"},
-		Review:  lipgloss.AdaptiveColor{Light: "#B57614", Dark: "#fabd2f"},
 		Block:   lipgloss.AdaptiveColor{Light: "#CC241D", Dark: "#fb4934"},
 		Pending: lipgloss.AdaptiveColor{Light: "#076678", Dark: "#83a598"},
 		Muted:   lipgloss.AdaptiveColor{Light: "#928374", Dark: "#928374"},
@@ -204,7 +188,6 @@ func CatppuccinPalette() Palette {
 	return Palette{
 		Name:    "catppuccin",
 		Safe:    lipgloss.AdaptiveColor{Light: "#40A02B", Dark: "#a6e3a1"},
-		Review:  lipgloss.AdaptiveColor{Light: "#DF8E1D", Dark: "#f9e2af"},
 		Block:   lipgloss.AdaptiveColor{Light: "#D20F39", Dark: "#f38ba8"},
 		Pending: lipgloss.AdaptiveColor{Light: "#1E66F5", Dark: "#89b4fa"},
 		Muted:   lipgloss.AdaptiveColor{Light: "#8C8FA1", Dark: "#585b70"},
@@ -221,7 +204,6 @@ func EverforestPalette() Palette {
 	return Palette{
 		Name:    "everforest",
 		Safe:    lipgloss.AdaptiveColor{Light: "#8DA101", Dark: "#a7c080"},
-		Review:  lipgloss.AdaptiveColor{Light: "#DFA000", Dark: "#dbbc7f"},
 		Block:   lipgloss.AdaptiveColor{Light: "#F85552", Dark: "#e67e80"},
 		Pending: lipgloss.AdaptiveColor{Light: "#3A94C5", Dark: "#7fbbb3"},
 		Muted:   lipgloss.AdaptiveColor{Light: "#939F91", Dark: "#859289"},
@@ -258,20 +240,6 @@ func PaletteByName(name string) Palette {
 		}
 	}
 	return DarkDefault()
-}
-
-func (t Theme) RiskBadge(r model.Risk) string {
-	label := strings.ToUpper(string(r))
-	switch r {
-	case model.RiskSafe:
-		return t.Styles.RiskSafe.Render("[" + label + " ok]")
-	case model.RiskReview:
-		return t.Styles.RiskReview.Render("[" + label + " !]")
-	case model.RiskBlock:
-		return t.Styles.RiskBlock.Render("[" + label + " x]")
-	default:
-		return t.Styles.Muted.Render("[unknown]")
-	}
 }
 
 func (t Theme) CIStatus(status string) string {

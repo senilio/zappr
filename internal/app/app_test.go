@@ -3,11 +3,9 @@ package app
 import (
 	"context"
 	"errors"
-	"fmt"
 	"testing"
 	"time"
 
-	"github.com/senilio/zappr/internal/ai"
 	"github.com/senilio/zappr/internal/cache"
 	"github.com/senilio/zappr/internal/model"
 )
@@ -46,11 +44,11 @@ func TestParseSortModeRoundTrips(t *testing.T) {
 
 func TestRefreshPrunesClosedPRs(t *testing.T) {
 	store := cache.NewMemoryStore()
-	if err := store.Put(model.PullRequest{Repo: "owner/repo", Number: 1, Title: "closed", Triage: model.Triage{Risk: model.RiskSafe}}); err != nil {
+	if err := store.Put(model.PullRequest{Repo: "owner/repo", Number: 1, Title: "closed"}); err != nil {
 		t.Fatalf("Put closed: %v", err)
 	}
-	provider := fakeGitHub{prs: []model.PullRequest{{Repo: "owner/repo", Number: 2, Title: "open", Triage: model.Triage{Risk: model.RiskSafe}}}}
-	zappr := New(provider, ai.NoopProvider{}, store)
+	provider := fakeGitHub{prs: []model.PullRequest{{Repo: "owner/repo", Number: 2, Title: "open"}}}
+	zappr := New(provider, store)
 
 	prs, err := zappr.Refresh(context.Background(), "owner/repo", false)
 	if err != nil {
@@ -66,7 +64,7 @@ func TestRefreshFiltersDraftsLocally(t *testing.T) {
 		{Repo: "owner/repo", Number: 1, Draft: true},
 		{Repo: "owner/repo", Number: 2},
 	}}
-	zappr := New(provider, ai.NoopProvider{}, store)
+	zappr := New(provider, store)
 
 	prs, err := zappr.Refresh(context.Background(), "owner/repo", false)
 	if err != nil {
@@ -83,12 +81,11 @@ func TestRefreshPreservesHiddenDraftCacheState(t *testing.T) {
 		Number:  1,
 		Draft:   true,
 		Skipped: true,
-		Triage:  model.Triage{AI: &model.AITriage{Summary: "cached"}},
 	}); err != nil {
 		t.Fatalf("Put draft: %v", err)
 	}
 	provider := fakeGitHub{prs: []model.PullRequest{{Repo: "owner/repo", Number: 1, Title: "fresh", Draft: true}}}
-	zappr := New(provider, ai.NoopProvider{}, store)
+	zappr := New(provider, store)
 
 	prs, err := zappr.Refresh(context.Background(), "owner/repo", false)
 	if err != nil {
@@ -101,7 +98,7 @@ func TestRefreshPreservesHiddenDraftCacheState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get draft: %v", err)
 	}
-	if cached.Title != "fresh" || !cached.Skipped || cached.Triage.AI == nil || cached.Triage.AI.Summary != "cached" {
+	if cached.Title != "fresh" || !cached.Skipped {
 		t.Fatalf("cached draft state not preserved: %#v", cached)
 	}
 }
@@ -115,7 +112,7 @@ func TestRefreshDoesNotPruneIncompleteList(t *testing.T) {
 		prs:        []model.PullRequest{{Repo: "owner/repo", Number: 2}},
 		incomplete: true,
 	}
-	zappr := New(provider, ai.NoopProvider{}, store)
+	zappr := New(provider, store)
 
 	prs, err := zappr.Refresh(context.Background(), "owner/repo", false)
 	if err != nil {
@@ -123,37 +120,6 @@ func TestRefreshDoesNotPruneIncompleteList(t *testing.T) {
 	}
 
 	assertOrder(t, prs, []int{2, 1})
-}
-
-// TestRefreshPreservesAITriage verifies that Refresh does not wipe an existing
-// AI triage result that was written by a prior Analyze call.
-func TestRefreshPreservesAITriage(t *testing.T) {
-	store := cache.NewMemoryStore()
-	aiResult := &model.AITriage{Summary: "looks fine"}
-	if err := store.Put(model.PullRequest{
-		Repo:   "owner/repo",
-		Number: 1,
-		Title:  "pr",
-		Triage: model.Triage{Risk: model.RiskSafe, AI: aiResult},
-	}); err != nil {
-		t.Fatalf("Put: %v", err)
-	}
-	provider := fakeGitHub{prs: []model.PullRequest{{Repo: "owner/repo", Number: 1, Title: "pr"}}}
-	zappr := New(provider, ai.NoopProvider{}, store)
-
-	prs, err := zappr.Refresh(context.Background(), "owner/repo", false)
-	if err != nil {
-		t.Fatalf("Refresh: %v", err)
-	}
-	if len(prs) != 1 {
-		t.Fatalf("expected 1 PR, got %d", len(prs))
-	}
-	if prs[0].Triage.AI == nil {
-		t.Fatal("Refresh wiped AI triage; expected it to be preserved")
-	}
-	if prs[0].Triage.AI.Summary != "looks fine" {
-		t.Fatalf("AI summary = %q, want %q", prs[0].Triage.AI.Summary, "looks fine")
-	}
 }
 
 func TestRefreshKeepsCachedDetailsWhenPRUnchanged(t *testing.T) {
@@ -170,7 +136,7 @@ func TestRefreshKeepsCachedDetailsWhenPRUnchanged(t *testing.T) {
 		t.Fatalf("Put: %v", err)
 	}
 	provider := fakeGitHub{prs: []model.PullRequest{{Repo: "owner/repo", Number: 1, Title: "fresh", UpdatedAt: updated}}}
-	zappr := New(provider, ai.NoopProvider{}, store)
+	zappr := New(provider, store)
 
 	prs, err := zappr.Refresh(context.Background(), "owner/repo", false)
 	if err != nil {
@@ -194,7 +160,7 @@ func TestRefreshDropsCachedDetailsWhenPRUpdated(t *testing.T) {
 		t.Fatalf("Put: %v", err)
 	}
 	provider := fakeGitHub{prs: []model.PullRequest{{Repo: "owner/repo", Number: 1, UpdatedAt: updated.Add(time.Minute)}}}
-	zappr := New(provider, ai.NoopProvider{}, store)
+	zappr := New(provider, store)
 
 	prs, err := zappr.Refresh(context.Background(), "owner/repo", false)
 	if err != nil {
@@ -205,19 +171,19 @@ func TestRefreshDropsCachedDetailsWhenPRUpdated(t *testing.T) {
 	}
 }
 
-func TestRefreshPRPreservesAITriage(t *testing.T) {
+func TestRefreshPRUpdatesCachedDetails(t *testing.T) {
 	store := cache.NewMemoryStore()
-	aiResult := &model.AITriage{Summary: "looks fine"}
 	if err := store.Put(model.PullRequest{
-		Repo:   "owner/repo",
-		Number: 1,
-		Title:  "cached",
-		Triage: model.Triage{Risk: model.RiskSafe, AI: aiResult},
+		Repo: "owner/repo", Number: 1, Title: "cached",
+		Comments: []model.PRComment{{Body: "old comment"}},
 	}); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
-	provider := fakeGitHub{pr: model.PullRequest{Repo: "owner/repo", Number: 1, Title: "fresh"}}
-	zappr := New(provider, ai.NoopProvider{}, store)
+	provider := fakeGitHub{pr: model.PullRequest{
+		Repo: "owner/repo", Number: 1, Title: "fresh", DetailsLoaded: true,
+		Comments: []model.PRComment{{Body: "new comment"}},
+	}}
+	zappr := New(provider, store)
 
 	pr, err := zappr.RefreshPR(context.Background(), "owner/repo", 1)
 	if err != nil {
@@ -227,15 +193,15 @@ func TestRefreshPRPreservesAITriage(t *testing.T) {
 	if pr.Title != "fresh" {
 		t.Fatalf("Title = %q, want fresh", pr.Title)
 	}
-	if pr.Triage.AI == nil || pr.Triage.AI.Summary != "looks fine" {
-		t.Fatalf("AI triage = %#v, want preserved summary", pr.Triage.AI)
+	if !pr.DetailsLoaded || len(pr.Comments) != 1 || pr.Comments[0].Body != "new comment" {
+		t.Fatalf("PR details not refreshed: %#v", pr)
 	}
 	cached, err := store.Get("owner/repo", 1)
 	if err != nil {
 		t.Fatalf("Get cached: %v", err)
 	}
-	if cached.Title != "fresh" {
-		t.Fatalf("cached title = %q, want fresh", cached.Title)
+	if cached.Title != "fresh" || !cached.DetailsLoaded || len(cached.Comments) != 1 || cached.Comments[0].Body != "new comment" {
+		t.Fatalf("cached details not refreshed: %#v", cached)
 	}
 }
 
@@ -250,7 +216,7 @@ func TestRefreshPRPrunesClosedPR(t *testing.T) {
 		}
 	}
 	provider := fakeGitHub{pr: model.PullRequest{Repo: "owner/repo", Number: 1, Title: "closed", State: "CLOSED"}}
-	zappr := New(provider, ai.NoopProvider{}, store)
+	zappr := New(provider, store)
 
 	_, err := zappr.RefreshPR(context.Background(), "owner/repo", 1)
 	if !errors.Is(err, ErrPRNotOpen) {
@@ -261,30 +227,6 @@ func TestRefreshPRPrunesClosedPR(t *testing.T) {
 	}
 	if _, err := store.Get("owner/repo", 2); err != nil {
 		t.Fatalf("open cached PR missing: %v", err)
-	}
-}
-
-// TestAnalyzeStoresAIError verifies that when the AI command returns an error,
-// Analyze stores it as an AITriage with an Error field rather than silently
-// dropping the result so the UI can display the failure.
-func TestAnalyzeStoresAIError(t *testing.T) {
-	store := cache.NewMemoryStore()
-	provider := fakeGitHub{
-		pr:   model.PullRequest{Repo: "owner/repo", Number: 1, Title: "pr"},
-		diff: "diff --git a/foo.go b/foo.go\n--- a/foo.go\n+++ b/foo.go",
-	}
-	aiErr := fmt.Errorf("model timeout")
-	zappr := New(provider, fakeAI{err: aiErr}, store)
-
-	pr, err := zappr.Analyze(context.Background(), "owner/repo", 1)
-	if err != nil {
-		t.Fatalf("Analyze returned error: %v", err)
-	}
-	if pr.Triage.AI == nil {
-		t.Fatal("Analyze did not set AI triage on error; expected AITriage with Error field")
-	}
-	if pr.Triage.AI.Error == "" {
-		t.Fatal("AITriage.Error is empty; expected the error message to be stored")
 	}
 }
 
@@ -303,7 +245,6 @@ func assertOrder(t *testing.T, prs []model.PullRequest, want []int) {
 type fakeGitHub struct {
 	prs        []model.PullRequest
 	pr         model.PullRequest
-	diff       string
 	incomplete bool
 }
 
@@ -316,7 +257,7 @@ func (f fakeGitHub) GetPR(context.Context, string, int) (model.PullRequest, erro
 }
 
 func (f fakeGitHub) GetDiff(context.Context, string, int) (string, error) {
-	return f.diff, nil
+	return "", nil
 }
 
 func (f fakeGitHub) GetCommitDiff(context.Context, string, string) (string, error) {
@@ -355,13 +296,4 @@ func (f fakeGitHub) RequestChanges(context.Context, string, int, string) error {
 
 func (f fakeGitHub) MergePR(context.Context, string, int) error {
 	return nil
-}
-
-type fakeAI struct {
-	result *model.AITriage
-	err    error
-}
-
-func (f fakeAI) Triage(_ context.Context, _ model.PullRequest) (*model.AITriage, error) {
-	return f.result, f.err
 }

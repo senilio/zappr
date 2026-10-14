@@ -84,7 +84,7 @@ func (f *commentRecordingGitHub) MergePR(context.Context, string, int) error { r
 
 func TestMergePRCmdReportsMergeRequested(t *testing.T) {
 	provider := &commentRecordingGitHub{}
-	msg := mergePRCmd(app.New(provider, nil, nil), model.PullRequest{Repo: "owner/repo", Number: 123})()
+	msg := mergePRCmd(app.New(provider, nil), model.PullRequest{Repo: "owner/repo", Number: 123})()
 
 	action, ok := msg.(actionMsg)
 	if !ok {
@@ -200,7 +200,7 @@ func TestSettingsHideDraftsPersistsToConfig(t *testing.T) {
 }
 
 func TestNewLoadsSortModeFromConfig(t *testing.T) {
-	zappr := app.New(nil, nil, nil)
+	zappr := app.New(nil, nil)
 	cfg := config.Default()
 	cfg.Sort = "number"
 	m, err := New(zappr, "org/repo", 0, "", cfg)
@@ -213,7 +213,7 @@ func TestNewLoadsSortModeFromConfig(t *testing.T) {
 }
 
 func TestNewDefaultsPollInterval(t *testing.T) {
-	m, err := New(app.New(nil, nil, nil), "org/repo", 0, "", config.Default())
+	m, err := New(app.New(nil, nil), "org/repo", 0, "", config.Default())
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -223,7 +223,7 @@ func TestNewDefaultsPollInterval(t *testing.T) {
 }
 
 func TestNewLoadsHideDraftsFromConfig(t *testing.T) {
-	zappr := app.New(nil, nil, nil)
+	zappr := app.New(nil, nil)
 	cfg := config.Default()
 	cfg.HideDrafts = true
 	m, err := New(zappr, "org/repo", 0, "", cfg)
@@ -1176,7 +1176,7 @@ func TestToggleCommandsRefreshAuthoritativeState(t *testing.T) {
 					if failed {
 						provider.actionErr = errors.New("GitHub refused action")
 					}
-					application := app.New(provider, nil, cache.NewMemoryStore())
+					application := app.New(provider, cache.NewMemoryStore())
 					m := modelWithPRs([]model.PullRequest{pr}, 0)
 					m.app = application
 					m.repo = pr.Repo
@@ -1235,7 +1235,7 @@ func TestAutoMergeConfirmationKeepsTargetAndIntent(t *testing.T) {
 		t.Run(scenario, func(t *testing.T) {
 			provider := &commentRecordingGitHub{}
 			m := minimalModel()
-			m.app = app.New(provider, nil, cache.NewMemoryStore())
+			m.app = app.New(provider, cache.NewMemoryStore())
 			m.prevMode = ModeInbox
 			action, _ := m.actions.exactCommand("automerge")
 			next, _ := m.triggerAction(action)
@@ -1319,7 +1319,7 @@ func modelWithPRs(prs []model.PullRequest, selected int) Model {
 func configuredModel(t *testing.T, cfg config.Config, selected bool) (Model, *commentRecordingGitHub) {
 	t.Helper()
 	provider := &commentRecordingGitHub{}
-	m, err := New(app.New(provider, nil, nil), "org/repo", 0, "", cfg)
+	m, err := New(app.New(provider, nil), "org/repo", 0, "", cfg)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

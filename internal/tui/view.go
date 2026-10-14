@@ -95,9 +95,6 @@ func (m Model) detailView() string {
 	fmt.Fprintf(&b, "%s #%d\n", pr.Repo, pr.Number)
 	fmt.Fprintf(&b, "%s\n", pr.Title)
 	fmt.Fprintf(&b, "Author: %s  CI: %s  Files: %d  +%d -%d\n\n", pr.Author, pr.CIStatus, pr.ChangedFiles, pr.Additions, pr.Deletions)
-	if pr.Triage.AI != nil {
-		writeAINotes(&b, pr.Triage)
-	}
 	b.WriteString("\nFiles:\n")
 	for _, file := range pr.Files {
 		fmt.Fprintf(&b, "%-8s %s (+%d -%d)\n", file.Status, file.Path, file.Additions, file.Deletions)
@@ -124,9 +121,6 @@ func (m Model) approveView() string {
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "Approve %s #%d?\n\n", pr.Repo, pr.Number)
-	if pr.Triage.AI != nil {
-		writeAINotes(&b, pr.Triage)
-	}
 	fmt.Fprintf(&b, "\nPress %s to approve via gh pr review --approve, %s to cancel.\n", m.actionAlias("approve-confirm"), m.actionAlias("approve-cancel"))
 	return b.String()
 }
@@ -1066,10 +1060,6 @@ func (m Model) summaryContent(pr model.PullRequest, innerW int) string {
 	default:
 		m.writeFileSummary(&b, pr, innerW)
 	}
-	if pr.Triage.AI != nil {
-		writeStyledAINotes(&b, m, pr.Triage)
-	}
-
 	return b.String()
 }
 
@@ -1409,9 +1399,6 @@ func (m Model) approvePanel() string {
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "Approve %s #%d?\n\n", pr.Repo, pr.Number)
-	if pr.Triage.AI != nil {
-		writeStyledAINotes(&b, m, pr.Triage)
-	}
 	b.WriteString("\n" + m.actionAlias("approve-confirm") + " approve  " + m.actionAlias("approve-cancel") + " cancel")
 	return b.String()
 }
@@ -1544,56 +1531,6 @@ func (m Model) colorschemePanel() string {
 	b.WriteString("\n")
 	b.WriteString(s.Muted.Render(m.actionAlias("colorscheme-next") + "/" + m.actionAlias("colorscheme-prev") + " move  " + m.actionAlias("colorscheme-confirm") + " select  " + m.actionAlias("colorscheme-cancel") + " cancel"))
 	return b.String()
-}
-
-func writeAINotes(b *strings.Builder, triage model.Triage) {
-	if triage.AI == nil {
-		b.WriteString("\nAI: not run (advisory only)\n")
-		return
-	}
-	b.WriteString("\nAI review\n")
-	if triage.AI.Error != "" {
-		fmt.Fprintf(b, "AI error: %s\n", triage.AI.Error)
-		return
-	}
-	fmt.Fprintf(b, "- %s\n", triage.AI.Summary)
-	writeList(b, "Risk", triage.AI.RiskNotes)
-	writeList(b, "AI focus", triage.AI.SuggestedFocus)
-}
-
-func writeStyledAINotes(b *strings.Builder, m Model, triage model.Triage) {
-	if triage.AI == nil {
-		b.WriteString("\n" + m.theme.Styles.Muted.Render("AI: not run (advisory only)") + "\n")
-		return
-	}
-	b.WriteString("\n" + m.theme.Styles.Subtitle.Render("AI review") + "\n")
-	if triage.AI.Error != "" {
-		b.WriteString(m.theme.Styles.Error.Render("AI error: "+triage.AI.Error) + "\n")
-		return
-	}
-	fmt.Fprintf(b, "- %s\n", triage.AI.Summary)
-	writeStyledList(b, m, "Risk", triage.AI.RiskNotes)
-	writeStyledList(b, m, "AI focus", triage.AI.SuggestedFocus)
-}
-
-func writeStyledList(b *strings.Builder, m Model, title string, values []string) {
-	if len(values) == 0 {
-		return
-	}
-	fmt.Fprintf(b, "%s:\n", m.theme.Styles.Subtitle.Render(title))
-	for _, value := range values {
-		fmt.Fprintf(b, "- %s\n", value)
-	}
-}
-
-func writeList(b *strings.Builder, title string, values []string) {
-	if len(values) == 0 {
-		return
-	}
-	fmt.Fprintf(b, "%s:\n", title)
-	for _, value := range values {
-		fmt.Fprintf(b, "- %s\n", value)
-	}
 }
 
 func shortDuration(d time.Duration) string {

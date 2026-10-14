@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/senilio/zappr/internal/ai"
 	"github.com/senilio/zappr/internal/cache"
 	"github.com/senilio/zappr/internal/github"
 	"github.com/senilio/zappr/internal/model"
@@ -53,15 +52,11 @@ func ParseSortMode(s string) SortMode {
 
 type App struct {
 	GitHub github.Provider
-	AI     ai.Provider
 	Cache  cache.Store
 }
 
-func New(githubProvider github.Provider, aiProvider ai.Provider, store cache.Store) *App {
-	if aiProvider == nil {
-		aiProvider = ai.NoopProvider{}
-	}
-	return &App{GitHub: githubProvider, AI: aiProvider, Cache: store}
+func New(githubProvider github.Provider, store cache.Store) *App {
+	return &App{GitHub: githubProvider, Cache: store}
 }
 
 func (a *App) Refresh(ctx context.Context, repo string, includeDrafts bool) ([]model.PullRequest, error) {
@@ -70,13 +65,7 @@ func (a *App) Refresh(ctx context.Context, repo string, includeDrafts bool) ([]m
 		return nil, err
 	}
 	for i := range prs {
-		// Preserve any existing AI triage from the cache so that a manual
-		// "r" analysis is not silently wiped on the next background refresh.
-		// AI is only (re-)run by Analyze, which has the full diff available.
 		if cached, err := a.Cache.Get(prs[i].Repo, prs[i].Number); err == nil {
-			if cached.Triage.AI != nil {
-				prs[i].Triage.AI = cached.Triage.AI
-			}
 			// List refreshes omit commits and comments; keep the cached ones
 			// until the PR changes, after which GetPR must refetch them.
 			if cached.DetailsLoaded && cached.UpdatedAt.Equal(prs[i].UpdatedAt) {
@@ -121,9 +110,6 @@ func (a *App) RefreshPR(ctx context.Context, repo string, number int) (model.Pul
 			return model.PullRequest{}, err
 		}
 		return model.PullRequest{}, ErrPRNotOpen
-	}
-	if cached, err := a.Cache.Get(pr.Repo, pr.Number); err == nil && cached.Triage.AI != nil {
-		pr.Triage.AI = cached.Triage.AI
 	}
 	if err := a.Cache.Put(pr); err != nil {
 		return model.PullRequest{}, err
@@ -180,27 +166,6 @@ func SortPullRequests(prs []model.PullRequest, sortMode SortMode) {
 
 func fallbackPRTime(pr model.PullRequest) time.Time {
 	return time.Unix(int64(pr.Number), 0)
-}
-
-func (a *App) Analyze(ctx context.Context, repo string, number int) (model.PullRequest, error) {
-	pr, err := a.GitHub.GetPR(ctx, repo, number)
-	if err != nil {
-		return model.PullRequest{}, err
-	}
-	diff, err := a.GitHub.GetDiff(ctx, repo, number)
-	if err != nil {
-		return model.PullRequest{}, err
-	}
-	pr.Diff = diff
-	if aiTriage, err := a.AI.Triage(ctx, pr); err != nil {
-		pr.Triage.AI = &model.AITriage{Error: err.Error()}
-	} else if aiTriage != nil {
-		pr.Triage.AI = aiTriage
-	}
-	if err := a.Cache.Put(pr); err != nil {
-		return model.PullRequest{}, err
-	}
-	return pr, nil
 }
 
 func (a *App) Approve(ctx context.Context, repo string, number int, body string) error {

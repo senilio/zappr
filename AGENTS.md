@@ -50,11 +50,10 @@ Use `rtk go test ./...` if available in the environment.
 - `cmd/zappr`: binary entrypoint.
 - `internal/cli`: command dispatch and process wiring.
 - `internal/app`: orchestration between GitHub and cache.
-- `internal/model`: shared PR and triage data structures.
+- `internal/model`: shared PR data structures.
 - `internal/github`: provider interface and `gh` implementation.
 - `internal/cache`: memory and SQLite stores.
 - `internal/config`: XDG config/cache paths and YAML config.
-- `internal/risk`: deterministic PR risk classification.
 - `internal/tui`: Bubble Tea UI state, update, view, and vim-style command palette.
 
 ## Coding Guidance
@@ -68,7 +67,7 @@ Use `rtk go test ./...` if available in the environment.
 ## GitHub Actions
 
 - Approvals and request changes use `gh pr review`; comments use `gh pr comment`.
-- Approval is permitted whenever the user chooses; zappr does not auto-gate by risk.
+- Approval requires an explicit user action and is permitted whenever the user chooses.
 - Network/auth/rate-limit failures should surface as user-readable errors.
 - `ToggleDraft`: uses `gh pr ready --undo` (to draft) or `gh pr ready` (to undraft).
 - `ClosePR`: uses `gh pr close`; optionally posts a comment first.

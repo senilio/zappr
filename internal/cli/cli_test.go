@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/senilio/zappr/internal/ai"
+	"github.com/senilio/zappr/internal/cache"
 	"github.com/senilio/zappr/internal/config"
 )
 
@@ -59,14 +59,21 @@ func TestUsageTextOnlyIncludesThreeSummaryShortcuts(t *testing.T) {
 	}
 }
 
-func TestNewAppUsesNoopAI(t *testing.T) {
+func TestNewAppUsesGitHubAndCache(t *testing.T) {
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	zappr, err := newApp(config.Default())
 	if err != nil {
 		t.Fatalf("newApp: %v", err)
 	}
-	if _, ok := zappr.AI.(ai.NoopProvider); !ok {
-		t.Fatalf("AI provider = %T, want NoopProvider", zappr.AI)
+	if zappr.GitHub == nil || zappr.Cache == nil {
+		t.Fatalf("missing GitHub provider or cache: %#v", zappr)
+	}
+	store, ok := zappr.Cache.(*cache.SQLiteStore)
+	if !ok {
+		t.Fatalf("cache = %T, want SQLiteStore", zappr.Cache)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close cache: %v", err)
 	}
 }
 

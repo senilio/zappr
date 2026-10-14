@@ -12,7 +12,6 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/senilio/zappr/internal/ai"
 	"github.com/senilio/zappr/internal/app"
 	"github.com/senilio/zappr/internal/cache"
 	"github.com/senilio/zappr/internal/config"
@@ -51,12 +50,6 @@ func Run(args []string) error {
 			return err
 		}
 		return runInbox(zappr, args[1:])
-	case "review":
-		zappr, err := newApp(cfg)
-		if err != nil {
-			return err
-		}
-		return runReview(zappr, args[1:])
 	case "approve":
 		zappr, err := newApp(cfg)
 		if err != nil {
@@ -84,7 +77,7 @@ func newApp(cfg config.Config) (*app.App, error) {
 	if err != nil {
 		return nil, err
 	}
-	return app.New(gh, ai.NoopProvider{}, store), nil
+	return app.New(gh, store), nil
 }
 
 func runWatch(zappr *app.App, cfg config.Config, args []string) error {
@@ -118,30 +111,6 @@ func runInbox(zappr *app.App, args []string) error {
 	return nil
 }
 
-func runReview(zappr *app.App, args []string) error {
-	repo, number, err := parsePRRef(args)
-	if err != nil {
-		return err
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
-	pr, err := zappr.Analyze(ctx, repo, number)
-	if err != nil {
-		return err
-	}
-	fmt.Printf("%s #%d\n%s\n", pr.Repo, pr.Number, pr.Title)
-	if pr.Triage.AI != nil {
-		fmt.Println("AI:")
-		if pr.Triage.AI.Error != "" {
-			fmt.Printf("- error: %s\n", pr.Triage.AI.Error)
-		} else {
-			fmt.Printf("- %s\n", pr.Triage.AI.Summary)
-			printList("AI focus", pr.Triage.AI.SuggestedFocus)
-		}
-	}
-	return nil
-}
-
 func runApprove(zappr *app.App, args []string) error {
 	repo, number, err := parsePRRef(args)
 	if err != nil {
@@ -149,9 +118,6 @@ func runApprove(zappr *app.App, args []string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
-	if _, err := zappr.Analyze(ctx, repo, number); err != nil {
-		return err
-	}
 	return zappr.Approve(ctx, repo, number, "")
 }
 
@@ -272,16 +238,6 @@ func parsePRRef(args []string) (string, int, error) {
 	return parts[0], number, nil
 }
 
-func printList(title string, values []string) {
-	if len(values) == 0 {
-		return
-	}
-	fmt.Printf("%s:\n", title)
-	for _, value := range values {
-		fmt.Printf("- %s\n", value)
-	}
-}
-
 func usage() error {
 	fmt.Print(usageText())
 	return nil
@@ -293,7 +249,6 @@ func usageText() string {
 Commands:
   zappr watch owner/repo        open keyboard inbox
   zappr inbox owner/repo        print current inbox
-  zappr review owner/repo#123   analyze one PR
   zappr approve owner/repo#123  approve PR via gh pr review
   zappr config [path|init]      inspect or create config
   zappr cache [status|clear]    inspect or clear local cache

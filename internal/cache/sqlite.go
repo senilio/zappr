@@ -55,17 +55,16 @@ func (s *SQLiteStore) Put(pr model.PullRequest) error {
 		return err
 	}
 	_, err = s.db.Exec(`
-insert into pull_requests (repo, number, title, author, risk, ci_status, skipped, data, updated_at)
-values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+insert into pull_requests (repo, number, title, author, ci_status, skipped, data, updated_at)
+values (?, ?, ?, ?, ?, ?, ?, ?)
 on conflict(repo, number) do update set
   title = excluded.title,
   author = excluded.author,
-  risk = excluded.risk,
   ci_status = excluded.ci_status,
   skipped = excluded.skipped,
   data = excluded.data,
   updated_at = excluded.updated_at
-`, pr.Repo, pr.Number, pr.Title, pr.Author, string(pr.Triage.Risk), pr.CIStatus, boolToInt(pr.Skipped), string(data), time.Now().UTC().Format(time.RFC3339))
+`, pr.Repo, pr.Number, pr.Title, pr.Author, pr.CIStatus, boolToInt(pr.Skipped), string(data), time.Now().UTC().Format(time.RFC3339))
 	return err
 }
 
@@ -189,7 +188,6 @@ create table if not exists pull_requests (
   number integer not null,
   title text not null,
   author text not null,
-  risk text not null,
   ci_status text not null,
   skipped integer not null default 0,
   data text not null,
@@ -197,9 +195,29 @@ create table if not exists pull_requests (
   primary key (repo, number)
 );
 create index if not exists idx_pull_requests_updated_at on pull_requests(updated_at);
-create index if not exists idx_pull_requests_risk on pull_requests(risk);
 `)
-	return err
+	if err != nil {
+		return err
+	}
+	// Older caches contain unused automatic-review metadata. Remove its column
+	// and index atomically without rebuilding or discarding cached PRs.
+	var legacyRiskColumns int
+	if err := s.db.QueryRow("select count(*) from pragma_table_info('pull_requests') where name = 'risk'").Scan(&legacyRiskColumns); err != nil {
+		return err
+	}
+	if legacyRiskColumns == 0 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`drop index if exists idx_pull_requests_risk;
+alter table pull_requests drop column risk;`); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *SQLiteStore) get(repo string, number int) (model.PullRequest, error) {

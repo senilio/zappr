@@ -56,7 +56,7 @@ func TestPRSelectionLoadsCommitDiff(t *testing.T) {
 			}
 			m := modelWithPRs([]model.PullRequest{{Repo: "org/repo", Number: 1, DetailsLoaded: true}, selected}, 0)
 			provider := &commentRecordingGitHub{}
-			m.app = app.New(provider, nil, cache.NewMemoryStore())
+			m.app = app.New(provider, cache.NewMemoryStore())
 			m.diffEnabled = true
 			m.summaryMode = SummaryModeCommits
 			m.focus = FocusInbox
@@ -152,7 +152,7 @@ func TestCommitDiffUsesSummaryOrder(t *testing.T) {
 	}}
 	m := modelWithPRs([]model.PullRequest{pr}, 0)
 	provider := &commentRecordingGitHub{}
-	m.app = app.New(provider, nil, nil)
+	m.app = app.New(provider, nil)
 	m.diffEnabled = true
 	for index, want := range []string{"newer", "older"} {
 		m.commitIndex = index
