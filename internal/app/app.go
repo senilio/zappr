@@ -68,10 +68,11 @@ func (a *App) Refresh(ctx context.Context, repo string, includeDrafts bool) ([]m
 		if cached, err := a.Cache.Get(prs[i].Repo, prs[i].Number); err == nil {
 			// List refreshes omit commits and comments; keep the cached ones
 			// until the PR changes, after which GetPR must refetch them.
-			if cached.DetailsLoaded && cached.UpdatedAt.Equal(prs[i].UpdatedAt) {
+			if cached.DetailsLoaded && cached.ReviewCommentsLoaded && cached.UpdatedAt.Equal(prs[i].UpdatedAt) {
 				prs[i].Commits = cached.Commits
 				prs[i].Comments = cached.Comments
 				prs[i].DetailsLoaded = true
+				prs[i].ReviewCommentsLoaded = true
 			}
 		}
 		if err := a.Cache.Put(prs[i]); err != nil {

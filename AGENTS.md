@@ -10,7 +10,7 @@ zappr is a Go terminal app for pull request triage. It uses Bubble Tea for TUI, 
 - Preserve package boundaries under `internal/`.
 - Do not add web UI, SaaS behavior, GitHub App auth, webhooks, analytics, or distributed services.
 - Human approval stays mandatory.
-- TUI panes must hard-truncate long lines; no soft wrapping in Inbox, Summary, or Diff panes. Diff uses horizontal scrolling.
+- TUI panes hard-truncate by default. Optional per-pane wrapping is persisted in `wrap.inbox`, `wrap.summary`, and `wrap.diff`; `w` toggles the focused pane. Wrapping is explicit and width-bounded, never terminal-managed. Diff uses horizontal scrolling only when wrapping is off.
 - Prefer `gh` CLI integration until a concrete reason exists to replace it.
 
 ## Git Workflow
@@ -79,7 +79,7 @@ Use `rtk go test ./...` if available in the environment.
 
 - No footer. Keyboard shortcuts are shown only in the `?` help screen.
 - `chromeLines = 1` (header only); `footerLines = 0` in `resizeViewports`.
-- Inbox items are separated by a thin muted `─` divider line (3-line stride: 2 content + 1 divider).
-- All stride math (4 sites: `inboxPanel`, `inboxIndexAt`, `selectedInboxPreserveRanges`, `selectedInboxYOffset`) must stay in sync if item line count changes.
+- Inbox items are separated by a thin muted `─` divider line. Without wrapping, items have two content rows; with wrapping, all title lines expand while metadata stays on one row.
+- Inbox rendering, click hit testing, selection preservation, and scrolling must use the shared `inboxContent` row spans, never fixed-stride arithmetic. Items taller than the viewport start at the title and remain manually scrollable.
 - Inbox items are always clickable regardless of current selection state.
 - Clicking the Summary or Diff pane only changes focus to that pane; item selection stays Inbox-only.

@@ -2570,7 +2570,7 @@ func contains(s, sub string) bool {
 
 func TestAutoDetailsCmdFetchesMissingDetailsOnce(t *testing.T) {
 	m := modelWithPRs([]model.PullRequest{
-		{Number: 1, Repo: "org/repo", DetailsLoaded: true},
+		{Number: 1, Repo: "org/repo", DetailsLoaded: true, ReviewCommentsLoaded: true},
 		{Number: 2, Repo: "org/repo"},
 	}, 0)
 

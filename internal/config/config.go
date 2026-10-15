@@ -26,8 +26,15 @@ type Config struct {
 	Cache      CacheConfig             `yaml:"cache"`
 	Theme      string                  `yaml:"theme,omitempty"`
 	Sort       string                  `yaml:"sort,omitempty"`
-	HideDrafts bool                    `yaml:"hide_drafts,omitempty"`
+	HideDrafts bool                    `yaml:"hide_drafts"`
+	Wrap       WrapConfig              `yaml:"wrap"`
 	Actions    map[string]ActionConfig `yaml:"actions"`
+}
+
+type WrapConfig struct {
+	Inbox   bool `yaml:"inbox"`
+	Summary bool `yaml:"summary"`
+	Diff    bool `yaml:"diff"`
 }
 
 type ActionConfig struct {
@@ -139,6 +146,7 @@ func DefaultActions() map[string]ActionConfig {
 		"refresh-pr":          {Keys: []string{"r"}},
 		"refresh-inbox":       {Keys: []string{"R"}},
 		"toggle-diff":         {Keys: []string{"v"}},
+		"toggle-wrap":         {Keys: []string{"w"}},
 		"open-diff-pager":     {Keys: []string{"V"}},
 		"toggle-side-by-side": {Keys: []string{"s"}},
 		"toggle-file-content": {Keys: []string{"x"}},
@@ -228,6 +236,7 @@ func Load() (Config, error) {
 		Theme      string                    `yaml:"theme,omitempty"`
 		Sort       string                    `yaml:"sort,omitempty"`
 		HideDrafts bool                      `yaml:"hide_drafts,omitempty"`
+		Wrap       WrapConfig                `yaml:"wrap"`
 		Actions    map[string]actionOverride `yaml:"actions"`
 	}{
 		Refresh:    cfg.Refresh,
@@ -244,6 +253,7 @@ func Load() (Config, error) {
 	cfg.Theme = file.Theme
 	cfg.Sort = file.Sort
 	cfg.HideDrafts = file.HideDrafts
+	cfg.Wrap = file.Wrap
 	for id, override := range file.Actions {
 		if !actionIDPattern.MatchString(id) {
 			return cfg, fmt.Errorf("actions.%s: invalid action ID", id)

@@ -163,6 +163,64 @@ func TestSQLiteStoreClear(t *testing.T) {
 	}
 }
 
+func TestSQLiteStorePersistsReviewCommentMetadata(t *testing.T) {
+	store, err := OpenSQLite(filepath.Join(t.TempDir(), "zappr.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	data := `{"Repo":"owner/repo","Number":7,"details_loaded":true,"review_comments_loaded":true,"Comments":[{"Author":"bot","Body":"Summary","Kind":"review"},{"Author":"alice","Body":"Inline","Kind":"inline","Path":"roles.tf","Line":291,"OriginalLine":290,"Side":"LEFT"}]}`
+	var pr model.PullRequest
+	if err := json.Unmarshal([]byte(data), &pr); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Put(pr); err != nil {
+		t.Fatal(err)
+	}
+	for name, load := range map[string]func() (model.PullRequest, error){
+		"get": func() (model.PullRequest, error) { return store.Get("owner/repo", 7) },
+		"list": func() (model.PullRequest, error) {
+			prs, err := store.List()
+			if err != nil {
+				return model.PullRequest{}, err
+			}
+			return prs[0], nil
+		},
+		"list repo": func() (model.PullRequest, error) {
+			prs, err := store.ListRepo("owner/repo")
+			if err != nil {
+				return model.PullRequest{}, err
+			}
+			return prs[0], nil
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, err := load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			encoded, err := json.Marshal(got)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var fields map[string]json.RawMessage
+			if err := json.Unmarshal(encoded, &fields); err != nil {
+				t.Fatal(err)
+			}
+			if string(fields["review_comments_loaded"]) != "true" {
+				t.Fatalf("review comments loaded marker lost: %s", encoded)
+			}
+			var comments []map[string]any
+			if err := json.Unmarshal(fields["Comments"], &comments); err != nil {
+				t.Fatal(err)
+			}
+			if len(comments) != 2 || comments[0]["Kind"] != "review" || comments[1]["Kind"] != "inline" || comments[1]["Path"] != "roles.tf" || comments[1]["Line"] != float64(291) || comments[1]["OriginalLine"] != float64(290) || comments[1]["Side"] != "LEFT" {
+				t.Fatalf("review comment metadata lost: %s", encoded)
+			}
+		})
+	}
+}
+
 func TestSQLiteStoreIgnoresRetiredCachedDetails(t *testing.T) {
 	store, err := OpenSQLite(filepath.Join(t.TempDir(), "zappr.db"))
 	if err != nil {

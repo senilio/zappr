@@ -34,45 +34,47 @@ const (
 )
 
 type Model struct {
-	app              *app.App
-	repo             string
-	allPRs           []model.PullRequest
-	prs              []model.PullRequest
-	selected         int
-	sortMode         app.SortMode
-	hideDrafts       bool
-	settingsCursor   int
-	colorschemeIndex int // selected index in colorscheme picker
-	focus            Focus
-	mode             Mode
-	loading          bool
-	error            string
-	message          string
-	diff             string
-	rawDiff          string
-	diffFiles        []diffFile // raw per-file bodies (for file switching + V pager)
-	renderedFiles    []diffFile // rendered (delta/fallback) per-file bodies
-	diffMode         DiffMode
-	fileContent      string
-	fileContentKey   string
-	fileIndex        int
-	commitIndex      int
-	sideBySide       bool
-	comment          string
-	diffXOffset      int
-	summaryXOffset   int
-	lastFetch        time.Time
-	pollEvery        time.Duration
-	width            int
-	height           int
-	theme            uitheme.Theme
-	cfg              config.Config
-	actions          actionRegistry
-	prevMode         Mode
-	inboxVP          viewport.Model
-	summaryVP        viewport.Model
-	diffVP           viewport.Model
-	helpVP           viewport.Model
+	app               *app.App
+	repo              string
+	allPRs            []model.PullRequest
+	prs               []model.PullRequest
+	selected          int
+	sortMode          app.SortMode
+	hideDrafts        bool
+	settingsCursor    int
+	colorschemeIndex  int // selected index in colorscheme picker
+	focus             Focus
+	mode              Mode
+	loading           bool
+	error             string
+	message           string
+	diff              string
+	rawDiff           string
+	diffFiles         []diffFile // raw per-file bodies (for file switching + V pager)
+	renderedFiles     []diffFile // rendered (delta/fallback) per-file bodies
+	diffMode          DiffMode
+	fileContent       string
+	fileContentKey    string
+	fileIndex         int
+	commitIndex       int
+	sideBySide        bool
+	comment           string
+	diffXOffset       int
+	summaryXOffset    int
+	lastFetch         time.Time
+	pollEvery         time.Duration
+	width             int
+	height            int
+	theme             uitheme.Theme
+	cfg               config.Config
+	settingsSaver     *settingsSaver
+	inboxManualScroll bool
+	actions           actionRegistry
+	prevMode          Mode
+	inboxVP           viewport.Model
+	summaryVP         viewport.Model
+	diffVP            viewport.Model
+	helpVP            viewport.Model
 
 	statusActive       bool
 	statusText         string
@@ -83,6 +85,11 @@ type Model struct {
 	detailsLoadKey     string
 	commitDiffKey      string
 	renderedCommitDiff string
+	rawCommitDiff      string
+	sideDiffContent    string
+	sideDiffKey        string
+	sideDiffRequested  string
+	sideDiffFailed     string
 	diffEnabled        bool
 	summaryMode        SummaryMode
 
@@ -193,6 +200,7 @@ type pagerMsg struct {
 
 type commitDiffMsg struct {
 	sha      string
+	raw      string
 	rendered string
 	err      error
 }
@@ -240,24 +248,6 @@ func (m *Model) finishStatus(text string, isErr bool) tea.Cmd {
 	m.statusText = text
 	m.statusToken++
 	return dismissStatusCmd(m.statusToken, 1200*time.Millisecond)
-}
-
-func saveThemeCmd(cfg config.Config) tea.Cmd {
-	return func() tea.Msg {
-		if err := config.Save(cfg); err != nil {
-			return actionMsg{message: "failed to save theme: " + err.Error(), err: err}
-		}
-		return actionMsg{message: "theme saved: " + cfg.Theme}
-	}
-}
-
-func saveSettingCmd(cfg config.Config, setting string) tea.Cmd {
-	return func() tea.Msg {
-		if err := config.Save(cfg); err != nil {
-			return actionMsg{message: "failed to save " + setting + ": " + err.Error(), err: err}
-		}
-		return nil
-	}
 }
 
 func refreshCmd(app *app.App, repo string, includeDrafts bool) tea.Cmd {
@@ -314,7 +304,7 @@ func commitDiffCmd(ghProvider interface {
 			return commitDiffMsg{sha: sha, err: err}
 		}
 		rendered, _ := renderDiff(ctx, raw, width, false)
-		return commitDiffMsg{sha: sha, rendered: rendered}
+		return commitDiffMsg{sha: sha, raw: raw, rendered: rendered}
 	}
 }
 
@@ -326,17 +316,6 @@ func fileContentCmd(ghProvider interface {
 		defer cancel()
 		content, err := ghProvider.GetFileContent(ctx, repo, path, ref)
 		return fileContentMsg{key: key, content: content, err: err}
-	}
-}
-
-func renderDiffCmd(diff string, repo string, number int, key string, width int, sideBySide bool) tea.Cmd {
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		rendered, err := renderDiff(ctx, diff, width, sideBySide)
-		files := splitDiffFiles(diff)
-		renderedFiles := renderDiffFiles(ctx, files, width, sideBySide)
-		return diffMsg{repo: repo, number: number, key: key, raw: diff, rendered: rendered, files: files, renderedFiles: renderedFiles, err: err}
 	}
 }
 
@@ -471,9 +450,14 @@ func diffPath(line string) string {
 	return "diff"
 }
 
-func renderDiff(ctx context.Context, diff string, width int, sideBySide bool) (string, error) {
+func renderDiff(ctx context.Context, diff string, width int, sideBySide bool, wrap ...bool) (string, error) {
 	if _, err := exec.LookPath("delta"); err == nil {
 		args := []string{"--paging=never", "--line-numbers", "--file-decoration-style=none", "--hunk-header-decoration-style=none", "--hunk-header-style=omit"}
+		if len(wrap) > 0 && wrap[0] {
+			args = append(args, "--wrap-max-lines=unlimited")
+		} else {
+			args = append(args, "--wrap-max-lines=0")
+		}
 		if width > 0 {
 			args = append(args, fmt.Sprintf("--width=%d", width))
 		}

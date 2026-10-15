@@ -5,7 +5,7 @@
 
 Terminal-first pull request inbox for fast, human-owned GitHub review triage.
 
-zappr watches open pull requests and lets you inspect files, commits, PR conversation comments, diffs, comment, or approve from a keyboard-driven Bubble Tea UI.
+zappr watches open pull requests and lets you inspect files, commits, PR comments and reviews, diffs, comment, or approve from a keyboard-driven Bubble Tea UI.
 
 ## Principles
 
@@ -105,14 +105,20 @@ The following PR/view actions use their default aliases and may be configured:
 `a` approves after confirmation, `A` approves immediately, `c` opens the
 comment editor, `r` refreshes the selected PR, `R` refreshes the inbox, `v`
 toggles the diff pane, `V` opens the full diff pager, `s` toggles side-by-side
-diff, `x` expands file content, `n`/`p` and `[`/`]` move between files or
+diff, `w` toggles wrapping in the focused pane, `x` expands file content,
+`n`/`p` and `[`/`]` move between files or
 commits, `o` opens the PR, and `C` copies its URL. Command palette operations
 below are also configurable where listed.
 
 The summary pane starts on changed files and can switch to commits or PR
-conversation comments with `1`, `2`, and `3`.
-Long lines are hard-truncated in all panes; diffs use horizontal scrolling
-instead of wrapping. Keyboard shortcuts are always available via `?`.
+comments with `1`, `2`, and `3`. Comments include conversation comments,
+review bodies, and inline review comments with file and line context.
+Wrapping is off by default. Press `w` to toggle it independently in Inbox,
+Summary, or Diff; each preference is saved across restarts. Inbox wrapping
+expands every PR title while keeping metadata on one row. Diff wrapping keeps
+line-number gutters and side-by-side columns intact. With wrapping off, long
+lines are hard-truncated and diffs support horizontal scrolling. Horizontal
+panning is disabled while wrapping is on. Keyboard shortcuts are available via `?`.
 Inbox title badges show `[auto]` when auto-merge is enabled and `[draft]` for draft PRs.
 
 ### Command palette
@@ -164,6 +170,10 @@ refresh:
   interval: 30s
 cache:
   path: /Users/you/.cache/zappr/zappr.db
+wrap:
+  inbox: false
+  summary: false
+  diff: false
 ```
 
 ### TUI actions
@@ -184,7 +194,7 @@ actions:
 ```
 
 Configurable built-in IDs: `open-pr`, `copy-pr-url`, `refresh-pr`,
-`refresh-inbox`, `toggle-diff`, `open-diff-pager`, `next-file`, `prev-file`,
+`refresh-inbox`, `toggle-diff`, `toggle-wrap`, `open-diff-pager`, `next-file`, `prev-file`,
 `toggle-side-by-side`, `toggle-file-content`, `toggle-draft`, `toggle-automerge`, `close-pr`,
 `update-branch`, `request-changes`, and `merge-pr`. Generic action
 IDs include the default `approve`, `approve-now`, and `comment` entries.

@@ -46,7 +46,7 @@ func (p *GHProvider) ListPRs(ctx context.Context, repo string) ([]model.PullRequ
 }
 
 func (p *GHProvider) GetPR(ctx context.Context, repo string, number int) (model.PullRequest, error) {
-	out, err := p.run(ctx, "pr", "view", strconv.Itoa(number), "--repo", repo, "--json", "number,title,author,url,labels,additions,deletions,changedFiles,isDraft,autoMergeRequest,state,headRefOid,statusCheckRollup,reviewDecision,files,commits,comments,updatedAt")
+	out, err := p.run(ctx, "pr", "view", strconv.Itoa(number), "--repo", repo, "--json", "number,title,author,url,labels,additions,deletions,changedFiles,isDraft,autoMergeRequest,state,headRefOid,statusCheckRollup,reviewDecision,files,commits,comments,reviews,updatedAt")
 	if err != nil {
 		return model.PullRequest{}, err
 	}
@@ -55,7 +55,35 @@ func (p *GHProvider) GetPR(ctx context.Context, repo string, number int) (model.
 		return model.PullRequest{}, fmt.Errorf("parse gh pr view: %w", err)
 	}
 	pr := raw.toModel(repo)
+	for _, review := range raw.Reviews {
+		if strings.TrimSpace(review.Body) == "" || review.State == "PENDING" {
+			continue
+		}
+		pr.Comments = append(pr.Comments, model.PRComment{
+			Author: review.Author.Login, Body: review.Body,
+			CreatedAt: parseTime(review.SubmittedAt), Kind: "review",
+		})
+	}
+	out, err = p.run(ctx, "api", "repos/"+repo+"/pulls/"+strconv.Itoa(number)+"/comments?per_page=100", "--paginate", "--slurp")
+	if err != nil {
+		return model.PullRequest{}, err
+	}
+	var pages [][]ghReviewComment
+	if err := json.Unmarshal(out, &pages); err != nil {
+		return model.PullRequest{}, fmt.Errorf("parse gh review comments: %w", err)
+	}
+	for _, page := range pages {
+		for _, comment := range page {
+			pr.Comments = append(pr.Comments, model.PRComment{
+				Author: comment.User.Login, Body: comment.Body,
+				CreatedAt: parseTime(comment.CreatedAt), Kind: "inline",
+				Path: comment.Path, Line: comment.Line,
+				OriginalLine: comment.OriginalLine, Side: comment.Side,
+			})
+		}
+	}
 	pr.DetailsLoaded = true
+	pr.ReviewCommentsLoaded = true
 	return pr, nil
 }
 
@@ -194,6 +222,7 @@ type ghPR struct {
 	Files             []ghFile        `json:"files"`
 	Commits           []ghCommit      `json:"commits"`
 	Comments          []ghComment     `json:"comments"`
+	Reviews           []ghReview      `json:"reviews"`
 	UpdatedAt         string          `json:"updatedAt"`
 }
 
@@ -233,6 +262,23 @@ type ghComment struct {
 	Author    ghAuthor `json:"author"`
 	Body      string   `json:"body"`
 	CreatedAt string   `json:"createdAt"`
+}
+
+type ghReview struct {
+	Author      ghAuthor `json:"author"`
+	Body        string   `json:"body"`
+	SubmittedAt string   `json:"submittedAt"`
+	State       string   `json:"state"`
+}
+
+type ghReviewComment struct {
+	User         ghAuthor `json:"user"`
+	Body         string   `json:"body"`
+	CreatedAt    string   `json:"created_at"`
+	Path         string   `json:"path"`
+	Line         int      `json:"line"`
+	OriginalLine int      `json:"original_line"`
+	Side         string   `json:"side"`
 }
 
 func (p ghPR) toModel(repo string) model.PullRequest {

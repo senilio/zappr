@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"strings"
@@ -49,12 +50,12 @@ func TestSelectedCommitHighlightsBothRows(t *testing.T) {
 func TestPRSelectionLoadsCommitDiff(t *testing.T) {
 	for _, detailsLoaded := range []bool{true, false} {
 		t.Run(fmt.Sprintf("detailsLoaded=%t", detailsLoaded), func(t *testing.T) {
-			selected := model.PullRequest{Repo: "org/repo", Number: 2, DetailsLoaded: detailsLoaded}
+			selected := model.PullRequest{Repo: "org/repo", Number: 2, DetailsLoaded: detailsLoaded, ReviewCommentsLoaded: detailsLoaded}
 			commits := []model.PRCommit{{OID: "newest", Date: time.Now()}, {OID: "older"}}
 			if detailsLoaded {
 				selected.Commits = commits
 			}
-			m := modelWithPRs([]model.PullRequest{{Repo: "org/repo", Number: 1, DetailsLoaded: true}, selected}, 0)
+			m := modelWithPRs([]model.PullRequest{{Repo: "org/repo", Number: 1, DetailsLoaded: true, ReviewCommentsLoaded: true}, selected}, 0)
 			provider := &commentRecordingGitHub{}
 			m.app = app.New(provider, cache.NewMemoryStore())
 			m.diffEnabled = true
@@ -72,6 +73,7 @@ func TestPRSelectionLoadsCommitDiff(t *testing.T) {
 					t.Fatal("requested commit diff before details arrived")
 				}
 				selected.DetailsLoaded = true
+				selected.ReviewCommentsLoaded = true
 				selected.Commits = commits
 				next, cmd = m.Update(refreshPRMsg{pr: selected})
 				m = next.(Model)
@@ -214,6 +216,55 @@ func TestSummaryOrderingIsStable(t *testing.T) {
 	}
 	if got := newestComments(comments); !reflect.DeepEqual(got, comments) {
 		t.Errorf("equal-date comments reordered: %v", got)
+	}
+}
+
+func TestCommentSummaryIncludesReviewAndInlineContext(t *testing.T) {
+	var pr model.PullRequest
+	data := `{"Comments":[{"Author":"bot","Body":"Review summary","Kind":"review","CreatedAt":"2026-10-14T12:40:53Z"},{"Author":"bot","Body":"Inline finding","Kind":"inline","Path":"roles.tf","Line":291,"OriginalLine":290,"Side":"RIGHT","CreatedAt":"2026-10-14T12:40:53Z"},{"Author":"alice","Body":"Old finding","Kind":"inline","Path":"old.tf","OriginalLine":10,"Side":"LEFT"},{"Author":"bob","Body":"File finding","Kind":"inline","Path":"file.tf"},{"Author":"carol","Body":"Deleted line finding","Kind":"inline","Path":"deleted.tf","Line":5,"Side":"LEFT"},{"Author":"dave","Body":"Conversation comment"}]}`
+	if err := json.Unmarshal([]byte(data), &pr); err != nil {
+		t.Fatal(err)
+	}
+	m := modelWithPRs([]model.PullRequest{pr}, 0)
+	var b strings.Builder
+	m.writeCommentSummary(&b, pr, 80)
+	view := stripANSI(b.String())
+	for _, want := range []string{"bot · review", "bot · inline", "dave · comment", "roles.tf:291", "old.tf:10 (outdated) (left)", "file.tf", "deleted.tf:5 (left)", "Review summary", "Inline finding", "Conversation comment"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("comment summary missing %q: %q", want, view)
+		}
+	}
+	if strings.Contains(view, "dave · review") || strings.Contains(view, "roles.tf:290") || strings.Contains(view, "file.tf:0") {
+		t.Fatalf("incorrect comment context: %q", view)
+	}
+	// New location and type metadata must obey the same no-wrapping rule as bodies.
+	b.Reset()
+	m.writeCommentSummary(&b, pr, 12)
+	for _, line := range strings.Split(b.String(), "\n") {
+		if lipgloss.Width(line) > 12 {
+			t.Fatalf("comment line exceeds pane width: %q", line)
+		}
+	}
+}
+
+func TestEmptyCommentSummary(t *testing.T) {
+	m := minimalModel()
+	var b strings.Builder
+	m.writeCommentSummary(&b, model.PullRequest{}, 80)
+	if got := stripANSI(b.String()); got != "no comments\n" {
+		t.Fatalf("empty comment summary = %q, want no comments", got)
+	}
+}
+
+func TestSelectedPRReloadsLegacyCommentDetails(t *testing.T) {
+	pr := model.PullRequest{Repo: "org/repo", Number: 1, DetailsLoaded: true}
+	m := modelWithPRs([]model.PullRequest{pr}, 0)
+	m.app = app.New(&commentRecordingGitHub{}, cache.NewMemoryStore())
+	if cmd := m.autoDetailsCmd(); cmd == nil {
+		t.Fatal("old cached details without review comments must be fetched again")
+	}
+	if cmd := m.autoDetailsCmd(); cmd != nil {
+		t.Fatal("legacy details must not cause duplicate requests")
 	}
 }
 

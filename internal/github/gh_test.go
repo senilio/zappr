@@ -184,7 +184,7 @@ func TestGetPRAutoMergeState(t *testing.T) {
 			if enabled {
 				request = `{"enabledAt":"2026-10-07T10:00:00Z"}`
 			}
-			script := "#!/bin/sh\ncase \"$*\" in *autoMergeRequest*) ;; *) exit 1 ;; esac\nprintf '%s' " + testShellQuote(`{"number":123,"autoMergeRequest":`+request+`}`) + "\n"
+			script := "#!/bin/sh\nif [ \"$1\" = api ]; then printf '[[]]'; exit; fi\ncase \"$*\" in *autoMergeRequest*) ;; *) exit 1 ;; esac\nprintf '%s' " + testShellQuote(`{"number":123,"autoMergeRequest":`+request+`}`) + "\n"
 			if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
 				t.Fatal(err)
 			}
@@ -202,7 +202,7 @@ func TestGetPRAutoMergeState(t *testing.T) {
 func TestGetPRPreservesBotConversationComments(t *testing.T) {
 	bin := filepath.Join(t.TempDir(), "gh")
 	response := `{"number":7,"comments":[{"author":{"login":"bot"},"body":"Plan: 1 to add, 2 to change, 0 to destroy.","createdAt":"2026-01-02T03:04:05Z"}]}`
-	script := "#!/bin/sh\nprintf '%s' " + testShellQuote(response) + "\n"
+	script := "#!/bin/sh\nif [ \"$1\" = api ]; then printf '[[]]'; exit; fi\nprintf '%s' " + testShellQuote(response) + "\n"
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatalf("write fake gh: %v", err)
 	}
@@ -213,5 +213,66 @@ func TestGetPRPreservesBotConversationComments(t *testing.T) {
 	want := []model.PRComment{{Author: "bot", Body: "Plan: 1 to add, 2 to change, 0 to destroy.", CreatedAt: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)}}
 	if !pr.DetailsLoaded || !reflect.DeepEqual(pr.Comments, want) {
 		t.Fatalf("conversation comments not preserved: %#v", pr)
+	}
+}
+
+func TestGetPRIncludesReviewBodiesAndPaginatedInlineComments(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "gh")
+	callsPath := filepath.Join(dir, "calls")
+	response := `{"number":7,"comments":[{"author":{"login":"bot"},"body":"Review started","createdAt":"2026-10-14T12:40:07Z"}],"reviews":[{"author":{"login":"bot"},"body":"Code Review summary","submittedAt":"2026-10-14T12:40:53Z","state":"COMMENTED"},{"body":"  ","state":"APPROVED"},{"body":"Draft review","state":"PENDING"}]}`
+	pages := `[[{"user":{"login":"bot[bot]"},"body":"Inline finding","path":"roles.tf","line":291,"original_line":290,"side":"RIGHT","created_at":"2026-10-14T12:40:53Z"}],[{"user":{"login":"alice"},"body":"Outdated reply","path":"old.tf","line":null,"original_line":10,"side":"LEFT","in_reply_to_id":123,"created_at":"2026-10-14T12:41:00Z"},{"user":{"login":"bob"},"body":"File comment","path":"file.tf","line":null,"original_line":null,"subject_type":"file","created_at":"2026-10-14T12:42:00Z"}]]`
+	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + testShellQuote(callsPath) + "\ncase \"$1\" in\npr) printf '%s' " + testShellQuote(response) + ";;\napi) printf '%s' " + testShellQuote(pages) + ";;\n*) exit 1;;\nesac\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	pr, err := (&GHProvider{Bin: bin}).GetPR(context.Background(), "owner/repo", 7)
+	if err != nil {
+		t.Fatalf("GetPR: %v", err)
+	}
+	if len(pr.Comments) != 5 {
+		t.Fatalf("comments = %#v, want conversation, review body, and all three inline comments", pr.Comments)
+	}
+	if !pr.DetailsLoaded || !pr.ReviewCommentsLoaded {
+		t.Fatal("complete details must be marked loaded")
+	}
+	if c := pr.Comments[1]; c.Kind != "review" || c.Body != "Code Review summary" || c.Author != "bot" || !c.CreatedAt.Equal(parseTime("2026-10-14T12:40:53Z")) {
+		t.Fatalf("review body = %#v", c)
+	}
+	if c := pr.Comments[2]; c.Kind != "inline" || c.Path != "roles.tf" || c.Line != 291 || c.OriginalLine != 290 || c.Side != "RIGHT" || c.Author != "bot[bot]" || c.Body != "Inline finding" || !c.CreatedAt.Equal(parseTime("2026-10-14T12:40:53Z")) {
+		t.Fatalf("inline comment = %#v", c)
+	}
+	if c := pr.Comments[3]; c.Line != 0 || c.OriginalLine != 10 || c.Side != "LEFT" || c.Body != "Outdated reply" {
+		t.Fatalf("outdated reply = %#v", c)
+	}
+	if c := pr.Comments[4]; c.Line != 0 || c.OriginalLine != 0 || c.Path != "file.tf" {
+		t.Fatalf("file comment = %#v", c)
+	}
+	calls, err := os.ReadFile(callsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(calls)), "\n")
+	if len(lines) != 2 || !strings.Contains(lines[0], ",reviews,") || lines[1] != "api repos/owner/repo/pulls/7/comments?per_page=100 --paginate --slurp" {
+		t.Fatalf("gh calls = %q, want reviews field and paginated inline endpoint", calls)
+	}
+}
+
+func TestGetPRSurfacesInlineCommentErrors(t *testing.T) {
+	for _, tc := range []struct{ name, command, want string }{
+		{"network", "printf 'rate limit exceeded' >&2; exit 1", "rate limit exceeded"},
+		{"invalid JSON", "printf 'invalid'", "parse gh review comments"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bin := filepath.Join(t.TempDir(), "gh")
+			script := "#!/bin/sh\nif [ \"$1\" = pr ]; then printf '{\"number\":7}'; else " + tc.command + "; fi\n"
+			if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			pr, err := (&GHProvider{Bin: bin}).GetPR(context.Background(), "owner/repo", 7)
+			if err == nil || !strings.Contains(err.Error(), tc.want) || pr.DetailsLoaded {
+				t.Fatalf("GetPR = %#v, %v, want surfaced error %q and no loaded details", pr, err, tc.want)
+			}
+		})
 	}
 }

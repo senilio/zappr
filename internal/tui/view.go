@@ -196,6 +196,7 @@ func (m Model) helpPanel() string {
 		shortcut{"1/2/3", "files/commits/comments"},
 		shortcut{"shift+↑/↓", "next/previous file/commit"},
 		shortcut{m.actionAlias("toggle-diff"), "toggle diff"},
+		shortcut{m.actionAlias("toggle-wrap"), "wrap focused pane"},
 		shortcut{"←/→", "pan diff/commits"},
 		shortcut{m.actionAlias("toggle-side-by-side"), "side-by-side diff"},
 		shortcut{m.actionAlias("toggle-file-content"), "file content/diff"},
@@ -472,9 +473,9 @@ func (m Model) selectedInboxPreserveRanges(bodyHeight int) []preserveRange {
 		}
 		var ranges []preserveRange
 		contentH := max(1, region.h-paneFrame)
-		selectedLine := m.selected * 3
-		yOffset := m.selectedInboxYOffset(contentH)
-		for _, itemLine := range []int{selectedLine, selectedLine + 1} {
+		_, spans := m.inboxContent(max(1, region.w-paneHFrame))
+		yOffset := m.inboxOffset(max(1, region.w-paneHFrame), contentH)
+		for itemLine := spans[m.selected].start; itemLine < spans[m.selected].end; itemLine++ {
 			viewLine := itemLine - yOffset
 			if viewLine < 0 || viewLine >= contentH {
 				continue
@@ -493,19 +494,8 @@ func (m Model) selectedInboxPreserveRanges(bodyHeight int) []preserveRange {
 }
 
 func (m Model) selectedInboxYOffset(contentH int) int {
-	yOffset := m.inboxVP.YOffset
-	totalLines := max(0, len(m.prs)*3-1)
-	if totalLines <= contentH {
-		return 0
-	}
-	selectedLine := m.selected * 3
-	selectedBottom := selectedLine + 1
-	if selectedLine < yOffset {
-		yOffset = selectedLine
-	} else if selectedBottom >= yOffset+contentH {
-		yOffset = selectedBottom - contentH + 1
-	}
-	return yOffset
+	w, _, _ := m.paneInnerWidths()
+	return m.inboxOffset(w, contentH)
 }
 
 func fitScreen(content string, width int, height int) string {
@@ -774,25 +764,7 @@ func (m Model) paneInnerWidths() (inbox, summary, diff int) {
 // Preserves explicit newlines; hard-breaks words longer than w.
 // Uses lipgloss so ANSI escape codes do not count toward width.
 func wrapLines(s string, w int) string {
-	if w <= 0 {
-		return s
-	}
-	logicalLines := strings.Split(s, "\n")
-	out := make([]string, 0, len(logicalLines))
-	wrapper := lipgloss.NewStyle().Width(w).MaxWidth(w)
-	for _, line := range logicalLines {
-		if lipgloss.Width(line) <= w {
-			out = append(out, line)
-			continue
-		}
-		// Wrap via lipgloss: it word-wraps at w, producing multiple visual lines.
-		rendered := wrapper.Render(line)
-		// Strip the trailing padding spaces lipgloss adds to fill Width.
-		for _, wl := range strings.Split(rendered, "\n") {
-			out = append(out, strings.TrimRight(wl, " "))
-		}
-	}
-	return strings.Join(out, "\n")
+	return ansi.Wrap(s, max(1, w), "")
 }
 
 func (m Model) pane(title string, content string, width int, height int, focus Focus) string {
@@ -906,96 +878,14 @@ func (m Model) inboxPanel(width int, height int) string {
 	if len(m.prs) == 0 && !m.loading {
 		return m.theme.Styles.Muted.Render("no open pull requests")
 	}
-	s := m.theme.Styles
 	innerW := max(1, width-paneHFrame)
-	selectedStyle := lipgloss.NewStyle()
-	var b strings.Builder
-	// Track line number where selected item starts (for viewport scroll sync).
-	lineCount := 0
-	selectedLine := 0
-	selectedHeight := 0
-	for i, pr := range m.prs {
-		if i == m.selected {
-			selectedLine = lineCount
-			selectedHeight = 2
-		}
-		selected := i == m.selected
-
-		// Line 1: reserve space for state badges before truncating the title.
-		var badges []string
-		if pr.AutoMerge {
-			badges = append(badges, "[auto]")
-		}
-		if pr.Draft {
-			badges = append(badges, "[draft]")
-		}
-		badge := truncateANSIWidth(strings.Join(badges, " "), innerW)
-		titleWidth := innerW
-		if badge != "" {
-			titleWidth = max(0, innerW-ansi.StringWidth(badge)-1)
-		}
-		title := truncateANSIWidth(pr.Title, titleWidth)
-		titleStyle := s.Muted
-		if selected {
-			titleStyle = s.TitleStrong
-		}
-		titleStr := selectedStyle.Render(titleStyle.Render(title))
-		if badge != "" {
-			badgeStyle := s.Muted
-			if selected {
-				badgeStyle = s.Title
-			}
-			titleStr += strings.Repeat(" ", max(0, innerW-ansi.StringWidth(title)-ansi.StringWidth(badge))) + badgeStyle.Render(badge)
-		}
-		fmt.Fprintf(&b, "%s\n", truncatePaneLineWidth(titleStr, innerW))
-		lineCount++
-
-		// Line 2: #N · author · CI · review (consolidated)
-		dot := s.Muted.Render(" · ")
-		metaParts := []string{fmt.Sprintf("#%d", pr.Number), pr.Author}
-		metaBase := strings.Join(metaParts, stripANSI(dot))
-		ciStr := m.theme.CIStatus(pr.CIStatus)
-		reviewStr := m.theme.ReviewStatus(pr.ReviewDecision)
-
-		var metaLine string
-		if selected {
-			meta := s.TitleStrong.Render(metaBase)
-			metaLine = meta + dot + ciStr
-			if reviewStr != "" {
-				metaLine += dot + reviewStr
-			}
-		} else {
-			// Inactive: strip all color, render muted
-			ci := stripANSI(ciStr)
-			full := metaBase + stripANSI(dot) + ci
-			if reviewStr != "" {
-				full += stripANSI(dot) + stripANSI(reviewStr)
-			}
-			metaLine = s.Muted.Render(full)
-		}
-		fmt.Fprintf(&b, "%s\n", truncatePaneLineWidth(selectedStyle.Render(metaLine), innerW))
-		lineCount++
-
-		if i < len(m.prs)-1 {
-			divider := s.Muted.Render(truncateANSIWidth(strings.Repeat("─", innerW), innerW))
-			fmt.Fprintf(&b, "%s\n", divider)
-			lineCount++
-		}
-	}
+	content, _ := m.inboxContent(innerW)
 	vpH := max(1, height-paneFrame)
 	vp := m.inboxVP
 	vp.Width = innerW
 	vp.Height = vpH
-	vp.SetContent(fitPaneContentWidth(b.String(), innerW))
-	// Scroll so that the selected item is always visible (only when overflowing).
-	if vp.TotalLineCount() > vpH {
-		selectedBottom := selectedLine + selectedHeight - 1
-		if selectedLine < vp.YOffset {
-			vp.SetYOffset(selectedLine)
-		} else if selectedBottom >= vp.YOffset+vpH {
-			vp.SetYOffset(selectedBottom - vpH + 1)
-		}
-	}
+	vp.SetContent(content)
+	vp.SetYOffset(m.inboxOffset(innerW, vpH))
 	return vp.View()
 }
 
@@ -1007,7 +897,7 @@ func (m Model) summaryPanel(width int, height int) string {
 	innerW := max(1, width-paneHFrame)
 	rawContent := m.summaryContent(pr, innerW)
 	// In commits mode apply horizontal scrolling: cut each line by x-offset.
-	if m.summaryMode == SummaryModeCommits && m.summaryXOffset > 0 {
+	if m.summaryMode == SummaryModeCommits && m.summaryXOffset > 0 && !m.cfg.Wrap.Summary {
 		lines := strings.Split(rawContent, "\n")
 		for i, line := range lines {
 			lines[i] = truncateANSIWidth(ansi.Cut(line, m.summaryXOffset, m.summaryXOffset+innerW), innerW)
@@ -1050,6 +940,11 @@ func truncatePaneLineWidth(s string, width int) string {
 }
 
 func (m Model) summaryContent(pr model.PullRequest, innerW int) string {
+	content, _ := m.summaryLayout(pr, innerW)
+	return content
+}
+
+func (m Model) unwrappedSummaryContent(pr model.PullRequest, innerW int) string {
 	var b strings.Builder
 
 	switch m.summaryMode {
@@ -1171,16 +1066,32 @@ func (m Model) writeCommitSummary(b *strings.Builder, pr model.PullRequest, inne
 func (m Model) writeCommentSummary(b *strings.Builder, pr model.PullRequest, innerW int) {
 	s := m.theme.Styles
 	if len(pr.Comments) == 0 {
-		b.WriteString(s.Muted.Render("no conversation comments") + "\n")
+		b.WriteString(s.Muted.Render("no comments") + "\n")
 		return
 	}
 	now := time.Now()
 	for i, comment := range newestComments(pr.Comments) {
-		meta := comment.Author
+		kind := comment.Kind
+		if kind == "" {
+			kind = "comment"
+		}
+		meta := comment.Author + " · " + kind
 		if !comment.CreatedAt.IsZero() {
 			meta += " · " + summaryTimestamp(comment.CreatedAt, now)
 		}
 		b.WriteString(truncatePaneLineWidth(s.File.Render(meta), innerW) + "\n")
+		if comment.Path != "" {
+			location := comment.Path
+			if comment.Line > 0 {
+				location += fmt.Sprintf(":%d", comment.Line)
+			} else if comment.OriginalLine > 0 {
+				location += fmt.Sprintf(":%d (outdated)", comment.OriginalLine)
+			}
+			if comment.Side == "LEFT" {
+				location += " (left)"
+			}
+			b.WriteString(truncatePaneLineWidth(s.Muted.Render(location), innerW) + "\n")
+		}
 		for _, line := range strings.Split(m.renderCommentMarkdown(comment.Body), "\n") {
 			b.WriteString(truncatePaneLineWidth(line, innerW) + "\n")
 		}
@@ -1217,7 +1128,7 @@ func (m Model) diffContentWidth(innerWidth int) int {
 }
 
 func (m Model) renderDiffViewport(width int, height int) string {
-	content := m.currentDiffContent()
+	content, _ := m.diffLayout(width)
 	if content == "" {
 		return ""
 	}
@@ -1230,7 +1141,11 @@ func (m Model) renderDiffViewport(width int, height int) string {
 	}
 	out := make([]string, len(visible))
 	for i, line := range visible {
-		cut := ansi.Cut(line, m.diffXOffset, m.diffXOffset+width)
+		xOffset := m.diffXOffset
+		if m.cfg.Wrap.Diff {
+			xOffset = 0
+		}
+		cut := ansi.Cut(line, xOffset, xOffset+width)
 		out[i] = padANSIWidth(truncateANSIWidth(cut, width), width)
 	}
 	return strings.Join(out, "\n")
@@ -1317,12 +1232,10 @@ func padANSIWidth(s string, width int) string {
 }
 
 // truncateANSIWidth clips a string with ANSI escape codes to maxW visible columns.
-// No ellipsis. Uses rune widths so wide glyphs stay inside border.
+// No ellipsis. Truncates by grapheme so emoji sequences stay intact.
 func truncateANSIWidth(s string, maxW int) string {
-	maxW = max(0, maxW)
 	var b strings.Builder
 	inEscape := false
-	width := 0
 	for _, r := range s {
 		if r == '\x1b' {
 			inEscape = true
@@ -1337,32 +1250,21 @@ func truncateANSIWidth(s string, maxW int) string {
 			continue
 		}
 		if r == '\t' {
-			spaces := tabStopWidth - width%tabStopWidth
-			if spaces == 0 {
-				spaces = tabStopWidth
-			}
-			if width+spaces > maxW {
-				break
-			}
+			spaces := tabStopWidth - ansi.StringWidth(b.String())%tabStopWidth
 			b.WriteString(strings.Repeat(" ", spaces))
-			width += spaces
 			continue
 		}
 		if r == '\r' || (r < ' ' && r != '\n') {
 			continue
 		}
-		w := lipgloss.Width(string(r))
-		if width+w > maxW {
-			break
-		}
 		b.WriteRune(r)
-		width += w
 	}
+	out := ansi.Truncate(b.String(), max(0, maxW), "")
 	// Reset ANSI attributes so truncation doesn't bleed color into next line.
-	if strings.Contains(b.String(), "\x1b[") {
-		b.WriteString("\x1b[0m")
+	if strings.Contains(out, "\x1b[") {
+		out += "\x1b[0m"
 	}
-	return b.String()
+	return out
 }
 
 // leftTruncatePath keeps the longest trailing path that fits within maxW terminal

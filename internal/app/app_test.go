@@ -126,12 +126,13 @@ func TestRefreshKeepsCachedDetailsWhenPRUnchanged(t *testing.T) {
 	store := cache.NewMemoryStore()
 	updated := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 	if err := store.Put(model.PullRequest{
-		Repo:          "owner/repo",
-		Number:        1,
-		UpdatedAt:     updated,
-		Commits:       []model.PRCommit{{OID: "abc"}},
-		Comments:      []model.PRComment{{Body: "hi"}},
-		DetailsLoaded: true,
+		Repo:                 "owner/repo",
+		Number:               1,
+		UpdatedAt:            updated,
+		Commits:              []model.PRCommit{{OID: "abc"}},
+		Comments:             []model.PRComment{{Body: "hi"}},
+		DetailsLoaded:        true,
+		ReviewCommentsLoaded: true,
 	}); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
@@ -142,7 +143,7 @@ func TestRefreshKeepsCachedDetailsWhenPRUnchanged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Refresh: %v", err)
 	}
-	if len(prs) != 1 || prs[0].Title != "fresh" || !prs[0].DetailsLoaded || len(prs[0].Commits) != 1 || len(prs[0].Comments) != 1 {
+	if len(prs) != 1 || prs[0].Title != "fresh" || !prs[0].DetailsLoaded || !prs[0].ReviewCommentsLoaded || len(prs[0].Commits) != 1 || len(prs[0].Comments) != 1 {
 		t.Fatalf("cached details not preserved: %#v", prs)
 	}
 }
@@ -151,11 +152,12 @@ func TestRefreshDropsCachedDetailsWhenPRUpdated(t *testing.T) {
 	store := cache.NewMemoryStore()
 	updated := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 	if err := store.Put(model.PullRequest{
-		Repo:          "owner/repo",
-		Number:        1,
-		UpdatedAt:     updated,
-		Commits:       []model.PRCommit{{OID: "abc"}},
-		DetailsLoaded: true,
+		Repo:                 "owner/repo",
+		Number:               1,
+		UpdatedAt:            updated,
+		Commits:              []model.PRCommit{{OID: "abc"}},
+		DetailsLoaded:        true,
+		ReviewCommentsLoaded: true,
 	}); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
@@ -168,6 +170,25 @@ func TestRefreshDropsCachedDetailsWhenPRUpdated(t *testing.T) {
 	}
 	if len(prs) != 1 || prs[0].DetailsLoaded || len(prs[0].Commits) != 0 {
 		t.Fatalf("stale details kept: %#v", prs)
+	}
+}
+
+func TestRefreshDropsLegacyDetailsWithoutReviewComments(t *testing.T) {
+	store := cache.NewMemoryStore()
+	updated := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	if err := store.Put(model.PullRequest{
+		Repo: "owner/repo", Number: 1, UpdatedAt: updated, DetailsLoaded: true,
+		Comments: []model.PRComment{{Body: "conversation only"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	provider := fakeGitHub{prs: []model.PullRequest{{Repo: "owner/repo", Number: 1, UpdatedAt: updated}}}
+	prs, err := New(provider, store).Refresh(context.Background(), "owner/repo", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(prs) != 1 || prs[0].DetailsLoaded {
+		t.Fatalf("legacy cached details must be reloaded: %#v", prs)
 	}
 }
 

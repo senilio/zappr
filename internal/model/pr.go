@@ -20,6 +20,13 @@ type PRComment struct {
 	Author    string
 	Body      string
 	CreatedAt time.Time
+	// Kind is empty for conversation comments, "review" for review bodies,
+	// and "inline" for comments attached to a file or diff line.
+	Kind         string `json:",omitempty"`
+	Path         string `json:",omitempty"`
+	Line         int    `json:",omitempty"`
+	OriginalLine int    `json:",omitempty"`
+	Side         string `json:",omitempty"`
 }
 
 type PullRequest struct {
@@ -45,5 +52,8 @@ type PullRequest struct {
 	// DetailsLoaded reports whether Commits and Comments were
 	// fetched; inbox list refreshes do not include them.
 	DetailsLoaded bool `json:"details_loaded,omitempty"`
-	Skipped       bool
+	// ReviewCommentsLoaded distinguishes complete details from older cached
+	// entries that fetched only conversation comments.
+	ReviewCommentsLoaded bool `json:"review_comments_loaded,omitempty"`
+	Skipped              bool
 }

@@ -136,6 +136,10 @@ cache:
   path: ` + cfg.Cache.Path + `
 sort: number
 hide_drafts: true
+wrap:
+  inbox: false
+  summary: false
+  diff: false
 actions:
   approve:
     operation: approve
@@ -174,6 +178,8 @@ actions:
     keys: [x]
   toggle-side-by-side:
     keys: [s]
+  toggle-wrap:
+    keys: [w]
   update-branch:
     commands: [update]
 `
