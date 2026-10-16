@@ -64,7 +64,8 @@ func wrapStructured(content string, width int) string {
 }
 
 func (m Model) summaryLayout(pr model.PullRequest, width int) (string, []rowSpan) {
-	if !m.cfg.Wrap.Summary {
+	// The file list stays one row per file even when summary wrapping is on.
+	if !m.cfg.Wrap.Summary || m.summaryMode == SummaryModeFiles {
 		content := m.unwrappedSummaryContent(pr, width)
 		var spans []rowSpan
 		switch m.summaryMode {
@@ -102,24 +103,7 @@ func (m Model) summaryLayout(pr model.PullRequest, width int) (string, []rowSpan
 		blocks = append(blocks, block)
 		row = end
 	}
-	s := m.theme.Styles
 	switch m.summaryMode {
-	case SummaryModeFiles:
-		prevDir := ""
-		for i, file := range pr.Files {
-			dir, name := splitFileDir(file.Path)
-			block := ""
-			if i == 0 || dir != prevDir {
-				block = s.Muted.Render(dir) + "\n"
-				prevDir = dir
-			}
-			style := s.Muted
-			if i == m.fileIndex {
-				style = s.File
-			}
-			block += fileSummaryIndent + style.Render(name) + "\n" + fileSummaryIndent + s.Muted.Render(fmt.Sprintf("%s +%d -%d", file.Status, file.Additions, file.Deletions))
-			appendBlock(block)
-		}
 	case SummaryModeCommits:
 		for i, commit := range newestCommits(pr.Commits) {
 			mv := m

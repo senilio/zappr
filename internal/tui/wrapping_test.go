@@ -17,19 +17,14 @@ import (
 )
 
 func TestWrappedSummaryRetainsContentAndSelectionRows(t *testing.T) {
-	for _, mode := range []SummaryMode{SummaryModeFiles, SummaryModeCommits, SummaryModeComments} {
+	for _, mode := range []SummaryMode{SummaryModeCommits, SummaryModeComments} {
 		m := wrappedModel(t, "summary")
 		m.width, m.height, m.summaryMode = 24, 12, mode
-		m.prs[0].Files = []model.ChangedFile{{Path: "long-directory-name/long-filename-marker.go", Status: "modified", Additions: 10}, {Path: "another/second.go"}}
 		m.prs[0].Commits = []model.PRCommit{{OID: "abcdef0", Headline: "alpha bravo charlie delta echo FINISH"}, {OID: "1234567", Headline: "second"}}
 		m.prs[0].Comments = []model.PRComment{{Author: "author", Body: "- alpha bravo charlie delta echo FINISH\n\n```\n    some_really_long_identifier_FINISH\n```"}}
 		content := stripANSI(m.summaryContent(m.prs[0], 20))
 		joined := strings.Join(strings.Fields(content), "")
-		want := "FINISH"
-		if mode == SummaryModeFiles {
-			want = "long-filename-marker.go"
-		}
-		if !strings.Contains(joined, want) {
+		if want := "FINISH"; !strings.Contains(joined, want) {
 			t.Errorf("mode %d lost content: %q", mode, content)
 		}
 		for _, row := range strings.Split(content, "\n") {
@@ -48,6 +43,20 @@ func TestWrappedSummaryRetainsContentAndSelectionRows(t *testing.T) {
 				t.Errorf("mode %d selection not visible: %q", mode, view)
 			}
 		}
+	}
+}
+
+func TestWrappedSummaryKeepsFilesOnOneRow(t *testing.T) {
+	m := wrappedModel(t, "summary")
+	m.summaryMode = SummaryModeFiles
+	m.prs[0].Files = []model.ChangedFile{{Path: "dir/a.go", Status: "modified", Additions: 1, Deletions: 1}, {Path: "dir/b.go", Status: "added", Additions: 2}}
+	content, spans := m.summaryLayout(m.prs[0], 80)
+	lines := strings.Split(strings.TrimSuffix(stripANSI(content), "\n"), "\n")
+	if len(lines) != 3 || !strings.Contains(lines[1], "a.go") || !strings.Contains(lines[1], "modified") {
+		t.Fatalf("file summary wrapped: %q", lines)
+	}
+	if len(spans) != 2 || spans[1] != (rowSpan{2, 3}) {
+		t.Fatalf("unexpected spans: %#v", spans)
 	}
 }
 
