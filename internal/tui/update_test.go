@@ -2097,8 +2097,9 @@ func TestFileSummaryScrollAccountsForDirectoryHeaders(t *testing.T) {
 	}
 	m.fileIndex = 1
 	m.syncSummaryVPScroll()
-	if m.summaryVP.YOffset != 2 {
-		t.Fatalf("YOffset scrolling up within group = %d, want 2", m.summaryVP.YOffset)
+	// Keep a row of preceding context even in this three-row pane.
+	if m.summaryVP.YOffset != 1 {
+		t.Fatalf("YOffset scrolling up within group = %d, want 1", m.summaryVP.YOffset)
 	}
 }
 

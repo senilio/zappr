@@ -337,6 +337,18 @@ func keepSpanVisible(offset, height int, span rowSpan) int {
 	return offset
 }
 
+func keepSelectionVisible(offset, height int, spans []rowSpan, index int) int {
+	span := spans[index]
+	// Leave up to two items on either side, using their rendered rows.
+	// Limit each margin so the selection itself stays visible in small panes.
+	margin := max(0, (height-(span.end-span.start))/2)
+	preceding := span.start - spans[max(0, index-2)].start
+	following := spans[min(index+2, len(spans)-1)].end - span.end
+	span.start -= min(preceding, margin)
+	span.end += min(following, margin)
+	return keepSpanVisible(offset, height, span)
+}
+
 func (m Model) inboxContent(innerW int) (string, []rowSpan) {
 	s := m.theme.Styles
 	var b strings.Builder
@@ -407,7 +419,7 @@ func (m Model) inboxOffset(innerW, height int) int {
 	_, spans := m.inboxContent(innerW)
 	offset := m.inboxVP.YOffset
 	if !m.inboxManualScroll && m.selected >= 0 && m.selected < len(spans) {
-		offset = keepSpanVisible(offset, height, spans[m.selected])
+		offset = keepSelectionVisible(offset, height, spans, m.selected)
 	}
 	total := 0
 	if len(spans) > 0 {

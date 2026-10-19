@@ -1167,7 +1167,6 @@ func shellQuote(s string) string {
 
 func (m *Model) resetPRViewState() {
 	m.clearLoadedDiffState()
-	m.inboxVP.GotoTop()
 	m.inboxManualScroll = false
 	m.syncInboxVP()
 	m.syncSummaryVP()
@@ -1175,7 +1174,7 @@ func (m *Model) resetPRViewState() {
 }
 
 // syncSummaryVPScroll adjusts the summary viewport Y offset to keep the
-// selected item visible when in commits or files mode.
+// selected item visible with surrounding context in commits or files mode.
 func (m *Model) syncSummaryVPScroll() {
 	vpH := m.summaryVP.Height
 	if vpH <= 0 {
@@ -1191,7 +1190,7 @@ func (m *Model) syncSummaryVPScroll() {
 		index = m.commitIndex
 	}
 	if index >= 0 && index < len(spans) {
-		m.summaryVP.SetYOffset(keepSpanVisible(m.summaryVP.YOffset, vpH, spans[index]))
+		m.summaryVP.SetYOffset(keepSelectionVisible(m.summaryVP.YOffset, vpH, spans, index))
 	}
 }
 
