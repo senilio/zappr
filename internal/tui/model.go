@@ -76,6 +76,15 @@ type Model struct {
 	diffVP            viewport.Model
 	helpVP            viewport.Model
 
+	inboxLayoutCache   *inboxLayoutCache
+	summaryLayoutCache *summaryLayoutCache
+	diffLayoutCache    *diffLayoutCache
+	fileLayoutCache    *fileLayoutCache
+	sideKeyCache       *sideKeyCache
+	inboxVPLayout      *paneLayout
+	summaryVPLayout    *paneLayout
+	diffVPLayout       *paneLayout
+
 	statusActive       bool
 	statusText         string
 	statusErr          bool

@@ -879,13 +879,11 @@ func (m Model) inboxPanel(width int, height int) string {
 		return m.theme.Styles.Muted.Render("no open pull requests")
 	}
 	innerW := max(1, width-paneHFrame)
-	content, _ := m.inboxContent(innerW)
+	layout := m.inboxPane(innerW)
 	vpH := max(1, height-paneFrame)
-	vp := m.inboxVP
-	vp.Width = innerW
+	vp := layout.viewport
 	vp.Height = vpH
-	vp.SetContent(content)
-	vp.SetYOffset(m.inboxOffset(innerW, vpH))
+	vp.SetYOffset(m.inboxOffsetFor(layout.spans, vpH))
 	return vp.View()
 }
 
@@ -895,7 +893,14 @@ func (m Model) summaryPanel(width int, height int) string {
 		return m.theme.Styles.Muted.Render("select PR")
 	}
 	innerW := max(1, width-paneHFrame)
-	rawContent := m.summaryContent(pr, innerW)
+	layout := m.summaryPane(pr, innerW)
+	vp := layout.viewport
+	vp.Height = max(1, height-paneFrame)
+	vp.SetYOffset(m.summaryVP.YOffset)
+	return vp.View()
+}
+
+func (m Model) summaryViewportContent(rawContent string, innerW int) string {
 	// In commits mode apply horizontal scrolling: cut each line by x-offset.
 	if m.summaryMode == SummaryModeCommits && m.summaryXOffset > 0 && !m.cfg.Wrap.Summary {
 		lines := strings.Split(rawContent, "\n")
@@ -906,11 +911,7 @@ func (m Model) summaryPanel(width int, height int) string {
 	} else {
 		rawContent = fitPaneContentWidth(rawContent, innerW)
 	}
-	vp := m.summaryVP
-	vp.Width = innerW
-	vp.Height = max(1, height-paneFrame)
-	vp.SetContent(rawContent)
-	return vp.View()
+	return rawContent
 }
 
 func fitPaneContentWidth(content string, width int) string {
@@ -1128,18 +1129,18 @@ func (m Model) diffContentWidth(innerWidth int) int {
 }
 
 func (m Model) renderDiffViewport(width int, height int) string {
-	content, _ := m.diffLayout(width)
-	if content == "" {
+	layout := m.diffPane(width)
+	if layout.content == "" {
 		return ""
 	}
-	lines := strings.Split(content, "\n")
+	lines := layout.lines
 	top := max(0, min(m.diffVP.YOffset, len(lines)))
 	bottom := min(len(lines), top+max(1, height))
 	visible := lines[top:bottom]
-	if len(visible) < height {
-		visible = append(visible, make([]string, height-len(visible))...)
+	out := make([]string, max(len(visible), height))
+	for i := range out {
+		out[i] = strings.Repeat(" ", max(0, width))
 	}
-	out := make([]string, len(visible))
 	for i, line := range visible {
 		xOffset := m.diffXOffset
 		if m.cfg.Wrap.Diff {

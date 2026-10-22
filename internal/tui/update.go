@@ -18,12 +18,28 @@ import (
 )
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	anchor := m.diffAnchor()
+	// Wheel input only changes viewport offsets. It cannot invalidate delta's
+	// layout, so do not inspect or lay out unrelated diff content here.
+	if mouse, ok := msg.(tea.MouseMsg); ok && tea.MouseEvent(mouse).IsWheel() {
+		return m.update(msg)
+	}
 	oldRaw := m.sideLayoutRaw()
 	next, cmd := m.update(msg)
 	n := next.(Model)
-	if raw := n.sideLayoutRaw(); oldRaw != "" && raw != "" && raw != oldRaw {
-		anchor = n.diffAnchor()
+	// Keep stored content current for scrolling and the pre-Update mouse filter.
+	if n.focus != m.focus || n.mode != m.mode {
+		n.resizeViewports()
+	} else {
+		n.syncInboxVP()
+		n.syncSummaryVP()
+		n.syncDiffVP()
+	}
+	anchor := 0
+	if n.sideLayoutNeeded(n.sideLayoutKey()) {
+		anchor = m.diffAnchor()
+		if raw := n.sideLayoutRaw(); oldRaw != "" && raw != "" && raw != oldRaw {
+			anchor = n.diffAnchor()
+		}
 	}
 	if layout := n.sideLayoutCmd(anchor); layout != nil {
 		return n, tea.Batch(cmd, layout)
@@ -931,6 +947,7 @@ func (m *Model) clearLoadedDiffState() {
 	m.summaryVP.GotoTop()
 	m.diffVP.GotoTop()
 	m.diffVP.SetContent("")
+	m.diffVPLayout = nil
 }
 
 func prRefreshKey(pr model.PullRequest) string {
@@ -1013,15 +1030,14 @@ func (m *Model) autoCommitDiffCmd() tea.Cmd {
 
 func (m *Model) resizeViewports() {
 	// Set the stored viewport heights so that vpCanScroll and LineDown/LineUp
-	// work correctly between renders. Header and footer each occupy 1 line.
+	// work correctly between renders. Only the header occupies a chrome line.
 	// Pane border adds 2 lines vertically. These constants mirror the layout
 	// functions (wideLayout / mediumLayout) and the pane frame size (2).
 	const headerLines = 1
 	const footerLines = 0
 	bodyH := max(4, m.height-headerLines-footerLines)
-	mv := Model{width: m.width, height: m.height, theme: m.theme, focus: m.focus, prs: m.prs, selected: m.selected}
 	if m.width >= minWideWidth {
-		inboxH, summaryH := mv.leftColumnHeights(bodyH)
+		inboxH, summaryH := m.leftColumnHeights(bodyH)
 		m.inboxVP.Height = max(1, inboxH-paneFrame)
 		m.summaryVP.Height = max(1, summaryH-paneFrame)
 		m.diffVP.Height = max(1, bodyH-paneFrame)
@@ -1040,12 +1056,14 @@ func (m *Model) resizeViewports() {
 		m.diffVP.Height = vpH
 	}
 	// Update diff viewport width to the real visible diff content width.
-	diffInnerW := mv.paneInnerWidth(mv.diffPaneOuterWidth(), FocusDiff)
-	m.diffVP.Width = mv.diffContentWidth(diffInnerW)
+	diffInnerW := m.paneInnerWidth(m.diffPaneOuterWidth(), FocusDiff)
+	m.diffVP.Width = m.diffContentWidth(diffInnerW)
 	m.diffVP.SetHorizontalStep(max(1, m.diffVP.Width/2))
 	m.syncDiffVP()
 	m.syncInboxVP()
 	m.syncSummaryVP()
+	m.diffVP.SetYOffset(m.diffVP.YOffset)
+	m.summaryVP.SetYOffset(m.summaryVP.YOffset)
 	m.syncHelpVP()
 }
 
@@ -1202,22 +1220,13 @@ func (m *Model) syncSummaryVP() {
 	if !ok {
 		return
 	}
-	mv := Model{
-		cfg:         m.cfg,
-		theme:       m.theme,
-		fileIndex:   m.fileIndex,
-		commitIndex: m.commitIndex,
-		summaryMode: m.summaryMode,
-		width:       m.width,
-		height:      m.height,
-		focus:       m.focus,
-		prs:         m.prs,
-		selected:    m.selected,
-	}
-	_, summaryInnerW, _ := mv.paneInnerWidths()
-	content := mv.summaryContent(pr, summaryInnerW)
+	_, summaryInnerW, _ := m.paneInnerWidths()
+	layout := m.summaryPane(pr, summaryInnerW)
 	m.summaryVP.Width = summaryInnerW
-	m.summaryVP.SetContent(content)
+	if m.summaryVPLayout != layout {
+		m.summaryVP.SetContent(layout.content)
+		m.summaryVPLayout = layout
+	}
 }
 
 // syncDiffVP updates the stored diffVP's content so that TotalLineCount is
@@ -1232,14 +1241,17 @@ func (m *Model) syncDiffVP() {
 	mv := Model{width: m.width, height: m.height, theme: m.theme, focus: m.focus, prs: m.prs, selected: m.selected}
 	diffInnerW := mv.paneInnerWidth(mv.diffPaneOuterWidth(), FocusDiff)
 	vpW := mv.diffContentWidth(diffInnerW)
-	content, _ := m.diffLayout(vpW)
+	layout := m.diffPane(vpW)
 	m.diffVP.Width = vpW
 	m.diffVP.SetHorizontalStep(max(1, vpW/2))
-	m.diffVP.SetContent(content)
+	if m.diffVPLayout != layout {
+		m.diffVP.SetContent(layout.content)
+		m.diffVPLayout = layout
+	}
 	m.diffXOffset = min(m.diffXOffset, m.maxDiffXOffset())
 }
 
-func (m Model) currentDiffContent() string {
+func (m *Model) currentDiffContent() string {
 	if m.diffMode == DiffModeFile {
 		return m.currentFileContent()
 	}
@@ -1285,11 +1297,17 @@ func (m Model) selectedFileContentKey() string {
 	return fmt.Sprintf("%s#%d:%s@%s", pr.Repo, pr.Number, pr.Files[m.fileIndex].Path, pr.HeadRefOID)
 }
 
-func (m Model) currentFileContent() string {
+func (m *Model) currentFileContent() string {
 	if m.fileContentKey != m.selectedFileContentKey() || m.fileContent == "" {
 		return ""
 	}
-	return m.renderFullFileContent(m.fileContent, diffFileMarks(m.selectedRawDiffFile()))
+	raw, theme := m.selectedRawDiffFile(), m.layoutTheme()
+	if cached := m.fileLayoutCache; cached != nil && cached.content == m.fileContent && cached.raw == raw && cached.theme == theme {
+		return cached.rendered
+	}
+	rendered := m.renderFullFileContent(m.fileContent, diffFileMarks(raw))
+	m.fileLayoutCache = &fileLayoutCache{m.fileContent, raw, theme, rendered}
+	return rendered
 }
 
 func (m Model) selectedRawDiffFile() string {
@@ -1310,8 +1328,9 @@ func (m Model) selectedRawDiffFile() string {
 	return ""
 }
 
-func (m Model) maxDiffXOffset() int {
-	return max(0, longestLineWidth(m.currentDiffContent())-m.diffVP.Width)
+func (m *Model) maxDiffXOffset() int {
+	m.diffPane(max(1, m.diffVP.Width))
+	return max(0, m.diffLayoutCache.maxWidth-m.diffVP.Width)
 }
 
 func (m *Model) setSummaryMode(actionID string) bool {

@@ -89,7 +89,7 @@ func runWatch(zappr *app.App, cfg config.Config, args []string) error {
 	if err != nil {
 		return err
 	}
-	program := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	program := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithFilter(tui.FilterMouseWheel))
 	_, err = program.Run()
 	return err
 }

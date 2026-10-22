@@ -2,7 +2,6 @@ package tui
 
 import (
 	"context"
-	"crypto/sha256"
 	"fmt"
 	"regexp"
 	"strings"
@@ -63,7 +62,7 @@ func wrapStructured(content string, width int) string {
 	return strings.Join(out, "\n")
 }
 
-func (m Model) summaryLayout(pr model.PullRequest, width int) (string, []rowSpan) {
+func (m Model) buildSummaryLayout(pr model.PullRequest, width int) (string, []rowSpan) {
 	// The file list stays one row per file even when summary wrapping is on.
 	if !m.cfg.Wrap.Summary || m.summaryMode == SummaryModeFiles {
 		content := m.unwrappedSummaryContent(pr, width)
@@ -185,8 +184,7 @@ func continuationGutter(gutter string) string {
 
 // Every visual diff row records its original logical row. Both the stored
 // viewport and the renderer use this layout, so scrolling and reflow agree.
-func (m Model) diffLayout(width int) (string, []int) {
-	content := m.currentDiffContent()
+func (m Model) buildDiffLayout(content string, width int) (string, []int) {
 	var rows []string
 	var sources []int
 	source := -1
@@ -229,22 +227,18 @@ func (m Model) sideLayoutRaw() string {
 	return m.rawDiff
 }
 
-func (m Model) sideLayoutKey() string {
-	raw := m.sideLayoutRaw()
-	if raw == "" {
-		return ""
-	}
-	return fmt.Sprintf("%x:%d:%t", sha256.Sum256([]byte(raw)), m.diffVP.Width, m.cfg.Wrap.Diff)
-}
-
 // delta must lay out each side independently at the actual pane width. Reuse
 // cached raw diffs; changing width or wrapping never makes a GitHub request.
+func (m Model) sideLayoutNeeded(key string) bool {
+	return key != "" && key != m.sideDiffKey && key != m.sideDiffRequested && key != m.sideDiffFailed
+}
+
 func (m *Model) sideLayoutCmd(anchor int) tea.Cmd {
 	key := m.sideLayoutKey()
 	if key != m.sideDiffFailed {
 		m.sideDiffFailed = ""
 	}
-	if key == "" || key == m.sideDiffKey || key == m.sideDiffRequested || key == m.sideDiffFailed {
+	if !m.sideLayoutNeeded(key) {
 		return nil
 	}
 	m.sideDiffRequested = key
@@ -349,7 +343,7 @@ func keepSelectionVisible(offset, height int, spans []rowSpan, index int) int {
 	return keepSpanVisible(offset, height, span)
 }
 
-func (m Model) inboxContent(innerW int) (string, []rowSpan) {
+func (m Model) buildInboxContent(innerW int) (string, []rowSpan) {
 	s := m.theme.Styles
 	var b strings.Builder
 	spans := make([]rowSpan, len(m.prs))
@@ -417,6 +411,10 @@ func (m Model) inboxContent(innerW int) (string, []rowSpan) {
 
 func (m Model) inboxOffset(innerW, height int) int {
 	_, spans := m.inboxContent(innerW)
+	return m.inboxOffsetFor(spans, height)
+}
+
+func (m Model) inboxOffsetFor(spans []rowSpan, height int) int {
 	offset := m.inboxVP.YOffset
 	if !m.inboxManualScroll && m.selected >= 0 && m.selected < len(spans) {
 		offset = keepSelectionVisible(offset, height, spans, m.selected)
@@ -430,10 +428,13 @@ func (m Model) inboxOffset(innerW, height int) int {
 
 func (m *Model) syncInboxVP() {
 	w, _, _ := m.paneInnerWidths()
-	content, _ := m.inboxContent(w)
-	offset := m.inboxOffset(w, m.inboxVP.Height)
+	layout := m.inboxPane(w)
+	offset := m.inboxOffsetFor(layout.spans, m.inboxVP.Height)
 	m.inboxVP.Width = w
-	m.inboxVP.SetContent(content)
+	if m.inboxVPLayout != layout {
+		m.inboxVP.SetContent(layout.content)
+		m.inboxVPLayout = layout
+	}
 	m.inboxVP.SetYOffset(offset)
 }
 
