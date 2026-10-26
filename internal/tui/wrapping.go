@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/cellbuf"
 	"github.com/senilio/zappr/internal/config"
@@ -63,8 +63,9 @@ func wrapStructured(content string, width int) string {
 }
 
 func (m Model) buildSummaryLayout(pr model.PullRequest, width int) (string, []rowSpan) {
-	// The file list stays one row per file even when summary wrapping is on.
-	if !m.cfg.Wrap.Summary || m.summaryMode == SummaryModeFiles {
+	// File and comment lists stay one row per entry even when summary
+	// wrapping is on; overlong rows are hard-truncated.
+	if !m.cfg.Wrap.Summary || m.summaryMode == SummaryModeFiles || m.summaryMode == SummaryModeComments {
 		content := m.unwrappedSummaryContent(pr, width)
 		var spans []rowSpan
 		switch m.summaryMode {
@@ -81,13 +82,8 @@ func (m Model) buildSummaryLayout(pr model.PullRequest, width int) (string, []ro
 				spans = append(spans, rowSpan{i * 2, i*2 + 2})
 			}
 		case SummaryModeComments:
-			row := 0
-			for _, comment := range newestComments(pr.Comments) {
-				var b strings.Builder
-				m.writeCommentSummary(&b, model.PullRequest{Comments: []model.PRComment{comment}}, width)
-				end := row + strings.Count(b.String(), "\n")
-				spans = append(spans, rowSpan{row, end})
-				row = end + 1
+			for i := range pr.Comments {
+				spans = append(spans, rowSpan{i, i + 1})
 			}
 		}
 		return content, spans
@@ -112,18 +108,6 @@ func (m Model) buildSummaryLayout(pr model.PullRequest, width int) (string, []ro
 			}
 			var b strings.Builder
 			mv.writeCommitSummary(&b, model.PullRequest{Commits: []model.PRCommit{commit}}, width)
-			appendBlock(b.String())
-		}
-	case SummaryModeComments:
-		for i, comment := range newestComments(pr.Comments) {
-			if i > 0 {
-				blocks = append(blocks, "")
-				row++
-			}
-			var b strings.Builder
-			// The existing writer must receive the full content width here;
-			// clipping before wrapping would irreversibly lose text.
-			m.writeCommentSummary(&b, model.PullRequest{Comments: []model.PRComment{comment}}, len(comment.Body)+len(comment.Path)+len(comment.Author)+256)
 			appendBlock(b.String())
 		}
 	}
@@ -215,7 +199,7 @@ type sideLayoutMsg struct {
 }
 
 func (m Model) sideLayoutRaw() string {
-	if !m.diffEnabled || !m.sideBySide || m.diffMode == DiffModeFile {
+	if !m.diffEnabled || !m.sideBySide || m.diffMode == DiffModeFile || m.summaryMode == SummaryModeComments {
 		return ""
 	}
 	if m.summaryMode == SummaryModeCommits && m.rawCommitDiff != "" {
@@ -242,8 +226,8 @@ func (m *Model) sideLayoutCmd(anchor int) tea.Cmd {
 		return nil
 	}
 	m.sideDiffRequested = key
-	raw, width, wrap := m.sideLayoutRaw(), m.diffVP.Width, m.cfg.Wrap.Diff
-	offset := m.diffVP.YOffset
+	raw, width, wrap := m.sideLayoutRaw(), m.diffVP.Width(), m.cfg.Wrap.Diff
+	offset := m.diffVP.YOffset()
 	if !wrap {
 		width = diffRenderWidth(width)
 	}
@@ -265,15 +249,15 @@ func visualRow(sources []int, logical int) int {
 }
 
 func (m Model) diffAnchor() int {
-	_, sources := m.diffLayout(max(1, m.diffVP.Width))
+	_, sources := m.diffLayout(max(1, m.diffVP.Width()))
 	if len(sources) == 0 {
 		return 0
 	}
-	return sources[min(m.diffVP.YOffset, len(sources)-1)]
+	return sources[min(m.diffVP.YOffset(), len(sources)-1)]
 }
 
 func (m *Model) restoreDiffAnchor(logical int) {
-	_, sources := m.diffLayout(max(1, m.diffVP.Width))
+	_, sources := m.diffLayout(max(1, m.diffVP.Width()))
 	m.diffVP.SetYOffset(visualRow(sources, logical))
 }
 
@@ -282,8 +266,8 @@ func (m Model) summaryAnchor() int {
 	if !ok {
 		return 0
 	}
-	_, spans := m.summaryLayout(pr, max(1, m.summaryVP.Width))
-	return spanAt(spans, m.summaryVP.YOffset)
+	_, spans := m.summaryLayout(pr, max(1, m.summaryVP.Width()))
+	return spanAt(spans, m.summaryVP.YOffset())
 }
 
 func (m *Model) restoreSummaryAnchor(item int) {
@@ -291,7 +275,7 @@ func (m *Model) restoreSummaryAnchor(item int) {
 	if !ok {
 		return
 	}
-	_, spans := m.summaryLayout(pr, max(1, m.summaryVP.Width))
+	_, spans := m.summaryLayout(pr, max(1, m.summaryVP.Width()))
 	if item < len(spans) {
 		m.summaryVP.SetYOffset(spans[item].start)
 	}
@@ -415,7 +399,7 @@ func (m Model) inboxOffset(innerW, height int) int {
 }
 
 func (m Model) inboxOffsetFor(spans []rowSpan, height int) int {
-	offset := m.inboxVP.YOffset
+	offset := m.inboxVP.YOffset()
 	if !m.inboxManualScroll && m.selected >= 0 && m.selected < len(spans) {
 		offset = keepSelectionVisible(offset, height, spans, m.selected)
 	}
@@ -429,8 +413,8 @@ func (m Model) inboxOffsetFor(spans []rowSpan, height int) int {
 func (m *Model) syncInboxVP() {
 	w, _, _ := m.paneInnerWidths()
 	layout := m.inboxPane(w)
-	offset := m.inboxOffsetFor(layout.spans, m.inboxVP.Height)
-	m.inboxVP.Width = w
+	offset := m.inboxOffsetFor(layout.spans, m.inboxVP.Height())
+	m.inboxVP.SetWidth(w)
 	if m.inboxVPLayout != layout {
 		m.inboxVP.SetContent(layout.content)
 		m.inboxVPLayout = layout
@@ -439,15 +423,15 @@ func (m *Model) syncInboxVP() {
 }
 
 func (m Model) inboxAnchor() int {
-	_, spans := m.inboxContent(max(1, m.inboxVP.Width))
-	return spanAt(spans, m.inboxVP.YOffset)
+	_, spans := m.inboxContent(max(1, m.inboxVP.Width()))
+	return spanAt(spans, m.inboxVP.YOffset())
 }
 
 func (m *Model) restoreInboxAnchor(item int) {
 	if !m.inboxManualScroll {
 		return
 	}
-	_, spans := m.inboxContent(max(1, m.inboxVP.Width))
+	_, spans := m.inboxContent(max(1, m.inboxVP.Width()))
 	if item < len(spans) {
 		m.inboxVP.SetYOffset(spans[item].start)
 	}

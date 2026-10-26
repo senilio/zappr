@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/senilio/zappr/internal/model"
 )
 
@@ -37,30 +37,30 @@ func TestInboxSelectionScrollsWithContextAndStopsAtEnds(t *testing.T) {
 			m.resizeViewports()
 			for selected, want := range tt.want {
 				if selected > 0 {
-					next, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+					next, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 					m = next.(Model)
 				}
-				if got := m.inboxVP.YOffset; got != want {
+				if got := m.inboxVP.YOffset(); got != want {
 					t.Fatalf("selection %d: offset=%d, want %d", selected, got, want)
 				}
-				if got := m.inboxOffset(m.inboxVP.Width, m.inboxVP.Height); got != want {
+				if got := m.inboxOffset(m.inboxVP.Width(), m.inboxVP.Height()); got != want {
 					t.Fatalf("selection %d: render offset=%d, want %d", selected, got, want)
 				}
-				_, spans := m.inboxContent(m.inboxVP.Width)
-				if spans[min(selected+2, len(spans)-1)].end > want+m.inboxVP.Height {
+				_, spans := m.inboxContent(m.inboxVP.Width())
+				if spans[min(selected+2, len(spans)-1)].end > want+m.inboxVP.Height() {
 					t.Fatalf("selection %d: following PRs not fully visible", selected)
 				}
 			}
 			for _, want := range tt.wantUp {
-				next, _ := m.Update(tea.KeyMsg{Type: tea.KeyUp})
+				next, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyUp})
 				m = next.(Model)
-				if got := m.inboxVP.YOffset; got != want {
+				if got := m.inboxVP.YOffset(); got != want {
 					t.Fatalf("moving up to selection %d: offset=%d, want %d", m.selected, got, want)
 				}
-				if got := m.inboxOffset(m.inboxVP.Width, m.inboxVP.Height); got != want {
+				if got := m.inboxOffset(m.inboxVP.Width(), m.inboxVP.Height()); got != want {
 					t.Fatalf("moving up to selection %d: render offset=%d, want %d", m.selected, got, want)
 				}
-				_, spans := m.inboxContent(m.inboxVP.Width)
+				_, spans := m.inboxContent(m.inboxVP.Width())
 				if spans[max(0, m.selected-2)].start < want {
 					t.Fatalf("selection %d: preceding PRs not fully visible", m.selected)
 				}
@@ -73,23 +73,23 @@ func TestInboxScrollMarginKeepsSelectionVisibleInSmallPane(t *testing.T) {
 	m := modelWithPRs(make([]model.PullRequest, 10), 4)
 	m.width, m.height = 24, 7
 	m.resizeViewports()
-	_, spans := m.inboxContent(m.inboxVP.Width)
+	_, spans := m.inboxContent(m.inboxVP.Width())
 	span := spans[m.selected]
-	offset := m.inboxVP.YOffset
-	if offset <= span.end-m.inboxVP.Height {
+	offset := m.inboxVP.YOffset()
+	if offset <= span.end-m.inboxVP.Height() {
 		t.Fatalf("small pane has no look-ahead margin: offset=%d", offset)
 	}
-	if span.start < offset || span.end > offset+m.inboxVP.Height {
-		t.Fatalf("margin hid selection: span=%+v offset=%d height=%d", span, offset, m.inboxVP.Height)
+	if span.start < offset || span.end > offset+m.inboxVP.Height() {
+		t.Fatalf("margin hid selection: span=%+v offset=%d height=%d", span, offset, m.inboxVP.Height())
 	}
 	// Approaching the top edge must reserve space above without hiding the PR.
 	m.inboxVP.SetYOffset(span.start)
 	m.syncInboxVP()
-	offset = m.inboxVP.YOffset
+	offset = m.inboxVP.YOffset()
 	if offset >= span.start {
 		t.Fatalf("small pane has no preceding context: offset=%d", offset)
 	}
-	if span.start < offset || span.end > offset+m.inboxVP.Height {
-		t.Fatalf("top margin hid selection: span=%+v offset=%d height=%d", span, offset, m.inboxVP.Height)
+	if span.start < offset || span.end > offset+m.inboxVP.Height() {
+		t.Fatalf("top margin hid selection: span=%+v offset=%d height=%d", span, offset, m.inboxVP.Height())
 	}
 }

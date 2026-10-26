@@ -8,25 +8,22 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
-	"github.com/muesli/termenv"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/colorprofile"
 	"github.com/senilio/zappr/internal/app"
 	"github.com/senilio/zappr/internal/cache"
 	"github.com/senilio/zappr/internal/model"
 	uitheme "github.com/senilio/zappr/internal/tui/theme"
 )
 
-func TestSelectedCommitHighlightsBothRows(t *testing.T) {
-	profile := lipgloss.ColorProfile()
-	lipgloss.SetColorProfile(termenv.TrueColor)
-	t.Cleanup(func() { lipgloss.SetColorProfile(profile) })
+func TestSelectedCommitUsesFileListStyle(t *testing.T) {
 	pr := model.PullRequest{Commits: []model.PRCommit{
-		{OID: "first", Headline: "selected headline", Author: "selected author"},
+		{OID: "first", Headline: "selected headline", Author: "selected author", Date: time.Now()},
 		{OID: "second", Headline: "other headline", Author: "other author"},
 	}}
 	m := modelWithPRs([]model.PullRequest{pr}, 0)
-	m.theme = uitheme.New(uitheme.DarkDefault(), termenv.TrueColor, false)
+	m.theme = uitheme.New(uitheme.DarkDefault(), colorprofile.TrueColor, false)
 	for _, index := range []int{0, 1} {
 		m.commitIndex = index
 		var b strings.Builder
@@ -37,11 +34,15 @@ func TestSelectedCommitHighlightsBothRows(t *testing.T) {
 			if i == index {
 				style = m.theme.Styles.TitleStrong
 			}
-			if !strings.Contains(rows[i*2], style.Render(commit.Headline)) {
-				t.Errorf("commit %d headline does not use expected selection style: %q", i, rows[i*2])
+			meta := commit.Author
+			if !commit.Date.IsZero() {
+				meta = summaryTimestamp(commit.Date, time.Now()) + " · " + meta
 			}
-			if rows[i*2+1] != style.Render(commit.Author) {
-				t.Errorf("commit %d metadata does not use expected selection style: %q", i, rows[i*2+1])
+			if rows[i*2] != style.Render(meta) {
+				t.Errorf("commit %d metadata does not use expected selection style: %q", i, rows[i*2])
+			}
+			if rows[i*2+1] != m.theme.Styles.File.Render(commit.OID)+" "+style.Render(commit.Headline) {
+				t.Errorf("commit %d row does not use expected selection style: %q", i, rows[i*2+1])
 			}
 		}
 	}
@@ -63,7 +64,7 @@ func TestPRSelectionLoadsCommitDiff(t *testing.T) {
 			m.focus = FocusInbox
 			m.commitDiffKey = "previous"
 			m.renderedCommitDiff = "previous diff"
-			next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+			next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 			m = next.(Model)
 			if cmd != nil {
 				runCmd(cmd)
@@ -111,10 +112,10 @@ func TestSummaryChronologyAndTimestamps(t *testing.T) {
 		{OID: "undated", Author: "alice"},
 	}
 	comments := []model.PRComment{
-		{Author: "alice", Body: "older", CreatedAt: older},
-		{Author: "alice", Body: "yesterday", CreatedAt: yesterday},
-		{Author: "alice", Body: "today", CreatedAt: today.UTC()},
-		{Author: "alice", Body: "undated"},
+		{Author: "older", Body: "older", CreatedAt: older},
+		{Author: "yesterday", Body: "yesterday", CreatedAt: yesterday},
+		{Author: "today", Body: "today", CreatedAt: today.UTC()},
+		{Author: "undated", Body: "undated"},
 	}
 	pr := model.PullRequest{Commits: commits, Comments: comments}
 	m := modelWithPRs([]model.PullRequest{pr}, 0)
@@ -127,7 +128,7 @@ func TestSummaryChronologyAndTimestamps(t *testing.T) {
 				m.writeCommentSummary(&b, pr, 80)
 			}
 			view := stripANSI(b.String())
-			for _, label := range []string{"Today 14:35", "Yesterday 14:35", older.Format("2006-01-02 15:04")} {
+			for _, label := range []string{"Today 14:35", "Yesterday 14:35", older.Format("Jan 2 15:04")} {
 				if !strings.Contains(view, label) {
 					t.Errorf("summary missing %q: %q", label, view)
 				}
@@ -185,8 +186,8 @@ func TestSummaryTimestampCalendarBoundaries(t *testing.T) {
 		{"local today across UTC midnight", "2026-10-08T01:35:00Z", "2026-10-07T23:00:00-04:00", "Today 21:35"},
 		{"yesterday across year boundary", "2025-12-31T23:59:00-05:00", "2026-01-01T00:01:00-05:00", "Yesterday 23:59"},
 		{"yesterday during DST change", "2026-03-07T23:30:00-05:00", "2026-03-08T23:45:00-04:00", "Yesterday 23:30"},
-		{"older date", "2026-10-05T13:10:00Z", "2026-10-07T12:00:00Z", "2026-10-05 09:10"},
-		{"future date", "2026-10-08T13:10:00Z", "2026-10-07T12:00:00Z", "2026-10-08 09:10"},
+		{"older date", "2026-10-05T13:10:00Z", "2026-10-07T12:00:00Z", "Oct 5 09:10"},
+		{"future date", "2026-10-08T13:10:00Z", "2026-10-07T12:00:00Z", "Oct 8 09:10"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			date, err := time.Parse(time.RFC3339, tc.date)
@@ -226,20 +227,26 @@ func TestCommentSummaryIncludesReviewAndInlineContext(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := modelWithPRs([]model.PullRequest{pr}, 0)
-	var b strings.Builder
-	m.writeCommentSummary(&b, pr, 80)
-	view := stripANSI(b.String())
+	var details []string
+	for _, comment := range pr.Comments {
+		details = append(details, stripANSI(m.commentDetail(comment)))
+	}
+	view := strings.Join(details, "\n")
 	for _, want := range []string{"bot · review", "bot · inline", "dave · comment", "roles.tf:291", "old.tf:10 (outdated) (left)", "file.tf", "deleted.tf:5 (left)", "Review summary", "Inline finding", "Conversation comment"} {
 		if !strings.Contains(view, want) {
-			t.Errorf("comment summary missing %q: %q", want, view)
+			t.Errorf("comment detail missing %q: %q", want, view)
 		}
 	}
 	if strings.Contains(view, "dave · review") || strings.Contains(view, "roles.tf:290") || strings.Contains(view, "file.tf:0") {
 		t.Fatalf("incorrect comment context: %q", view)
 	}
-	// New location and type metadata must obey the same no-wrapping rule as bodies.
-	b.Reset()
+	// The summary list shows only author and timestamp, within the pane width.
+	var b strings.Builder
 	m.writeCommentSummary(&b, pr, 12)
+	list := stripANSI(b.String())
+	if strings.Contains(list, "Review summary") || strings.Contains(list, "roles.tf") || strings.Contains(list, "review") {
+		t.Fatalf("comment list shows content: %q", list)
+	}
 	for _, line := range strings.Split(b.String(), "\n") {
 		if lipgloss.Width(line) > 12 {
 			t.Fatalf("comment line exceeds pane width: %q", line)
@@ -282,11 +289,24 @@ func TestSummaryTimestampMidnightDST(t *testing.T) {
 		want string
 	}{
 		{6, "Yesterday 12:00"},
-		{5, "2026-09-05 12:00"},
+		{5, "Sep 5 12:00"},
 	} {
 		date := time.Date(2026, 9, tc.day, 12, 0, 0, 0, location)
 		if got := summaryTimestamp(date, now); got != tc.want {
 			t.Errorf("day %d timestamp = %q, want %q", tc.day, got, tc.want)
 		}
+	}
+}
+
+func TestSelectedCommentRowUsesStrongStyle(t *testing.T) {
+	pr := model.PullRequest{Comments: []model.PRComment{{Author: "first"}, {Author: "second"}}}
+	m := modelWithPRs([]model.PullRequest{pr}, 0)
+	m.theme = uitheme.New(uitheme.DarkDefault(), colorprofile.TrueColor, false)
+	m.commentIndex = 1
+	var b strings.Builder
+	m.writeCommentSummary(&b, pr, 80)
+	rows := strings.Split(strings.TrimSuffix(b.String(), "\n"), "\n")
+	if rows[0] != truncateANSIWidth(m.theme.Styles.Muted.Render("first"), 80) || rows[1] != truncateANSIWidth(m.theme.Styles.TitleStrong.Render("second"), 80) {
+		t.Fatalf("unexpected comment row styles: %q", rows)
 	}
 }

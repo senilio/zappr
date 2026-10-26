@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/viewport"
-	"github.com/muesli/termenv"
+	"charm.land/bubbles/v2/viewport"
+	"github.com/charmbracelet/colorprofile"
 	"github.com/senilio/zappr/internal/model"
 	uitheme "github.com/senilio/zappr/internal/tui/theme"
 )
@@ -24,14 +24,14 @@ type paneLayout struct {
 }
 
 func newPaneLayout(content string, width int) *paneLayout {
-	vp := viewport.New(width, 0)
+	vp := viewport.New(viewport.WithWidth(width))
 	vp.SetContent(content)
 	return &paneLayout{content: content, viewport: vp}
 }
 
 type layoutTheme struct {
 	palette uitheme.Palette
-	profile termenv.Profile
+	profile colorprofile.Profile
 	noColor bool
 }
 
@@ -92,11 +92,11 @@ func (m *Model) inboxContent(width int) (string, []rowSpan) {
 }
 
 type summaryLayoutKey struct {
-	width, fileIndex, commitIndex, xOffset int
-	mode                                   SummaryMode
-	wrap                                   bool
-	theme                                  layoutTheme
-	second                                 int64
+	width, fileIndex, commitIndex, commentIndex, xOffset int
+	mode                                                 SummaryMode
+	wrap                                                 bool
+	theme                                                layoutTheme
+	second                                               int64
 }
 
 type summaryLayoutCache struct {
@@ -108,7 +108,7 @@ type summaryLayoutCache struct {
 }
 
 func (m *Model) summaryPane(pr model.PullRequest, width int) *paneLayout {
-	key := summaryLayoutKey{width: width, fileIndex: m.fileIndex, commitIndex: m.commitIndex, xOffset: m.summaryXOffset, mode: m.summaryMode, wrap: m.cfg.Wrap.Summary, theme: m.layoutTheme()}
+	key := summaryLayoutKey{width: width, fileIndex: m.fileIndex, commitIndex: m.commitIndex, commentIndex: m.commentIndex, xOffset: m.summaryXOffset, mode: m.summaryMode, wrap: m.cfg.Wrap.Summary, theme: m.layoutTheme()}
 	var files []model.ChangedFile
 	var commits []model.PRCommit
 	var comments []model.PRComment
@@ -184,10 +184,10 @@ func (m *Model) sideLayoutKey() string {
 	if raw == "" {
 		return ""
 	}
-	if cached := m.sideKeyCache; cached != nil && cached.raw == raw && cached.width == m.diffVP.Width && cached.wrap == m.cfg.Wrap.Diff {
+	if cached := m.sideKeyCache; cached != nil && cached.raw == raw && cached.width == m.diffVP.Width() && cached.wrap == m.cfg.Wrap.Diff {
 		return cached.key
 	}
-	key := fmt.Sprintf("%x:%d:%t", sha256.Sum256([]byte(raw)), m.diffVP.Width, m.cfg.Wrap.Diff)
-	m.sideKeyCache = &sideKeyCache{raw, m.diffVP.Width, m.cfg.Wrap.Diff, key}
+	key := fmt.Sprintf("%x:%d:%t", sha256.Sum256([]byte(raw)), m.diffVP.Width(), m.cfg.Wrap.Diff)
+	m.sideKeyCache = &sideKeyCache{raw, m.diffVP.Width(), m.cfg.Wrap.Diff, key}
 	return key
 }

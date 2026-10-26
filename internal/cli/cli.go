@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/senilio/zappr/internal/app"
 	"github.com/senilio/zappr/internal/cache"
 	"github.com/senilio/zappr/internal/config"
@@ -89,7 +89,7 @@ func runWatch(zappr *app.App, cfg config.Config, args []string) error {
 	if err != nil {
 		return err
 	}
-	program := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithFilter(tui.FilterMouseWheel))
+	program := tea.NewProgram(m, tea.WithFilter(tui.FilterMouseWheel))
 	_, err = program.Run()
 	return err
 }

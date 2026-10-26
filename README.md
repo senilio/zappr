@@ -1,7 +1,7 @@
 # zappr
 
 [![CI](https://github.com/senilio/zappr/actions/workflows/ci.yml/badge.svg)](https://github.com/senilio/zappr/actions/workflows/ci.yml)
-[![Go](https://img.shields.io/badge/Go-1.26%2B-00ADD8?logo=go)](https://go.dev/)
+[![Go](https://img.shields.io/badge/Go-1.27.3%2B-00ADD8?logo=go)](https://go.dev/)
 
 Terminal-first pull request inbox for fast, human-owned GitHub review triage.
 
@@ -53,7 +53,7 @@ Homebrew support not available yet; track releases or build from source.
 
 ## Requirements
 
-- Go 1.26+
+- Go 1.27.3+
 - GitHub CLI: `gh`
 - Authenticated GitHub CLI session: `gh auth login`
 
@@ -92,7 +92,7 @@ enter        inspect selected PR
 y            confirm
 tab          cycle focus
 g/G          top / bottom of list
-shift-up/down previous / next file or commit
+shift-up/down previous / next file, commit, or comment
 1/2/3        summary pane: files / commits / comments
 f            filters / settings
 ?            help
@@ -104,15 +104,19 @@ q            quit
 The following PR/view actions use their default aliases and may be configured:
 `a` approves after confirmation, `A` approves immediately, `c` opens the
 comment editor, `r` refreshes the selected PR, `R` refreshes the inbox, `v`
-toggles the diff pane, `V` opens the full diff pager, `s` toggles side-by-side
+toggles the diff pane (shown by default), `V` opens the full diff pager, `s` toggles side-by-side
 diff, `w` toggles wrapping in the focused pane, `x` expands file content,
 `n`/`p` and `[`/`]` move between files or
 commits, `o` opens the PR, and `C` copies its URL. Command palette operations
 below are also configurable where listed.
 
 The summary pane starts on changed files and can switch to commits or PR
-comments with `1`, `2`, and `3`. Comments include conversation comments,
-review bodies, and inline review comments with file and line context.
+comments with `1`, `2`, and `3`. Files show the selected file diff in the
+large pane, commits show the selected commit diff, and comments list each
+comment on one row as timestamp · author, newest first, with the selected comment shown
+in the large Comment pane. Comments include conversation comments, review
+bodies, and inline review comments; the Comment pane shows their type and file
+and line context. The Comment pane is available even when the diff is off.
 Wrapping is off by default. Press `w` to toggle it independently in Inbox,
 Summary, or Diff; each preference is saved across restarts. Inbox wrapping
 expands every PR title while keeping metadata on one row. Diff wrapping keeps

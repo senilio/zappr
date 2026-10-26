@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/senilio/zappr/internal/config"
 	"github.com/senilio/zappr/internal/model"
 )
@@ -67,11 +67,11 @@ func TestSummaryLayoutTracksInPlaceChanges(t *testing.T) {
 			m.summaryMode = mode
 			m.prs[0].Files = []model.ChangedFile{{Path: "old.go"}}
 			m.prs[0].Commits = []model.PRCommit{{Headline: "old headline"}}
-			m.prs[0].Comments = []model.PRComment{{Body: "old comment"}}
+			m.prs[0].Comments = []model.PRComment{{Author: "old author"}}
 			before, _ := m.summaryLayout(m.prs[0], 60)
 			m.prs[0].Files[0].Path = "new.go"
 			m.prs[0].Commits[0].Headline = "new headline"
-			m.prs[0].Comments[0].Body = "new comment"
+			m.prs[0].Comments[0].Author = "new author"
 			after, _ := m.summaryLayout(m.prs[0], 60)
 			if after == before || !strings.Contains(stripANSI(after), "new") {
 				t.Fatalf("stale Summary after in-place update: %q", after)
@@ -104,7 +104,7 @@ func TestWheelUpdateSkipsUnrelatedDiffLayout(t *testing.T) {
 	m.inboxManualScroll = true
 	small := m
 	small.diff = ""
-	mouse := tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelDown}
+	mouse := tea.MouseWheelMsg{Button: tea.MouseWheelDown}
 	baseline := testing.AllocsPerRun(5, func() { small.Update(mouse) })
 	large := testing.AllocsPerRun(5, func() { m.Update(mouse) })
 	if large > baseline+5 {
@@ -169,7 +169,12 @@ func TestDiffPaddingDoesNotModifyCachedRows(t *testing.T) {
 	m := scrollModel(t, 1)
 	m.diff = "one\ntwo\nthree\nfour"
 	layout := m.diffPane(20)
-	m.diffVP.YOffset = 2
+	m.diffVP.SetContent(m.diff)
+	m.diffVP.SetHeight(2)
+	m.diffVP.SetYOffset(2)
+	if got := m.diffVP.YOffset(); got != 2 {
+		t.Fatalf("diff offset = %d, want 2", got)
+	}
 	m.renderDiffViewport(20, 8)
 	if got := strings.Join(layout.lines, "\n"); got != m.diff {
 		t.Fatalf("padding modified cached rows: %q", got)
@@ -184,7 +189,7 @@ func TestDiffWidthCalculationReused(t *testing.T) {
 	if allocs := testing.AllocsPerRun(10, func() { m.maxDiffXOffset() }); allocs != 0 {
 		t.Fatalf("unchanged diff width rescanned content: %g allocations", allocs)
 	}
-	if got, want := m.maxDiffXOffset(), len(strings.Repeat("wide line", 40))-m.diffVP.Width; got != want {
+	if got, want := m.maxDiffXOffset(), len(strings.Repeat("wide line", 40))-m.diffVP.Width(); got != want {
 		t.Fatalf("max horizontal offset = %d, want %d", got, want)
 	}
 }
@@ -197,11 +202,11 @@ func BenchmarkWheelScrolling(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				button := tea.MouseButtonWheelDown
+				button := tea.MouseWheelDown
 				if i%2 != 0 {
-					button = tea.MouseButtonWheelUp
+					button = tea.MouseWheelUp
 				}
-				next, _ := m.Update(tea.MouseMsg{Action: tea.MouseActionPress, Button: button})
+				next, _ := m.Update(tea.MouseWheelMsg{Button: button})
 				m = next.(Model)
 				m.View()
 			}

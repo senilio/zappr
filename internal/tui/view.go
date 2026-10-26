@@ -6,7 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/senilio/zappr/internal/model"
 	uitheme "github.com/senilio/zappr/internal/tui/theme"
@@ -21,7 +22,14 @@ const paneContentSafetyMargin = 0
 const diffContentSafetyMargin = 0
 const tabStopWidth = 8
 
-func (m Model) View() string {
+func (m Model) View() tea.View {
+	v := tea.NewView(m.viewContent())
+	v.AltScreen = true
+	v.MouseMode = tea.MouseModeCellMotion
+	return v
+}
+
+func (m Model) viewContent() string {
 	switch m.mode {
 	case ModeDetail:
 		return m.detailView()
@@ -194,7 +202,7 @@ func (m Model) helpPanel() string {
 	)
 	section("Review",
 		shortcut{"1/2/3", "files/commits/comments"},
-		shortcut{"shift+↑/↓", "next/previous file/commit"},
+		shortcut{"shift+↑/↓", "next/previous file/commit/comment"},
 		shortcut{m.actionAlias("toggle-diff"), "toggle diff"},
 		shortcut{m.actionAlias("toggle-wrap"), "wrap focused pane"},
 		shortcut{"←/→", "pan diff/commits"},
@@ -321,9 +329,10 @@ func (m Model) renderHelpModal() string {
 	width := min(60, max(32, m.width-8))
 	height := m.helpModalHeight() - 3
 	search := "Search: " + m.helpInput + "_"
-	padding := max(1, (m.helpVP.Width+1-ansi.StringWidth(search))/2-ansi.StringWidth("zappr help"))
+	padding := max(1, (m.helpVP.Width()+1-ansi.StringWidth(search))/2-ansi.StringWidth("zappr help"))
 	content := fmt.Sprintf("zappr help%s%s\n\n%s\n\nup/down pgup/pgdown  esc close", strings.Repeat(" ", padding), search, m.helpViewportView())
-	return m.theme.Styles.Focused.Width(width).Height(height).Padding(0, 2).Render(content)
+	style := m.theme.Styles.Focused.Padding(0, 2)
+	return style.Width(width + style.GetHorizontalBorderSize()).Height(height + style.GetVerticalBorderSize()).Render(content)
 }
 
 func (m Model) helpModalHeight() int {
@@ -332,7 +341,7 @@ func (m Model) helpModalHeight() int {
 
 func (m Model) helpViewportView() string {
 	lines := strings.Split(m.helpVP.View(), "\n")
-	if m.helpVP.TotalLineCount() <= m.helpVP.Height {
+	if m.helpVP.TotalLineCount() <= m.helpVP.Height() {
 		return strings.Join(lines, "\n")
 	}
 	thumb := int(m.helpVP.ScrollPercent() * float64(max(0, len(lines)-1)))
@@ -341,8 +350,8 @@ func (m Model) helpViewportView() string {
 		if i == thumb {
 			bar = "█"
 		}
-		line = truncateANSIWidth(line, m.helpVP.Width)
-		lines[i] = line + strings.Repeat(" ", max(0, m.helpVP.Width-ansi.StringWidth(line))) + m.theme.Styles.Muted.Render(bar)
+		line = truncateANSIWidth(line, m.helpVP.Width())
+		lines[i] = line + strings.Repeat(" ", max(0, m.helpVP.Width()-ansi.StringWidth(line))) + m.theme.Styles.Muted.Render(bar)
 	}
 	return strings.Join(lines, "\n")
 }
@@ -350,7 +359,8 @@ func (m Model) helpViewportView() string {
 // renderCommandModal renders the command palette box (border + padding + content).
 func (m Model) renderCommandModal() string {
 	width := m.commandModalWidth()
-	style := m.theme.Styles.Focused.Width(width).Padding(1, 2)
+	style := m.theme.Styles.Focused.Padding(1, 2)
+	style = style.Width(width + style.GetHorizontalBorderSize())
 	return style.Render(m.commandPanel())
 }
 
@@ -658,7 +668,7 @@ func (m Model) mediumLayout(height int) string {
 
 func (m Model) compactLayout(height int) string {
 	if m.mode == ModeDiff {
-		return m.pane(m.titledPane("Diff", m.diffScrollPct()), m.diffPanel(m.width, height), m.width, height, FocusDiff)
+		return m.pane(m.titledPane(m.diffTitle(), m.diffScrollPct()), m.diffPanel(m.width, height), m.width, height, FocusDiff)
 	}
 	if m.mode == ModeDetail {
 		return m.pane(m.titledPane(m.summaryTitle(), m.summaryScrollPct()), m.summaryPanel(m.width, height), m.width, height, FocusSummary)
@@ -693,6 +703,9 @@ func (m Model) summaryModeTitle(actionID string, mode SummaryMode) string {
 }
 
 func (m Model) diffTitle() string {
+	if m.summaryMode == SummaryModeComments {
+		return "Comment"
+	}
 	if m.summaryMode == SummaryModeCommits {
 		return "Commit diff"
 	}
@@ -713,17 +726,17 @@ func (m Model) titledPane(base string, pct int) string {
 
 // inboxScrollPct returns the scroll percentage of the inbox viewport (0 = at top or no overflow).
 func (m Model) inboxScrollPct() int {
-	return vpScrollPct(m.inboxVP.YOffset, m.inboxVP.TotalLineCount(), m.inboxVP.VisibleLineCount())
+	return vpScrollPct(m.inboxVP.YOffset(), m.inboxVP.TotalLineCount(), m.inboxVP.VisibleLineCount())
 }
 
 // summaryScrollPct returns the scroll percentage of the summary viewport.
 func (m Model) summaryScrollPct() int {
-	return vpScrollPct(m.summaryVP.YOffset, m.summaryVP.TotalLineCount(), m.summaryVP.VisibleLineCount())
+	return vpScrollPct(m.summaryVP.YOffset(), m.summaryVP.TotalLineCount(), m.summaryVP.VisibleLineCount())
 }
 
 // diffScrollPct returns the scroll percentage of the diff viewport.
 func (m Model) diffScrollPct() int {
-	return vpScrollPct(m.diffVP.YOffset, m.diffVP.TotalLineCount(), m.diffVP.VisibleLineCount())
+	return vpScrollPct(m.diffVP.YOffset(), m.diffVP.TotalLineCount(), m.diffVP.VisibleLineCount())
 }
 
 // vpScrollPct computes a [0,100] scroll percentage from viewport metrics.
@@ -777,12 +790,8 @@ func (m Model) pane(title string, content string, width int, height int, focus F
 	// Hard-fit content before border rendering. lipgloss sizing can pad, but it
 	// must not be the only overflow guard because wide lines can reflow the box.
 	content = fitPaneContent(content, innerW, innerH)
-	// lipgloss Width() sets the content+padding area; the border is added
-	// outside. To make the rendered box exactly `width` columns wide, pass
-	// width minus the horizontal border only (not the full frame), otherwise
-	// padding is double-subtracted and the box renders 2 columns too narrow.
-	boxW := max(1, width-style.GetHorizontalBorderSize())
-	box := style.Width(boxW).Height(innerH).Render(content)
+	// Lip Gloss v2 includes borders and padding in the requested dimensions.
+	box := style.Width(width).Height(height).Render(content)
 	return embedTitle(box, title, style, m.theme.NoColor)
 }
 
@@ -882,7 +891,7 @@ func (m Model) inboxPanel(width int, height int) string {
 	layout := m.inboxPane(innerW)
 	vpH := max(1, height-paneFrame)
 	vp := layout.viewport
-	vp.Height = vpH
+	vp.SetHeight(vpH)
 	vp.SetYOffset(m.inboxOffsetFor(layout.spans, vpH))
 	return vp.View()
 }
@@ -895,8 +904,8 @@ func (m Model) summaryPanel(width int, height int) string {
 	innerW := max(1, width-paneHFrame)
 	layout := m.summaryPane(pr, innerW)
 	vp := layout.viewport
-	vp.Height = max(1, height-paneFrame)
-	vp.SetYOffset(m.summaryVP.YOffset)
+	vp.SetHeight(max(1, height-paneFrame))
+	vp.SetYOffset(m.summaryVP.YOffset())
 	return vp.View()
 }
 
@@ -1041,26 +1050,17 @@ func (m Model) writeCommitSummary(b *strings.Builder, pr model.PullRequest, inne
 		if len(sha) > 7 {
 			sha = sha[:7]
 		}
-		selected := i == m.commitIndex
-		shaStyled := s.File.Render(sha)
-		headline := commit.Headline
-		if selected {
-			headline = s.TitleStrong.Render(headline)
-		} else {
-			shaStyled = s.Muted.Render(sha)
-			headline = s.Muted.Render(headline)
-		}
-		// Use full-width headline (horizontal scroll handles truncation).
-		fmt.Fprintf(b, "%s\n", fmt.Sprintf("%s %s", shaStyled, headline))
 		meta := commit.Author
-		if !commit.Date.IsZero() {
-			meta += " · " + summaryTimestamp(commit.Date, now)
+		if stamp := summaryTimestamp(commit.Date, now); stamp != "" {
+			meta = stamp + " · " + meta
 		}
-		if selected {
-			b.WriteString(s.TitleStrong.Render(meta) + "\n")
-		} else {
-			b.WriteString(s.Muted.Render(meta) + "\n")
+		// The SHA keeps the accent color; selection brightens the text.
+		style := s.Muted
+		if i == m.commitIndex {
+			style = s.TitleStrong
 		}
+		b.WriteString(style.Render(meta) + "\n")
+		b.WriteString(s.File.Render(sha) + " " + style.Render(commit.Headline) + "\n")
 	}
 }
 
@@ -1072,37 +1072,69 @@ func (m Model) writeCommentSummary(b *strings.Builder, pr model.PullRequest, inn
 	}
 	now := time.Now()
 	for i, comment := range newestComments(pr.Comments) {
-		kind := comment.Kind
-		if kind == "" {
-			kind = "comment"
+		style := s.Muted
+		if i == m.commentIndex {
+			style = s.TitleStrong
 		}
-		meta := comment.Author + " · " + kind
-		if !comment.CreatedAt.IsZero() {
-			meta += " · " + summaryTimestamp(comment.CreatedAt, now)
+		row := comment.Author
+		if stamp := summaryTimestamp(comment.CreatedAt, now); stamp != "" {
+			row = stamp + " · " + row
 		}
-		b.WriteString(truncatePaneLineWidth(s.File.Render(meta), innerW) + "\n")
-		if comment.Path != "" {
-			location := comment.Path
-			if comment.Line > 0 {
-				location += fmt.Sprintf(":%d", comment.Line)
-			} else if comment.OriginalLine > 0 {
-				location += fmt.Sprintf(":%d (outdated)", comment.OriginalLine)
-			}
-			if comment.Side == "LEFT" {
-				location += " (left)"
-			}
-			b.WriteString(truncatePaneLineWidth(s.Muted.Render(location), innerW) + "\n")
-		}
-		for _, line := range strings.Split(m.renderCommentMarkdown(comment.Body), "\n") {
-			b.WriteString(truncatePaneLineWidth(line, innerW) + "\n")
-		}
-		if i < len(pr.Comments)-1 {
-			b.WriteByte('\n')
-		}
+		b.WriteString(truncateANSIWidth(style.Render(row), innerW) + "\n")
 	}
 }
 
+func (m Model) selectedComment() (model.PRComment, bool) {
+	pr, ok := m.current()
+	if !ok || m.commentIndex < 0 || m.commentIndex >= len(pr.Comments) {
+		return model.PRComment{}, false
+	}
+	return newestComments(pr.Comments)[m.commentIndex], true
+}
+
+// commentDetail renders the selected comment for the large pane, including
+// the type and location context that the summary list omits.
+func (m Model) commentDetail(comment model.PRComment) string {
+	s := m.theme.Styles
+	kind := comment.Kind
+	if kind == "" {
+		kind = "comment"
+	}
+	meta := comment.Author + " · " + kind
+	if !comment.CreatedAt.IsZero() {
+		meta += " · " + summaryTimestamp(comment.CreatedAt, time.Now())
+	}
+	var b strings.Builder
+	b.WriteString(s.File.Render(meta) + "\n")
+	if comment.Path != "" {
+		location := comment.Path
+		if comment.Line > 0 {
+			location += fmt.Sprintf(":%d", comment.Line)
+		} else if comment.OriginalLine > 0 {
+			location += fmt.Sprintf(":%d (outdated)", comment.OriginalLine)
+		}
+		if comment.Side == "LEFT" {
+			location += " (left)"
+		}
+		b.WriteString(s.Muted.Render(location) + "\n")
+	}
+	b.WriteByte('\n')
+	b.WriteString(m.renderCommentMarkdown(comment.Body))
+	return strings.TrimRight(b.String(), "\n")
+}
+
 func (m Model) diffPanel(width int, height int) string {
+	if m.summaryMode == SummaryModeComments {
+		pr, ok := m.current()
+		if !ok {
+			return m.theme.Styles.Muted.Render("select PR")
+		}
+		if len(pr.Comments) == 0 {
+			return m.theme.Styles.Muted.Render("no comments")
+		}
+		vpW := m.paneInnerWidth(width, FocusDiff)
+		return m.renderDiffViewport(m.diffContentWidth(vpW), m.paneInnerHeight(height, FocusDiff))
+	}
 	if !m.diffEnabled {
 		return m.theme.Styles.Muted.Render("press v to load diff")
 	}
@@ -1134,7 +1166,7 @@ func (m Model) renderDiffViewport(width int, height int) string {
 		return ""
 	}
 	lines := layout.lines
-	top := max(0, min(m.diffVP.YOffset, len(lines)))
+	top := max(0, min(m.diffVP.YOffset(), len(lines)))
 	bottom := min(len(lines), top+max(1, height))
 	visible := lines[top:bottom]
 	out := make([]string, max(len(visible), height))
@@ -1291,7 +1323,8 @@ func leftTruncatePath(path string, maxW int) string {
 // overlayModal, matching the command palette's dimmed-background presentation.
 func (m Model) renderModalBox(content string) string {
 	width := min(72, max(32, m.width-4))
-	style := m.theme.Styles.Focused.Width(width).Padding(1, 2)
+	style := m.theme.Styles.Focused.Padding(1, 2)
+	style = style.Width(width + style.GetHorizontalBorderSize())
 	return style.Render(content)
 }
 

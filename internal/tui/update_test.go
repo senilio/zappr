@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/senilio/zappr/internal/app"
 	"github.com/senilio/zappr/internal/cache"
 	"github.com/senilio/zappr/internal/config"
@@ -162,7 +162,7 @@ func TestSettingsSortModePersistsToConfig(t *testing.T) {
 	m.mode = ModeSettings
 	m.settingsCursor = 1
 
-	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
 	m = next.(Model)
 	if cmd == nil {
 		t.Fatal("cycling sort mode should return a save command")
@@ -183,7 +183,7 @@ func TestSettingsHideDraftsPersistsToConfig(t *testing.T) {
 	m := modelWithPRs([]model.PullRequest{{Number: 1, Draft: true}, {Number: 2}}, 0)
 	m.mode = ModeSettings
 
-	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
 	m = next.(Model)
 	if cmd == nil {
 		t.Fatal("toggling draft visibility should return a save command")
@@ -538,33 +538,33 @@ func TestFullscreenDiffKeepsScrollingAndNavigation(t *testing.T) {
 
 	m, _ := fullscreenDiffModel(t, cfg)
 	m = updateKey(m, "down")
-	if m.diffVP.YOffset == 0 {
+	if m.diffVP.YOffset() == 0 {
 		t.Error("down did not scroll diff down in fullscreen diff")
 	}
 	m = updateKey(m, "up")
-	if m.diffVP.YOffset != 0 {
-		t.Errorf("up did not scroll diff up, YOffset = %d", m.diffVP.YOffset)
+	if m.diffVP.YOffset() != 0 {
+		t.Errorf("up did not scroll diff up, YOffset = %d", m.diffVP.YOffset())
 	}
 
 	m, _ = fullscreenDiffModel(t, cfg)
 	m = updateKey(m, "G")
-	bottom := m.diffVP.YOffset
+	bottom := m.diffVP.YOffset()
 	if bottom == 0 {
 		t.Error("G did not jump to bottom in fullscreen diff")
 	}
 	m = updateKey(m, "g")
-	if m.diffVP.YOffset != 0 {
-		t.Errorf("g did not jump to top, YOffset = %d", m.diffVP.YOffset)
+	if m.diffVP.YOffset() != 0 {
+		t.Errorf("g did not jump to top, YOffset = %d", m.diffVP.YOffset())
 	}
 
 	m, _ = fullscreenDiffModel(t, cfg)
 	m = updateKey(m, "pgdown")
-	if m.diffVP.YOffset == 0 {
+	if m.diffVP.YOffset() == 0 {
 		t.Error("pgdown did not page down in fullscreen diff")
 	}
 	m = updateKey(m, "pgup")
-	if m.diffVP.YOffset != 0 {
-		t.Errorf("pgup did not page up, YOffset = %d", m.diffVP.YOffset)
+	if m.diffVP.YOffset() != 0 {
+		t.Errorf("pgup did not page up, YOffset = %d", m.diffVP.YOffset())
 	}
 
 	m, _ = fullscreenDiffModel(t, cfg)
@@ -820,7 +820,7 @@ func TestHelpSearchFiltersAndEscCloses(t *testing.T) {
 	for _, key := range "open" {
 		m = updateKey(m, string(key))
 	}
-	view := stripANSI(m.View())
+	view := stripANSI(m.View().Content)
 	if !strings.Contains(view, "open PR") || strings.Contains(view, "Command palette") {
 		t.Fatalf("help = %q", view)
 	}
@@ -842,13 +842,13 @@ func TestHelpFitsScreenAndScrolls(t *testing.T) {
 	if !strings.Contains(view, "│") {
 		t.Fatalf("help = %q, want scrollbar", view)
 	}
-	for _, line := range strings.Split(m.View(), "\n") {
+	for _, line := range strings.Split(m.View().Content, "\n") {
 		if lipgloss.Width(stripANSI(line)) > m.width {
 			t.Fatalf("help line exceeds width: %q", line)
 		}
 	}
 	m = updateKey(m, "down")
-	if m.helpVP.YOffset == 0 {
+	if m.helpVP.YOffset() == 0 {
 		t.Fatal("down should scroll help")
 	}
 }
@@ -1010,7 +1010,7 @@ func TestShiftCCopiesPRURL(t *testing.T) {
 	}}, 0)
 	m.focus = FocusInbox
 
-	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("C")})
+	next, cmd := m.Update(tea.KeyPressMsg{Code: 'C', Text: "C"})
 	m = next.(Model)
 
 	if cmd == nil {
@@ -1028,7 +1028,7 @@ func TestOKeyOpensPRURLInsteadOfSorting(t *testing.T) {
 	m := modelWithPRs([]model.PullRequest{{Number: 1, Repo: "org/repo", URL: "https://github.com/org/repo/pull/1"}}, 0)
 	m.sortMode = app.SortUpdated
 
-	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("o")})
+	next, cmd := m.Update(tea.KeyPressMsg{Code: 'o', Text: "o"})
 	m = next.(Model)
 
 	if cmd == nil {
@@ -1333,7 +1333,7 @@ func configuredModel(t *testing.T, cfg config.Config, selected bool) (Model, *co
 }
 
 func updateKey(m Model, key string) Model {
-	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)})
+	next, cmd := m.Update(tea.KeyPressMsg{Text: key})
 	if cmd != nil {
 		runCmd(cmd)
 	}
@@ -1373,17 +1373,17 @@ func assertCommentBody(t *testing.T, provider *commentRecordingGitHub, want stri
 }
 
 func pressKey(m Model, key string) Model {
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)})
+	next, _ := m.Update(tea.KeyPressMsg{Text: key})
 	return next.(Model)
 }
 
-func pressSpecial(m Model, key tea.KeyType) Model {
-	next, _ := m.Update(tea.KeyMsg{Type: key})
+func pressSpecial(m Model, key rune) Model {
+	next, _ := m.Update(tea.KeyPressMsg{Code: key})
 	return next.(Model)
 }
 
 func clickMouse(m Model, x, y int) Model {
-	next, _ := m.Update(tea.MouseMsg{X: x, Y: y, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	next, _ := m.Update(tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft})
 	return next.(Model)
 }
 
@@ -1800,10 +1800,10 @@ func TestInboxTitleDoesNotChangePaneGeometryWithSelectedContent(t *testing.T) {
 	base.width = 90
 	base.height = 24
 	base.mode = ModeInbox
-	shortView := base.View()
+	shortView := base.View().Content
 
 	base.selected = 1
-	longView := base.View()
+	longView := base.View().Content
 
 	if got, want := lipWidthOfFirstLine(shortView), lipWidthOfFirstLine(longView); got != want {
 		t.Fatalf("pane width changed with selected PR content: %d vs %d", got, want)
@@ -1828,14 +1828,14 @@ func TestDiffHorizontalScrollMovesXOffset(t *testing.T) {
 		t.Fatalf("initial diff view missing expected prefix: %q", initial)
 	}
 
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRight})
+	next, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyRight})
 	m = next.(Model)
 	afterRight := m.diffPanel(m.width, m.height)
 	if afterRight == initial {
 		t.Fatal("diff view did not change after right key")
 	}
 
-	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	next, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyLeft})
 	m = next.(Model)
 	afterLeft := m.diffPanel(m.width, m.height)
 	if afterLeft != initial {
@@ -1893,7 +1893,7 @@ func TestLayoutUsesFullHeight(t *testing.T) {
 	m := modelWithPRs([]model.PullRequest{{Number: 1, Repo: "org/repo", Title: "title", Author: "author", CIStatus: "passing"}}, 0)
 	m.width = 120
 	m.height = 20
-	view := m.View()
+	view := m.View().Content
 	got := len(strings.Split(strings.TrimRight(view, "\n"), "\n"))
 	if got != m.height {
 		t.Fatalf("layout height = %d, want %d", got, m.height)
@@ -1904,7 +1904,7 @@ func TestLayoutUsesFullWidth(t *testing.T) {
 	m := modelWithPRs([]model.PullRequest{{Number: 1, Repo: "org/repo", Title: "title", Author: "author", CIStatus: "passing"}}, 0)
 	m.width = 120
 	m.height = 20
-	view := m.View()
+	view := m.View().Content
 	for _, line := range strings.Split(strings.TrimRight(view, "\n"), "\n") {
 		if got := lipgloss.Width(stripANSI(line)); got != m.width {
 			t.Fatalf("line width = %d, want %d: %q", got, m.width, line)
@@ -1922,18 +1922,18 @@ func TestDiffVerticalScrollMovesYOffset(t *testing.T) {
 	m.diff = strings.Repeat("line\n", 80)
 	m.resizeViewports()
 
-	initial := m.diffVP.YOffset
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	initial := m.diffVP.YOffset()
+	next, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	m = next.(Model)
-	if m.diffVP.YOffset <= initial {
-		t.Fatalf("diff YOffset did not move down after down key: %d -> %d", initial, m.diffVP.YOffset)
+	if m.diffVP.YOffset() <= initial {
+		t.Fatalf("diff YOffset did not move down after down key: %d -> %d", initial, m.diffVP.YOffset())
 	}
 
-	afterDown := m.diffVP.YOffset
-	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyPgDown})
+	afterDown := m.diffVP.YOffset()
+	next, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyPgDown})
 	m = next.(Model)
-	if m.diffVP.YOffset <= afterDown {
-		t.Fatalf("diff YOffset did not move down after pgdown: %d -> %d", afterDown, m.diffVP.YOffset)
+	if m.diffVP.YOffset() <= afterDown {
+		t.Fatalf("diff YOffset did not move down after pgdown: %d -> %d", afterDown, m.diffVP.YOffset())
 	}
 }
 
@@ -2073,33 +2073,33 @@ func TestFileSummaryScrollAccountsForDirectoryHeaders(t *testing.T) {
 	m.width = 120
 	m.height = 40
 	m.syncSummaryVP()
-	m.summaryVP.Height = 3
+	m.summaryVP.SetHeight(3)
 
 	// databases.yaml renders on line 4 (headers on lines 0 and 3).
 	m.fileIndex = 2
 	m.syncSummaryVPScroll()
-	if m.summaryVP.YOffset != 2 {
-		t.Fatalf("YOffset scrolling down = %d, want 2", m.summaryVP.YOffset)
+	if m.summaryVP.YOffset() != 2 {
+		t.Fatalf("YOffset scrolling down = %d, want 2", m.summaryVP.YOffset())
 	}
 
 	// README.md renders on line 6.
 	m.fileIndex = 3
 	m.syncSummaryVPScroll()
-	if m.summaryVP.YOffset != 4 {
-		t.Fatalf("YOffset scrolling to last file = %d, want 4", m.summaryVP.YOffset)
+	if m.summaryVP.YOffset() != 4 {
+		t.Fatalf("YOffset scrolling to last file = %d, want 4", m.summaryVP.YOffset())
 	}
 
 	// Scrolling up to the first file of a group keeps its header visible.
 	m.fileIndex = 2
 	m.syncSummaryVPScroll()
-	if m.summaryVP.YOffset != 3 {
-		t.Fatalf("YOffset scrolling up = %d, want 3", m.summaryVP.YOffset)
+	if m.summaryVP.YOffset() != 3 {
+		t.Fatalf("YOffset scrolling up = %d, want 3", m.summaryVP.YOffset())
 	}
 	m.fileIndex = 1
 	m.syncSummaryVPScroll()
 	// Keep a row of preceding context even in this three-row pane.
-	if m.summaryVP.YOffset != 1 {
-		t.Fatalf("YOffset scrolling up within group = %d, want 1", m.summaryVP.YOffset)
+	if m.summaryVP.YOffset() != 1 {
+		t.Fatalf("YOffset scrolling up within group = %d, want 1", m.summaryVP.YOffset())
 	}
 }
 
@@ -2148,7 +2148,7 @@ func TestCommandOverlayPreservesSelectedInboxColors(t *testing.T) {
 	m.focus = FocusInbox
 	m.resizeViewports()
 
-	view := m.View()
+	view := m.View().Content
 	want := m.theme.Styles.TitleStrong.Render("selected title")
 	if !strings.Contains(view, want) {
 		t.Fatalf("selected title colors not preserved; missing %q in %q", want, view)
@@ -2170,7 +2170,7 @@ func TestApprovalViewUsesModalOverlayWhenSized(t *testing.T) {
 	m.focus = FocusInbox
 	m.resizeViewports()
 
-	view := stripANSI(m.View())
+	view := stripANSI(m.View().Content)
 	if !strings.Contains(view, "selected title") || !strings.Contains(view, "Inbox (1/1)") {
 		t.Fatalf("approval view should render over inbox layout: %q", view)
 	}
@@ -2182,7 +2182,7 @@ func TestApprovalViewUsesModalOverlayWhenSized(t *testing.T) {
 	}
 }
 
-func TestCommentSummaryStripsEmojiShortcodes(t *testing.T) {
+func TestCommentPaneStripsEmojiShortcodes(t *testing.T) {
 	m := modelWithPRs([]model.PullRequest{{
 		Number: 1,
 		Repo:   "org/repo",
@@ -2197,7 +2197,7 @@ func TestCommentSummaryStripsEmojiShortcodes(t *testing.T) {
 	m.height = 14
 	m.summaryMode = SummaryModeComments
 
-	view := stripANSI(m.summaryPanel(m.width, m.height))
+	view := stripANSI(m.diffPanel(m.width, m.height))
 	if strings.Contains(view, ":rocket:") || strings.Contains(view, ":white_check_mark:") {
 		t.Fatalf("emoji shortcodes not stripped: %q", view)
 	}
@@ -2206,7 +2206,7 @@ func TestCommentSummaryStripsEmojiShortcodes(t *testing.T) {
 	}
 }
 
-func TestCommentSummaryWrapsLongLines(t *testing.T) {
+func TestCommentPaneTruncatesLongLines(t *testing.T) {
 	m := modelWithPRs([]model.PullRequest{{
 		Number: 1,
 		Repo:   "org/repo",
@@ -2220,12 +2220,12 @@ func TestCommentSummaryWrapsLongLines(t *testing.T) {
 	m.width = 44
 	m.height = 14
 	m.summaryMode = SummaryModeComments
-	view := m.summaryPanel(m.width, m.height)
+	view := m.diffPanel(m.width, m.height)
 	lines := strings.Split(view, "\n")
 	bodyLines := 0
 	for _, line := range strings.Split(view, "\n") {
-		if lipgloss.Width(stripANSI(line)) > m.width-4 {
-			t.Fatalf("comment summary line over width: %q", line)
+		if lipgloss.Width(stripANSI(line)) > m.paneInnerWidth(m.width, FocusDiff) {
+			t.Fatalf("comment pane line over width: %q", line)
 		}
 		if strings.Contains(line, "0123456789") {
 			bodyLines++
@@ -2302,8 +2302,8 @@ func TestDiffPanelHorizontalScrollShowsLaterContentWithoutWrapping(t *testing.T)
 		t.Fatal("diff did not change after horizontal scroll")
 	}
 	for _, line := range strings.Split(afterRight, "\n") {
-		if got := lipgloss.Width(stripANSI(line)); got != m.diffVP.Width {
-			t.Fatalf("scrolled diff line width = %d, want %d: %q", got, m.diffVP.Width, line)
+		if got := lipgloss.Width(stripANSI(line)); got != m.diffVP.Width() {
+			t.Fatalf("scrolled diff line width = %d, want %d: %q", got, m.diffVP.Width(), line)
 		}
 	}
 }
@@ -2324,7 +2324,7 @@ func TestWideLayoutWithDiffUsesFullWidth(t *testing.T) {
 		m.diff = strings.Repeat("line\n", 20)
 		m.resizeViewports()
 
-		view := m.View()
+		view := m.View().Content
 		lines := strings.Split(strings.TrimRight(view, "\n"), "\n")
 		for _, line := range lines {
 			if got := lipgloss.Width(stripANSI(line)); got != m.width {
@@ -2347,8 +2347,8 @@ func TestWideDiffHardTruncatesBeforeRightPadding(t *testing.T) {
 
 		paneW := m.diffPaneOuterWidth()
 		want := m.diffContentWidth(m.paneInnerWidth(paneW, FocusDiff))
-		if m.diffVP.Width != want {
-			t.Fatalf("width %d: diff viewport width = %d, want %d", width, m.diffVP.Width, want)
+		if m.diffVP.Width() != want {
+			t.Fatalf("width %d: diff viewport width = %d, want %d", width, m.diffVP.Width(), want)
 		}
 		for _, line := range strings.Split(m.diffPanel(paneW, 8), "\n") {
 			if got := lipgloss.Width(stripANSI(line)); got != want {
@@ -2368,7 +2368,7 @@ func TestWideLayoutLongDiffDoesNotWrapOrChangeHeight(t *testing.T) {
 	m.diff = strings.Repeat("data.terraform_remote_state.vpc_state.outputs.vpc_id", 6)
 	m.resizeViewports()
 
-	view := m.View()
+	view := m.View().Content
 	lines := strings.Split(strings.TrimRight(view, "\n"), "\n")
 	if len(lines) != m.height {
 		t.Fatalf("view height = %d, want %d", len(lines), m.height)
@@ -2390,7 +2390,7 @@ func TestWideLayoutTabbedDiffDoesNotExceedTerminalWidth(t *testing.T) {
 	m.diff = strings.Repeat("\tdata.terraform_remote_state.vpc_state.outputs.vpc_id", 6)
 	m.resizeViewports()
 
-	for _, line := range strings.Split(strings.TrimRight(m.View(), "\n"), "\n") {
+	for _, line := range strings.Split(strings.TrimRight(m.View().Content, "\n"), "\n") {
 		if strings.Contains(line, "\t") {
 			t.Fatalf("rendered line still contains tab: %q", line)
 		}
@@ -2407,7 +2407,7 @@ func TestSummaryHeaderShowsActiveModeAndFooterDropsShortcut(t *testing.T) {
 	m.mode = ModeDetail
 	m.focus = FocusSummary
 	m.summaryMode = SummaryModeCommits
-	view := m.View()
+	view := m.View().Content
 	if strings.Contains(view, "1/2/3 summary") {
 		t.Fatalf("footer still shows summary shortcut: %q", view)
 	}
@@ -2420,7 +2420,7 @@ func TestRKeyRefreshesSelectedPR(t *testing.T) {
 	m := modelWithPRs([]model.PullRequest{{Number: 1, Repo: "org/repo", Title: "title", Author: "author"}}, 0)
 	m.mode = ModeDetail
 
-	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
+	next, cmd := m.Update(tea.KeyPressMsg{Code: 'r', Text: "r"})
 	m = next.(Model)
 
 	if cmd == nil {
@@ -2441,7 +2441,7 @@ func TestRefreshAllCommandRefreshesInbox(t *testing.T) {
 	m.prevMode = ModeDetail
 	m.commandInput = "refresh-all"
 
-	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = next.(Model)
 
 	if cmd == nil {
@@ -2475,10 +2475,8 @@ func TestStripNonSGRRemovesEraseLineKeepsColor(t *testing.T) {
 	}
 }
 
-// TestPaneRendersExactAllocatedWidth guards Bug 2: lipgloss Width() sets the
-// content+padding area and adds the border outside, so pane() must size the box
-// with width-borderSize, not width-frameSize, or every pane renders 2 cols too
-// narrow (leaving dead space at the terminal's right edge).
+// TestPaneRendersExactAllocatedWidth guards against subtracting the border or
+// padding twice when sizing a pane, leaving dead space at the right edge.
 func TestPaneRendersExactAllocatedWidth(t *testing.T) {
 	m := modelWithPRs([]model.PullRequest{{Number: 1, Repo: "org/repo", Title: "x"}}, 0)
 	m.theme = theme.Default()
@@ -2509,7 +2507,7 @@ func TestWideLayoutBodyFillsTerminalWidth(t *testing.T) {
 		m.diffEnabled = true
 		m.diff = strings.Repeat("| EBS latency, IOPS saturation, full disk | ebs.md | EC2 |\n", 20)
 		m.resizeViewports()
-		for i, line := range strings.Split(m.View(), "\n") {
+		for i, line := range strings.Split(m.View().Content, "\n") {
 			if got := lipgloss.Width(stripANSI(line)); got != width {
 				t.Fatalf("width=%d line %d width = %d, want %d: %q", width, i, got, width, stripANSI(line))
 			}
@@ -2538,14 +2536,14 @@ func TestColorschemePicker(t *testing.T) {
 	}
 
 	// j moves cursor down
-	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	next, _ = m.Update(tea.KeyPressMsg{Code: 'j', Text: "j"})
 	m = next.(Model)
 	if m.colorschemeIndex != 1 {
 		t.Fatalf("colorschemeIndex = %d, want 1 after j", m.colorschemeIndex)
 	}
 
 	// esc reverts and closes
-	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEscape})
+	next, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 	m = next.(Model)
 	if m.mode == ModeColorscheme {
 		t.Fatal("mode should not be ModeColorscheme after esc")

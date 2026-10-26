@@ -6,13 +6,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
 	"github.com/senilio/zappr/internal/model"
 )
 
-func wheel(button tea.MouseButton) tea.MouseMsg {
-	return tea.MouseMsg{Action: tea.MouseActionPress, Button: button}
+func wheel(button tea.MouseButton) tea.MouseWheelMsg {
+	return tea.MouseWheelMsg{Button: button}
 }
 
 func focusedViewport(m *Model) *viewport.Model {
@@ -34,7 +34,7 @@ func TestMouseWheelDiffAfterIdenticalReload(t *testing.T) {
 	next, _ := m.Update(loaded)
 	m = next.(Model)
 	region := m.paneRegions()[0]
-	next, _ = m.Update(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: region.x + 2, Y: region.y + 1})
+	next, _ = m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: region.x + 2, Y: region.y + 1})
 	m = next.(Model)
 	if m.diff != "" {
 		t.Fatal("click did not clear the loaded diff")
@@ -46,16 +46,16 @@ func TestMouseWheelDiffAfterIdenticalReload(t *testing.T) {
 			break
 		}
 	}
-	next, _ = m.Update(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: region.x + 2, Y: region.y + 1})
+	next, _ = m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: region.x + 2, Y: region.y + 1})
 	m = next.(Model)
-	msg := wheel(tea.MouseButtonWheelDown)
+	msg := wheel(tea.MouseWheelDown)
 	if FilterMouseWheel(m, msg) == nil {
 		t.Fatalf("reloaded diff wheel was filtered: viewport has %d rows", m.diffVP.TotalLineCount())
 	}
-	before := m.View()
+	before := m.View().Content
 	next, _ = m.Update(msg)
 	m = next.(Model)
-	if m.diffVP.YOffset == 0 || m.View() == before {
+	if m.diffVP.YOffset() == 0 || m.View().Content == before {
 		t.Fatal("reloaded diff did not visibly scroll")
 	}
 }
@@ -65,7 +65,7 @@ func TestMouseWheelSummaryUsesVisibleBounds(t *testing.T) {
 	for i := range 100 {
 		m.prs[0].Files = append(m.prs[0].Files, model.ChangedFile{Path: fmt.Sprintf("file%d.go", i)})
 	}
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	next, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyTab})
 	m = next.(Model)
 	if m.focus != FocusSummary || m.mode != ModeDetail {
 		t.Fatal("tab did not focus Summary")
@@ -77,12 +77,12 @@ func TestMouseWheelSummaryUsesVisibleBounds(t *testing.T) {
 		}
 	}
 	visibleHeight := max(1, region.h-paneFrame)
-	if m.summaryVP.Height != visibleHeight {
-		t.Errorf("stored Summary height = %d, visible height = %d", m.summaryVP.Height, visibleHeight)
+	if m.summaryVP.Height() != visibleHeight {
+		t.Errorf("stored Summary height = %d, visible height = %d", m.summaryVP.Height(), visibleHeight)
 	}
 	m.summaryVP.SetYOffset(max(0, m.summaryVP.TotalLineCount()-visibleHeight))
 	before := m.summaryPanel(region.w, region.h)
-	msg := wheel(tea.MouseButtonWheelDown)
+	msg := wheel(tea.MouseWheelDown)
 	if FilterMouseWheel(m, msg) != nil {
 		t.Error("downward wheel at visible Summary bottom was not filtered")
 	}
@@ -101,8 +101,8 @@ func TestMouseWheelSummaryUsesVisibleBounds(t *testing.T) {
 		}
 	}
 	visibleHeight = max(1, region.h-paneFrame)
-	if m.summaryVP.Height != visibleHeight {
-		t.Fatalf("Summary height after mode change = %d, visible height = %d", m.summaryVP.Height, visibleHeight)
+	if m.summaryVP.Height() != visibleHeight {
+		t.Fatalf("Summary height after mode change = %d, visible height = %d", m.summaryVP.Height(), visibleHeight)
 	}
 	for range 100 {
 		if FilterMouseWheel(m, msg) == nil {
@@ -111,16 +111,16 @@ func TestMouseWheelSummaryUsesVisibleBounds(t *testing.T) {
 		next, _ = m.Update(msg)
 		m = next.(Model)
 	}
-	if m.summaryVP.YOffset != max(0, m.summaryVP.TotalLineCount()-visibleHeight) {
+	if m.summaryVP.YOffset() != max(0, m.summaryVP.TotalLineCount()-visibleHeight) {
 		t.Fatal("filter stopped scrolling before the visible Summary bottom")
 	}
-	for _, key := range []tea.KeyMsg{{Type: tea.KeyRunes, Runes: []rune{'a'}}, {Type: tea.KeyEsc}} {
+	for _, key := range []tea.KeyPressMsg{{Code: 'a', Text: "a"}, {Code: tea.KeyEsc}} {
 		next, _ = m.Update(key)
 		m = next.(Model)
 	}
 	_, summaryH := m.leftColumnHeights(m.height - chromeLines)
 	before = m.summaryPanel(region.w, summaryH)
-	next, _ = m.Update(wheel(tea.MouseButtonWheelUp))
+	next, _ = m.Update(wheel(tea.MouseWheelUp))
 	m = next.(Model)
 	if m.summaryPanel(region.w, summaryH) == before {
 		t.Fatal("first upward wheel after Summary expansion did not visibly scroll")
@@ -135,20 +135,20 @@ func TestMouseWheelFilterBoundaries(t *testing.T) {
 				m.focus, m.inboxManualScroll = focus, true
 				vp := focusedViewport(&m)
 				vp.SetContent(strings.Repeat("line\n", count))
-				if got := FilterMouseWheel(m, wheel(tea.MouseButtonWheelUp)); got != nil {
+				if got := FilterMouseWheel(m, wheel(tea.MouseWheelUp)); got != nil {
 					t.Error("upward wheel at top was not filtered")
 				}
-				if count == 100 && FilterMouseWheel(m, wheel(tea.MouseButtonWheelDown)) == nil {
+				if count == 100 && FilterMouseWheel(m, wheel(tea.MouseWheelDown)) == nil {
 					t.Error("valid downward movement was filtered")
 				}
 				vp.GotoBottom()
-				if got := FilterMouseWheel(m, wheel(tea.MouseButtonWheelDown)); got != nil {
+				if got := FilterMouseWheel(m, wheel(tea.MouseWheelDown)); got != nil {
 					t.Error("downward wheel at bottom was not filtered")
 				}
-				if count == 100 && FilterMouseWheel(m, wheel(tea.MouseButtonWheelUp)) == nil {
+				if count == 100 && FilterMouseWheel(m, wheel(tea.MouseWheelUp)) == nil {
 					t.Error("valid upward movement was filtered")
 				}
-				if count <= 1 && FilterMouseWheel(m, wheel(tea.MouseButtonWheelUp)) != nil {
+				if count <= 1 && FilterMouseWheel(m, wheel(tea.MouseWheelUp)) != nil {
 					t.Error("short pane wheel was not filtered")
 				}
 			})
@@ -158,7 +158,7 @@ func TestMouseWheelFilterBoundaries(t *testing.T) {
 
 func TestMouseWheelFilterPreservesFirstManualScroll(t *testing.T) {
 	m := scrollModel(t, 100)
-	msg := wheel(tea.MouseButtonWheelUp)
+	msg := wheel(tea.MouseWheelUp)
 	if FilterMouseWheel(m, msg) == nil {
 		t.Fatal("first wheel event must enter manual scrolling")
 	}
@@ -178,10 +178,10 @@ func TestMouseWheelFilterHorizontal(t *testing.T) {
 	m.diff = strings.Repeat("long diff line ", 40) + "\nsecond line"
 	m.syncDiffVP()
 	for _, shift := range []bool{false, true} {
-		left, right := wheel(tea.MouseButtonWheelLeft), wheel(tea.MouseButtonWheelRight)
+		left, right := wheel(tea.MouseWheelLeft), wheel(tea.MouseWheelRight)
 		if shift {
-			left, right = wheel(tea.MouseButtonWheelUp), wheel(tea.MouseButtonWheelDown)
-			left.Shift, right.Shift = true, true
+			left, right = wheel(tea.MouseWheelUp), wheel(tea.MouseWheelDown)
+			left.Mod, right.Mod = tea.ModShift, tea.ModShift
 		}
 		m.diffVP.SetXOffset(0)
 		if FilterMouseWheel(m, left) != nil {
@@ -214,32 +214,38 @@ func TestMouseWheelFilterDisabledAndRelease(t *testing.T) {
 	m := scrollModel(t, 100)
 	m.inboxManualScroll = true
 	m.inboxVP.MouseWheelEnabled = false
-	if FilterMouseWheel(m, wheel(tea.MouseButtonWheelDown)) != nil {
+	if FilterMouseWheel(m, wheel(tea.MouseWheelDown)) != nil {
 		t.Error("disabled wheel event was not filtered")
 	}
 	m.inboxVP.MouseWheelEnabled = true
-	msg := wheel(tea.MouseButtonWheelDown)
-	msg.Action = tea.MouseActionRelease
+	// v2 represents a wheel release separately; it must remain ineffective
+	// and be discarded before Update/View, as with a v1 wheel release.
+	msg := tea.MouseReleaseMsg{Button: tea.MouseWheelDown}
 	if FilterMouseWheel(m, msg) != nil {
 		t.Error("ignored release was not filtered")
+	}
+	next, _ := m.Update(msg)
+	n := next.(Model)
+	if n.inboxVP.YOffset() != m.inboxVP.YOffset() {
+		t.Error("release scrolled the viewport")
 	}
 }
 
 func TestMouseWheelFilterLeavesOtherInputUntouched(t *testing.T) {
 	m := scrollModel(t, 1)
 	m.inboxManualScroll = true
-	for _, msg := range []tea.Msg{tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}}, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft}, tea.MouseMsg{Action: tea.MouseActionMotion}, tea.WindowSizeMsg{Width: 80, Height: 24}} {
+	for _, msg := range []tea.Msg{tea.KeyPressMsg{Code: 'q', Text: "q"}, tea.MouseClickMsg{Button: tea.MouseLeft}, tea.MouseMotionMsg{}, tea.WindowSizeMsg{Width: 80, Height: 24}} {
 		if FilterMouseWheel(m, msg) == nil {
 			t.Errorf("non-wheel input %T was filtered", msg)
 		}
 	}
 	for _, mode := range []Mode{ModeHelp, ModeComment, ModeSettings, ModeCommand, ModeConfirmCommand, ModeConfirmApprove, ModeColorscheme} {
 		m.mode = mode
-		if FilterMouseWheel(m, wheel(tea.MouseButtonWheelUp)) == nil {
+		if FilterMouseWheel(m, wheel(tea.MouseWheelUp)) == nil {
 			t.Errorf("modal input behavior changed in mode %d", mode)
 		}
 	}
-	if FilterMouseWheel(filterTestProgram{}, wheel(tea.MouseButtonWheelUp)) == nil {
+	if FilterMouseWheel(filterTestProgram{}, wheel(tea.MouseWheelUp)) == nil {
 		t.Error("unknown model was filtered")
 	}
 }
@@ -252,7 +258,7 @@ func TestMouseWheelFilterUsesFreshInboxAfterRefresh(t *testing.T) {
 	prs = append(prs, model.PullRequest{Repo: "org/repo", Number: 101, Title: "new PR"})
 	next, _ := m.Update(refreshMsg{prs: prs})
 	m = next.(Model)
-	if FilterMouseWheel(m, wheel(tea.MouseButtonWheelDown)) == nil {
+	if FilterMouseWheel(m, wheel(tea.MouseWheelDown)) == nil {
 		t.Fatal("new rows were not scrollable after refresh")
 	}
 }
@@ -264,14 +270,14 @@ type filterTestProgram struct {
 
 func (m filterTestProgram) Init() tea.Cmd { return nil }
 func (m filterTestProgram) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if mouse, ok := msg.(tea.MouseMsg); ok && tea.MouseEvent(mouse).IsWheel() {
+	if _, ok := msg.(tea.MouseWheelMsg); ok {
 		*m.wheels++
 	}
 	next, cmd := m.Model.Update(msg)
 	m.Model = next.(Model)
 	return m, cmd
 }
-func (m filterTestProgram) View() string { *m.views++; return m.Model.View() }
+func (m filterTestProgram) View() tea.View { *m.views++; return m.Model.View() }
 
 // Deliver complete terminal sequences so read-buffer boundaries do not affect
 // how many synthetic wheel messages Bubble Tea decodes.
@@ -290,6 +296,15 @@ func (r *wheelBurstReader) Read(p []byte) (int, error) {
 }
 
 func TestMouseWheelBurstSkipsUpdateAndView(t *testing.T) {
+	// v2 also renders startup EnvMsg and ColorProfileMsg. Measure startup
+	// independently instead of allowing any wheel-induced redraws in its budget.
+	baseline := scrollModel(t, 100)
+	baseline.inboxManualScroll = true
+	idleWheels, idleViews := 0, 0
+	idle := tea.NewProgram(filterTestProgram{baseline, &idleWheels, &idleViews}, tea.WithInput(&wheelBurstReader{}), tea.WithOutput(io.Discard), tea.WithoutRenderer(), tea.WithoutSignals())
+	if _, err := idle.Run(); err != nil {
+		t.Fatal(err)
+	}
 	for _, enabled := range []bool{false, true} {
 		t.Run(fmt.Sprintf("filter=%t", enabled), func(t *testing.T) {
 			m := scrollModel(t, 100)
@@ -306,7 +321,7 @@ func TestMouseWheelBurstSkipsUpdateAndView(t *testing.T) {
 				t.Fatal(err)
 			}
 			if enabled {
-				if wheels != 0 || views > 5 {
+				if wheels != 0 || views > idleViews {
 					t.Fatalf("ineffective burst reached Update/View: %d wheel updates, %d views", wheels, views)
 				}
 			} else if wheels != 200 {
@@ -316,12 +331,21 @@ func TestMouseWheelBurstSkipsUpdateAndView(t *testing.T) {
 	}
 }
 
+func TestMouseWheelBoundaryFilterDoesNotAllocate(t *testing.T) {
+	m := scrollModel(t, 100)
+	m.inboxManualScroll = true
+	current, msg := tea.Model(m), wheel(tea.MouseWheelUp)
+	if allocs := testing.AllocsPerRun(20, func() { FilterMouseWheel(current, msg) }); allocs != 0 {
+		t.Fatalf("boundary filter allocated %.0f times per wheel event", allocs)
+	}
+}
+
 func BenchmarkMouseWheelBoundaryFilter(b *testing.B) {
 	for _, count := range []int{10, 100, 500} {
 		b.Run(fmt.Sprintf("PRs%d", count), func(b *testing.B) {
 			m := scrollModel(b, count)
 			m.inboxManualScroll = true
-			current, msg := tea.Model(m), wheel(tea.MouseButtonWheelUp)
+			current, msg := tea.Model(m), wheel(tea.MouseWheelUp)
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {

@@ -1,31 +1,34 @@
 package theme
 
 import (
+	"image/color"
+	"os"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
-	"github.com/muesli/termenv"
+	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/colorprofile"
 )
 
 type Palette struct {
 	Name    string
-	Safe    lipgloss.AdaptiveColor
-	Block   lipgloss.AdaptiveColor
-	Pending lipgloss.AdaptiveColor
-	Muted   lipgloss.AdaptiveColor
-	Focus   lipgloss.AdaptiveColor
-	Text    lipgloss.AdaptiveColor
-	Subtle  lipgloss.AdaptiveColor
-	Border  lipgloss.AdaptiveColor
-	Panel   lipgloss.AdaptiveColor
-	Error   lipgloss.AdaptiveColor
+	Safe    color.Color
+	Block   color.Color
+	Pending color.Color
+	Muted   color.Color
+	Focus   color.Color
+	Text    color.Color
+	Subtle  color.Color
+	Border  color.Color
+	Panel   color.Color
+	Error   color.Color
 }
 
 type Theme struct {
 	Palette Palette
 	Styles  Styles
-	Profile termenv.Profile
+	Profile colorprofile.Profile
 	NoColor bool
+	IsDark  bool
 }
 
 type Styles struct {
@@ -54,8 +57,8 @@ func Default() Theme {
 }
 
 func DefaultWithName(name string) Theme {
-	profile := termenv.ColorProfile()
-	noColor := profile == termenv.Ascii
+	profile := colorprofile.Detect(os.Stdout, os.Environ())
+	noColor := profile <= colorprofile.ASCII
 	var palette Palette
 	if name != "" {
 		palette = PaletteByName(name)
@@ -71,7 +74,7 @@ func DefaultWithName(name string) Theme {
 	return New(palette, profile, noColor)
 }
 
-func New(p Palette, profile termenv.Profile, noColor bool) Theme {
+func New(p Palette, profile colorprofile.Profile, noColor bool, isDark ...bool) Theme {
 	base := lipgloss.NewStyle().Foreground(p.Text)
 	border := lipgloss.RoundedBorder()
 	focusBorder := lipgloss.ThickBorder()
@@ -117,129 +120,129 @@ func New(p Palette, profile termenv.Profile, noColor bool) Theme {
 			File:        lipgloss.NewStyle().Bold(true),
 		}
 	}
-	return Theme{Palette: p, Styles: styles, Profile: profile, NoColor: noColor}
+	return Theme{Palette: p, Styles: styles, Profile: profile, NoColor: noColor, IsDark: len(isDark) == 0 || isDark[0]}
 }
 
-func DarkDefault() Palette {
+// WithBackground resolves the palette for this model, without global state.
+func (t Theme) WithBackground(isDark bool) Theme {
+	return New(PaletteByName(t.Palette.Name, isDark), t.Profile, t.NoColor, isDark)
+}
+
+func DarkDefault(isDark ...bool) Palette {
+	ld := lipgloss.LightDark(len(isDark) == 0 || isDark[0])
 	return Palette{
 		Name:    "dark",
-		Safe:    lipgloss.AdaptiveColor{Light: "#047857", Dark: "#4ade80"},
-		Block:   lipgloss.AdaptiveColor{Light: "#b91c1c", Dark: "#f87171"},
-		Pending: lipgloss.AdaptiveColor{Light: "#1d4ed8", Dark: "#60a5fa"},
-		Muted:   lipgloss.AdaptiveColor{Light: "#6b7280", Dark: "#9ca3af"},
-		Focus:   lipgloss.AdaptiveColor{Light: "#7c3aed", Dark: "#a78bfa"},
-		Text:    lipgloss.AdaptiveColor{Light: "#111827", Dark: "#e5e7eb"},
-		Subtle:  lipgloss.AdaptiveColor{Light: "#4b5563", Dark: "#d1d5db"},
-		Border:  lipgloss.AdaptiveColor{Light: "#d1d5db", Dark: "#374151"},
-		Panel:   lipgloss.AdaptiveColor{Light: "#ffffff", Dark: "#111827"},
-		Error:   lipgloss.AdaptiveColor{Light: "#dc2626", Dark: "#fb7185"},
+		Safe:    ld(lipgloss.Color("#047857"), lipgloss.Color("#4ade80")),
+		Block:   ld(lipgloss.Color("#b91c1c"), lipgloss.Color("#f87171")),
+		Pending: ld(lipgloss.Color("#1d4ed8"), lipgloss.Color("#60a5fa")),
+		Muted:   ld(lipgloss.Color("#6b7280"), lipgloss.Color("#9ca3af")),
+		Focus:   ld(lipgloss.Color("#7c3aed"), lipgloss.Color("#a78bfa")),
+		Text:    ld(lipgloss.Color("#111827"), lipgloss.Color("#e5e7eb")),
+		Subtle:  ld(lipgloss.Color("#4b5563"), lipgloss.Color("#d1d5db")),
+		Border:  ld(lipgloss.Color("#d1d5db"), lipgloss.Color("#374151")),
+		Panel:   ld(lipgloss.Color("#ffffff"), lipgloss.Color("#111827")),
+		Error:   ld(lipgloss.Color("#dc2626"), lipgloss.Color("#fb7185")),
 	}
 }
 
-func DarkANSI() Palette {
+func DarkANSI(isDark ...bool) Palette {
 	return Palette{
 		Name:    "ansi",
-		Safe:    lipgloss.AdaptiveColor{Light: "2", Dark: "2"},
-		Block:   lipgloss.AdaptiveColor{Light: "1", Dark: "1"},
-		Pending: lipgloss.AdaptiveColor{Light: "4", Dark: "4"},
-		Muted:   lipgloss.AdaptiveColor{Light: "8", Dark: "8"},
-		Focus:   lipgloss.AdaptiveColor{Light: "5", Dark: "5"},
-		Text:    lipgloss.AdaptiveColor{Light: "15", Dark: "15"},
-		Subtle:  lipgloss.AdaptiveColor{Light: "7", Dark: "7"},
-		Border:  lipgloss.AdaptiveColor{Light: "8", Dark: "8"},
-		Panel:   lipgloss.AdaptiveColor{Light: "0", Dark: "0"},
-		Error:   lipgloss.AdaptiveColor{Light: "1", Dark: "1"},
+		Safe:    lipgloss.Color("2"),
+		Block:   lipgloss.Color("1"),
+		Pending: lipgloss.Color("4"),
+		Muted:   lipgloss.Color("8"),
+		Focus:   lipgloss.Color("5"),
+		Text:    lipgloss.Color("15"),
+		Subtle:  lipgloss.Color("7"),
+		Border:  lipgloss.Color("8"),
+		Panel:   lipgloss.Color("0"),
+		Error:   lipgloss.Color("1"),
 	}
 }
 
-func NordPalette() Palette {
+func NordPalette(isDark ...bool) Palette {
+	ld := lipgloss.LightDark(len(isDark) == 0 || isDark[0])
 	return Palette{
 		Name:    "nord",
-		Safe:    lipgloss.AdaptiveColor{Light: "#4CAF7D", Dark: "#a3be8c"},
-		Block:   lipgloss.AdaptiveColor{Light: "#BF616A", Dark: "#bf616a"},
-		Pending: lipgloss.AdaptiveColor{Light: "#5E81AC", Dark: "#81a1c1"},
-		Muted:   lipgloss.AdaptiveColor{Light: "#7B8EA8", Dark: "#4c566a"},
-		Focus:   lipgloss.AdaptiveColor{Light: "#5E81AC", Dark: "#88c0d0"},
-		Text:    lipgloss.AdaptiveColor{Light: "#2E3440", Dark: "#eceff4"},
-		Subtle:  lipgloss.AdaptiveColor{Light: "#3B4252", Dark: "#d8dee9"},
-		Border:  lipgloss.AdaptiveColor{Light: "#BBC3D4", Dark: "#3b4252"},
-		Panel:   lipgloss.AdaptiveColor{Light: "#ECEFF4", Dark: "#2e3440"},
-		Error:   lipgloss.AdaptiveColor{Light: "#BF616A", Dark: "#bf616a"},
+		Safe:    ld(lipgloss.Color("#4CAF7D"), lipgloss.Color("#a3be8c")),
+		Block:   ld(lipgloss.Color("#BF616A"), lipgloss.Color("#bf616a")),
+		Pending: ld(lipgloss.Color("#5E81AC"), lipgloss.Color("#81a1c1")),
+		Muted:   ld(lipgloss.Color("#7B8EA8"), lipgloss.Color("#4c566a")),
+		Focus:   ld(lipgloss.Color("#5E81AC"), lipgloss.Color("#88c0d0")),
+		Text:    ld(lipgloss.Color("#2E3440"), lipgloss.Color("#eceff4")),
+		Subtle:  ld(lipgloss.Color("#3B4252"), lipgloss.Color("#d8dee9")),
+		Border:  ld(lipgloss.Color("#BBC3D4"), lipgloss.Color("#3b4252")),
+		Panel:   ld(lipgloss.Color("#ECEFF4"), lipgloss.Color("#2e3440")),
+		Error:   ld(lipgloss.Color("#BF616A"), lipgloss.Color("#bf616a")),
 	}
 }
 
-func GruvboxPalette() Palette {
+func GruvboxPalette(isDark ...bool) Palette {
+	ld := lipgloss.LightDark(len(isDark) == 0 || isDark[0])
 	return Palette{
 		Name:    "gruvbox",
-		Safe:    lipgloss.AdaptiveColor{Light: "#79740E", Dark: "#b8bb26"},
-		Block:   lipgloss.AdaptiveColor{Light: "#CC241D", Dark: "#fb4934"},
-		Pending: lipgloss.AdaptiveColor{Light: "#076678", Dark: "#83a598"},
-		Muted:   lipgloss.AdaptiveColor{Light: "#928374", Dark: "#928374"},
-		Focus:   lipgloss.AdaptiveColor{Light: "#8F3F71", Dark: "#d3869b"},
-		Text:    lipgloss.AdaptiveColor{Light: "#3C3836", Dark: "#ebdbb2"},
-		Subtle:  lipgloss.AdaptiveColor{Light: "#504945", Dark: "#d5c4a1"},
-		Border:  lipgloss.AdaptiveColor{Light: "#D5C4A1", Dark: "#504945"},
-		Panel:   lipgloss.AdaptiveColor{Light: "#FBF1C7", Dark: "#282828"},
-		Error:   lipgloss.AdaptiveColor{Light: "#CC241D", Dark: "#fb4934"},
+		Safe:    ld(lipgloss.Color("#79740E"), lipgloss.Color("#b8bb26")),
+		Block:   ld(lipgloss.Color("#CC241D"), lipgloss.Color("#fb4934")),
+		Pending: ld(lipgloss.Color("#076678"), lipgloss.Color("#83a598")),
+		Muted:   ld(lipgloss.Color("#928374"), lipgloss.Color("#928374")),
+		Focus:   ld(lipgloss.Color("#8F3F71"), lipgloss.Color("#d3869b")),
+		Text:    ld(lipgloss.Color("#3C3836"), lipgloss.Color("#ebdbb2")),
+		Subtle:  ld(lipgloss.Color("#504945"), lipgloss.Color("#d5c4a1")),
+		Border:  ld(lipgloss.Color("#D5C4A1"), lipgloss.Color("#504945")),
+		Panel:   ld(lipgloss.Color("#FBF1C7"), lipgloss.Color("#282828")),
+		Error:   ld(lipgloss.Color("#CC241D"), lipgloss.Color("#fb4934")),
 	}
 }
 
-func CatppuccinPalette() Palette {
+func CatppuccinPalette(isDark ...bool) Palette {
+	ld := lipgloss.LightDark(len(isDark) == 0 || isDark[0])
 	return Palette{
 		Name:    "catppuccin",
-		Safe:    lipgloss.AdaptiveColor{Light: "#40A02B", Dark: "#a6e3a1"},
-		Block:   lipgloss.AdaptiveColor{Light: "#D20F39", Dark: "#f38ba8"},
-		Pending: lipgloss.AdaptiveColor{Light: "#1E66F5", Dark: "#89b4fa"},
-		Muted:   lipgloss.AdaptiveColor{Light: "#8C8FA1", Dark: "#585b70"},
-		Focus:   lipgloss.AdaptiveColor{Light: "#7287FD", Dark: "#cba6f7"},
-		Text:    lipgloss.AdaptiveColor{Light: "#4C4F69", Dark: "#cdd6f4"},
-		Subtle:  lipgloss.AdaptiveColor{Light: "#5C5F77", Dark: "#bac2de"},
-		Border:  lipgloss.AdaptiveColor{Light: "#CCD0DA", Dark: "#313244"},
-		Panel:   lipgloss.AdaptiveColor{Light: "#EFF1F5", Dark: "#1e1e2e"},
-		Error:   lipgloss.AdaptiveColor{Light: "#D20F39", Dark: "#f38ba8"},
+		Safe:    ld(lipgloss.Color("#40A02B"), lipgloss.Color("#a6e3a1")),
+		Block:   ld(lipgloss.Color("#D20F39"), lipgloss.Color("#f38ba8")),
+		Pending: ld(lipgloss.Color("#1E66F5"), lipgloss.Color("#89b4fa")),
+		Muted:   ld(lipgloss.Color("#8C8FA1"), lipgloss.Color("#585b70")),
+		Focus:   ld(lipgloss.Color("#7287FD"), lipgloss.Color("#cba6f7")),
+		Text:    ld(lipgloss.Color("#4C4F69"), lipgloss.Color("#cdd6f4")),
+		Subtle:  ld(lipgloss.Color("#5C5F77"), lipgloss.Color("#bac2de")),
+		Border:  ld(lipgloss.Color("#CCD0DA"), lipgloss.Color("#313244")),
+		Panel:   ld(lipgloss.Color("#EFF1F5"), lipgloss.Color("#1e1e2e")),
+		Error:   ld(lipgloss.Color("#D20F39"), lipgloss.Color("#f38ba8")),
 	}
 }
 
-func EverforestPalette() Palette {
+func EverforestPalette(isDark ...bool) Palette {
+	ld := lipgloss.LightDark(len(isDark) == 0 || isDark[0])
 	return Palette{
 		Name:    "everforest",
-		Safe:    lipgloss.AdaptiveColor{Light: "#8DA101", Dark: "#a7c080"},
-		Block:   lipgloss.AdaptiveColor{Light: "#F85552", Dark: "#e67e80"},
-		Pending: lipgloss.AdaptiveColor{Light: "#3A94C5", Dark: "#7fbbb3"},
-		Muted:   lipgloss.AdaptiveColor{Light: "#939F91", Dark: "#859289"},
-		Focus:   lipgloss.AdaptiveColor{Light: "#DF69BA", Dark: "#d699b6"},
-		Text:    lipgloss.AdaptiveColor{Light: "#5C6A72", Dark: "#d3c6aa"},
-		Subtle:  lipgloss.AdaptiveColor{Light: "#708089", Dark: "#9da9a0"},
-		Border:  lipgloss.AdaptiveColor{Light: "#D8CAAC", Dark: "#4f5b58"},
-		Panel:   lipgloss.AdaptiveColor{Light: "#FDF6E3", Dark: "#2d3b30"},
-		Error:   lipgloss.AdaptiveColor{Light: "#F85552", Dark: "#e67e80"},
+		Safe:    ld(lipgloss.Color("#8DA101"), lipgloss.Color("#a7c080")),
+		Block:   ld(lipgloss.Color("#F85552"), lipgloss.Color("#e67e80")),
+		Pending: ld(lipgloss.Color("#3A94C5"), lipgloss.Color("#7fbbb3")),
+		Muted:   ld(lipgloss.Color("#939F91"), lipgloss.Color("#859289")),
+		Focus:   ld(lipgloss.Color("#DF69BA"), lipgloss.Color("#d699b6")),
+		Text:    ld(lipgloss.Color("#5C6A72"), lipgloss.Color("#d3c6aa")),
+		Subtle:  ld(lipgloss.Color("#708089"), lipgloss.Color("#9da9a0")),
+		Border:  ld(lipgloss.Color("#D8CAAC"), lipgloss.Color("#4f5b58")),
+		Panel:   ld(lipgloss.Color("#FDF6E3"), lipgloss.Color("#2d3b30")),
+		Error:   ld(lipgloss.Color("#F85552"), lipgloss.Color("#e67e80")),
 	}
-}
-
-// allPalettes is the ordered registry of built-in color palettes.
-var allPalettes = []Palette{
-	DarkDefault(),
-	NordPalette(),
-	GruvboxPalette(),
-	CatppuccinPalette(),
-	EverforestPalette(),
-	DarkANSI(),
 }
 
 // AllPalettes returns all registered palettes in display order.
-func AllPalettes() []Palette {
-	return allPalettes
+func AllPalettes(isDark ...bool) []Palette {
+	return []Palette{DarkDefault(isDark...), NordPalette(isDark...), GruvboxPalette(isDark...), CatppuccinPalette(isDark...), EverforestPalette(isDark...), DarkANSI(isDark...)}
 }
 
 // PaletteByName returns the palette matching name (case-insensitive), or DarkDefault() if not found.
-func PaletteByName(name string) Palette {
+func PaletteByName(name string, isDark ...bool) Palette {
 	name = strings.ToLower(strings.TrimSpace(name))
-	for _, p := range allPalettes {
+	for _, p := range AllPalettes(isDark...) {
 		if strings.ToLower(p.Name) == name {
 			return p
 		}
 	}
-	return DarkDefault()
+	return DarkDefault(isDark...)
 }
 
 func (t Theme) CIStatus(status string) string {

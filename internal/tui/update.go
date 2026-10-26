@@ -9,9 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/spinner"
+	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/colorprofile"
 	"github.com/senilio/zappr/internal/app"
 	"github.com/senilio/zappr/internal/model"
 	uitheme "github.com/senilio/zappr/internal/tui/theme"
@@ -20,7 +21,7 @@ import (
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Wheel input only changes viewport offsets. It cannot invalidate delta's
 	// layout, so do not inspect or lay out unrelated diff content here.
-	if mouse, ok := msg.(tea.MouseMsg); ok && tea.MouseEvent(mouse).IsWheel() {
+	if _, ok := msg.(tea.MouseWheelMsg); ok {
 		return m.update(msg)
 	}
 	oldRaw := m.sideLayoutRaw()
@@ -49,6 +50,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.BackgroundColorMsg:
+		m.theme = m.theme.WithBackground(msg.IsDark())
+		m.resizeViewports()
+		return m, nil
+	case tea.ColorProfileMsg:
+		m.theme = uitheme.New(m.theme.Palette, msg.Profile, msg.Profile <= colorprofile.ASCII, m.theme.IsDark)
+		m.resizeViewports()
+		return m, nil
+	case tea.PasteMsg:
+		// Pasted text is input, never a shortcut or confirmation.
+		switch m.mode {
+		case ModeComment:
+			m.comment += msg.Content
+		case ModeCommand:
+			m.commandInput += strings.ReplaceAll(strings.ReplaceAll(msg.Content, "\r", ""), "\n", " ")
+			m.commandCursor = 0
+		case ModeHelp:
+			m.helpInput += strings.ReplaceAll(strings.ReplaceAll(msg.Content, "\r", ""), "\n", " ")
+			m.syncHelpVP()
+		}
+		return m, nil
 	case sideLayoutMsg:
 		if msg.key == m.sideDiffRequested {
 			m.sideDiffRequested = ""
@@ -62,7 +84,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.finishStatus("diff formatting error: "+msg.err.Error(), true)
 		}
 		anchor := msg.anchor
-		if m.diffVP.YOffset != msg.offset {
+		if m.diffVP.YOffset() != msg.offset {
 			// Navigation while formatting takes precedence over the request anchor.
 			anchor = m.diffAnchor()
 		}
@@ -272,10 +294,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Re-render every second so the "refreshed Xs ago" counter stays live.
 		return m, uiTickCmd()
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		return m.handleKey(msg)
-	case tea.MouseMsg:
-		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
+	case tea.MouseClickMsg:
+		if msg.Button == tea.MouseLeft {
 			return m.handleMouseClick(msg)
 		}
 	}
@@ -283,7 +305,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	switch m.focus {
 	case FocusInbox:
-		if mouse, ok := msg.(tea.MouseMsg); ok && (mouse.Button == tea.MouseButtonWheelDown || mouse.Button == tea.MouseButtonWheelUp) {
+		if mouse, ok := msg.(tea.MouseWheelMsg); ok && (mouse.Button == tea.MouseWheelDown || mouse.Button == tea.MouseWheelUp) {
 			m.syncInboxVP()
 			m.inboxManualScroll = true
 		}
@@ -372,7 +394,7 @@ func (m Model) inboxIndexAt(region paneRegion, _ int, y int) (int, bool) {
 	return 0, false
 }
 
-func (m Model) handleMouseClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 	region, ok := m.paneRegionAt(msg.X, msg.Y)
 	if !ok {
 		return m, nil
@@ -392,7 +414,7 @@ func (m Model) handleMouseClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			m.mode = ModeDetail
 		}
 	case FocusDiff:
-		if m.diffEnabled || m.mode == ModeDiff {
+		if m.largePaneActive() || m.mode == ModeDiff {
 			m.mode = ModeDiff
 		}
 	}
@@ -409,8 +431,11 @@ func (m Model) isFullscreenDiff() bool {
 	return m.mode == ModeDiff && m.width > 0 && m.width < minMediumWidth
 }
 
-func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
+	if key == "space" {
+		key = " "
+	}
 
 	switch m.mode {
 	case ModeComment:
@@ -505,7 +530,7 @@ func (m Model) executeAction(action tuiAction) (tea.Model, tea.Cmd) {
 		m.commandInput = ""
 	}
 	if action.ID == "colorscheme" {
-		palettes := uitheme.AllPalettes()
+		palettes := uitheme.AllPalettes(m.theme.IsDark)
 		m.colorschemeIndex = 0
 		for i, p := range palettes {
 			if strings.EqualFold(p.Name, m.theme.Palette.Name) {
@@ -553,9 +578,12 @@ func (m Model) executeAction(action tuiAction) (tea.Model, tea.Cmd) {
 	if m.setSummaryMode(action.ID) {
 		m.summaryVP.GotoTop()
 		m.commitIndex = 0
+		m.commentIndex = 0
 		m.summaryXOffset = 0
 		m.commitDiffKey = ""
 		m.renderedCommitDiff = ""
+		m.diffVP.GotoTop()
+		m.diffXOffset = 0
 		m.syncSummaryVP()
 		m.syncDiffVP()
 		if m.summaryMode == SummaryModeCommits {
@@ -650,10 +678,10 @@ func (m Model) executeAction(action tuiAction) (tea.Model, tea.Cmd) {
 					m.syncSummaryVPScroll()
 				}
 			} else {
-				m.summaryVP.LineDown(1)
+				m.moveComment(1)
 			}
 		case FocusDiff:
-			m.diffVP.LineDown(1)
+			m.diffVP.ScrollDown(1)
 		default: // FocusInbox
 			if m.selected < len(m.prs)-1 {
 				m.selected++
@@ -680,10 +708,10 @@ func (m Model) executeAction(action tuiAction) (tea.Model, tea.Cmd) {
 					m.syncSummaryVPScroll()
 				}
 			} else {
-				m.summaryVP.LineUp(1)
+				m.moveComment(-1)
 			}
 		case FocusDiff:
-			m.diffVP.LineUp(1)
+			m.diffVP.ScrollUp(1)
 		default: // FocusInbox
 			if m.selected > 0 {
 				m.selected--
@@ -693,40 +721,42 @@ func (m Model) executeAction(action tuiAction) (tea.Model, tea.Cmd) {
 		}
 	case "pan-left":
 		if m.focus == FocusDiff && !m.cfg.Wrap.Diff {
-			m.diffXOffset = max(0, m.diffXOffset-max(1, m.diffVP.Width/2))
+			m.diffXOffset = max(0, m.diffXOffset-max(1, m.diffVP.Width()/2))
 		} else if m.focus == FocusSummary && m.summaryMode == SummaryModeCommits && !m.cfg.Wrap.Summary {
-			m.summaryXOffset = max(0, m.summaryXOffset-max(1, m.summaryVP.Width/2))
+			m.summaryXOffset = max(0, m.summaryXOffset-max(1, m.summaryVP.Width()/2))
 		}
 	case "pan-right":
 		if m.focus == FocusDiff && !m.cfg.Wrap.Diff {
-			m.diffXOffset = min(m.maxDiffXOffset(), m.diffXOffset+max(1, m.diffVP.Width/2))
+			m.diffXOffset = min(m.maxDiffXOffset(), m.diffXOffset+max(1, m.diffVP.Width()/2))
 		} else if m.focus == FocusSummary && m.summaryMode == SummaryModeCommits && !m.cfg.Wrap.Summary {
-			m.summaryXOffset = m.summaryXOffset + max(1, m.summaryVP.Width/2)
+			m.summaryXOffset = m.summaryXOffset + max(1, m.summaryVP.Width()/2)
 		}
 	case "page-down":
 		switch m.focus {
 		case FocusSummary:
-			m.summaryVP.ViewDown()
+			m.summaryVP.PageDown()
 		case FocusDiff:
-			m.diffVP.ViewDown()
+			m.diffVP.PageDown()
 		case FocusInbox:
 			m.syncInboxVP()
 			m.inboxManualScroll = true
-			m.inboxVP.ViewDown()
+			m.inboxVP.PageDown()
 		}
 	case "page-up":
 		switch m.focus {
 		case FocusSummary:
-			m.summaryVP.ViewUp()
+			m.summaryVP.PageUp()
 		case FocusDiff:
-			m.diffVP.ViewUp()
+			m.diffVP.PageUp()
 		case FocusInbox:
 			m.syncInboxVP()
 			m.inboxManualScroll = true
-			m.inboxVP.ViewUp()
+			m.inboxVP.PageUp()
 		}
 	case "next-item":
-		if m.summaryMode == SummaryModeCommits {
+		if m.summaryMode == SummaryModeComments {
+			m.moveComment(1)
+		} else if m.summaryMode == SummaryModeCommits {
 			if pr, ok := m.current(); ok && m.commitIndex < len(pr.Commits)-1 {
 				m.commitIndex++
 				m.syncSummaryVP()
@@ -747,7 +777,9 @@ func (m Model) executeAction(action tuiAction) (tea.Model, tea.Cmd) {
 			m.syncSummaryVPScroll()
 		}
 	case "prev-item":
-		if m.summaryMode == SummaryModeCommits {
+		if m.summaryMode == SummaryModeComments {
+			m.moveComment(-1)
+		} else if m.summaryMode == SummaryModeCommits {
 			if m.commitIndex > 0 {
 				m.commitIndex--
 				m.syncSummaryVP()
@@ -787,18 +819,18 @@ func (m Model) executeAction(action tuiAction) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(m.startStatus("refreshing…"), refreshCmd(m.app, m.repo, !m.hideDrafts))
 	case "toggle-diff":
 		if m.width > 0 && m.width < minMediumWidth {
-			// Narrow: toggle full-screen diff mode.
-			if m.diffEnabled {
+			if m.diffEnabled && m.mode == ModeDiff {
+				// Narrow: close the full-screen diff.
 				m.diffEnabled = false
-				if m.mode == ModeDiff {
-					m.mode = ModeDetail
-					m.focus = FocusSummary
-				}
+				m.mode = ModeDetail
+				m.focus = FocusSummary
 				return m, nil
 			}
+			// Narrow: open the full-screen diff. Diff starts enabled, so
+			// "enabled" alone no longer means the full-screen view is open.
 			m.diffEnabled = true
 			m.syncDiffVP()
-			if m.diff != "" {
+			if m.diff != "" || m.summaryMode == SummaryModeComments {
 				m.mode = ModeDiff
 				m.focus = FocusDiff
 				return m, nil
@@ -937,6 +969,7 @@ func (m *Model) clearLoadedDiffState() {
 	m.fileContentKey = ""
 	m.fileIndex = 0
 	m.commitIndex = 0
+	m.commentIndex = 0
 	m.diffLoadKey = ""
 	m.commitDiffKey = ""
 	m.renderedCommitDiff = ""
@@ -1029,7 +1062,7 @@ func (m *Model) autoCommitDiffCmd() tea.Cmd {
 }
 
 func (m *Model) resizeViewports() {
-	// Set the stored viewport heights so that vpCanScroll and LineDown/LineUp
+	// Set the stored viewport heights so that vpCanScroll and ScrollDown/ScrollUp
 	// work correctly between renders. Only the header occupies a chrome line.
 	// Pane border adds 2 lines vertically. These constants mirror the layout
 	// functions (wideLayout / mediumLayout) and the pane frame size (2).
@@ -1038,32 +1071,32 @@ func (m *Model) resizeViewports() {
 	bodyH := max(4, m.height-headerLines-footerLines)
 	if m.width >= minWideWidth {
 		inboxH, summaryH := m.leftColumnHeights(bodyH)
-		m.inboxVP.Height = max(1, inboxH-paneFrame)
-		m.summaryVP.Height = max(1, summaryH-paneFrame)
-		m.diffVP.Height = max(1, bodyH-paneFrame)
+		m.inboxVP.SetHeight(max(1, inboxH-paneFrame))
+		m.summaryVP.SetHeight(max(1, summaryH-paneFrame))
+		m.diffVP.SetHeight(max(1, bodyH-paneFrame))
 	} else if m.width >= minMediumWidth {
 		topH := max(8, bodyH/2)
 		bottomH := max(6, bodyH-topH)
 		vpTopH := max(1, topH-paneFrame)
 		vpBotH := max(1, bottomH-paneFrame)
-		m.inboxVP.Height = vpTopH
-		m.summaryVP.Height = vpTopH
-		m.diffVP.Height = vpBotH
+		m.inboxVP.SetHeight(vpTopH)
+		m.summaryVP.SetHeight(vpTopH)
+		m.diffVP.SetHeight(vpBotH)
 	} else {
 		vpH := max(1, bodyH-paneFrame)
-		m.inboxVP.Height = vpH
-		m.summaryVP.Height = vpH
-		m.diffVP.Height = vpH
+		m.inboxVP.SetHeight(vpH)
+		m.summaryVP.SetHeight(vpH)
+		m.diffVP.SetHeight(vpH)
 	}
 	// Update diff viewport width to the real visible diff content width.
 	diffInnerW := m.paneInnerWidth(m.diffPaneOuterWidth(), FocusDiff)
-	m.diffVP.Width = m.diffContentWidth(diffInnerW)
-	m.diffVP.SetHorizontalStep(max(1, m.diffVP.Width/2))
+	m.diffVP.SetWidth(m.diffContentWidth(diffInnerW))
+	m.diffVP.SetHorizontalStep(max(1, m.diffVP.Width()/2))
 	m.syncDiffVP()
 	m.syncInboxVP()
 	m.syncSummaryVP()
-	m.diffVP.SetYOffset(m.diffVP.YOffset)
-	m.summaryVP.SetYOffset(m.summaryVP.YOffset)
+	m.diffVP.SetYOffset(m.diffVP.YOffset())
+	m.summaryVP.SetYOffset(m.summaryVP.YOffset())
 	m.syncHelpVP()
 }
 
@@ -1075,7 +1108,7 @@ func (m *Model) nextFocus() {
 			m.mode = ModeDetail
 		}
 	case FocusSummary:
-		if m.diffEnabled {
+		if m.largePaneActive() {
 			m.focus = FocusDiff
 		} else {
 			m.focus = FocusInbox
@@ -1099,7 +1132,7 @@ func (m *Model) prevFocus() {
 			m.mode = ModeDetail
 		}
 	default: // FocusInbox
-		if m.diffEnabled {
+		if m.largePaneActive() {
 			m.focus = FocusDiff
 		} else {
 			m.focus = FocusSummary
@@ -1194,21 +1227,24 @@ func (m *Model) resetPRViewState() {
 // syncSummaryVPScroll adjusts the summary viewport Y offset to keep the
 // selected item visible with surrounding context in commits or files mode.
 func (m *Model) syncSummaryVPScroll() {
-	vpH := m.summaryVP.Height
+	vpH := m.summaryVP.Height()
 	if vpH <= 0 {
 		return
 	}
 	pr, ok := m.current()
-	if !ok || m.summaryMode == SummaryModeComments {
+	if !ok {
 		return
 	}
-	_, spans := m.summaryLayout(pr, max(1, m.summaryVP.Width))
+	_, spans := m.summaryLayout(pr, max(1, m.summaryVP.Width()))
 	index := m.fileIndex
-	if m.summaryMode == SummaryModeCommits {
+	switch m.summaryMode {
+	case SummaryModeCommits:
 		index = m.commitIndex
+	case SummaryModeComments:
+		index = m.commentIndex
 	}
 	if index >= 0 && index < len(spans) {
-		m.summaryVP.SetYOffset(keepSelectionVisible(m.summaryVP.YOffset, vpH, spans, index))
+		m.summaryVP.SetYOffset(keepSelectionVisible(m.summaryVP.YOffset(), vpH, spans, index))
 	}
 }
 
@@ -1222,7 +1258,7 @@ func (m *Model) syncSummaryVP() {
 	}
 	_, summaryInnerW, _ := m.paneInnerWidths()
 	layout := m.summaryPane(pr, summaryInnerW)
-	m.summaryVP.Width = summaryInnerW
+	m.summaryVP.SetWidth(summaryInnerW)
 	if m.summaryVPLayout != layout {
 		m.summaryVP.SetContent(layout.content)
 		m.summaryVPLayout = layout
@@ -1234,7 +1270,7 @@ func (m *Model) syncSummaryVP() {
 // Lines are stored at full width — the viewport's ansi.Cut windows horizontally.
 // Width is set to the real diff-pane inner width so scroll % and cut are correct.
 func (m *Model) syncDiffVP() {
-	if !m.diffEnabled || m.diff == "" {
+	if !m.largePaneActive() || (m.summaryMode != SummaryModeComments && m.diff == "") {
 		return
 	}
 	// Use the real visible diff content width so horizontal cut matches render.
@@ -1242,7 +1278,7 @@ func (m *Model) syncDiffVP() {
 	diffInnerW := mv.paneInnerWidth(mv.diffPaneOuterWidth(), FocusDiff)
 	vpW := mv.diffContentWidth(diffInnerW)
 	layout := m.diffPane(vpW)
-	m.diffVP.Width = vpW
+	m.diffVP.SetWidth(vpW)
 	m.diffVP.SetHorizontalStep(max(1, vpW/2))
 	if m.diffVPLayout != layout {
 		m.diffVP.SetContent(layout.content)
@@ -1252,6 +1288,12 @@ func (m *Model) syncDiffVP() {
 }
 
 func (m *Model) currentDiffContent() string {
+	if m.summaryMode == SummaryModeComments {
+		if comment, ok := m.selectedComment(); ok {
+			return m.commentDetail(comment)
+		}
+		return ""
+	}
 	if m.diffMode == DiffModeFile {
 		return m.currentFileContent()
 	}
@@ -1329,8 +1371,32 @@ func (m Model) selectedRawDiffFile() string {
 }
 
 func (m *Model) maxDiffXOffset() int {
-	m.diffPane(max(1, m.diffVP.Width))
-	return max(0, m.diffLayoutCache.maxWidth-m.diffVP.Width)
+	m.diffPane(max(1, m.diffVP.Width()))
+	return max(0, m.diffLayoutCache.maxWidth-m.diffVP.Width())
+}
+
+// largePaneActive reports whether the large pane has content to focus. Comments
+// are already loaded, so the Comment pane does not depend on the diff toggle.
+func (m Model) largePaneActive() bool {
+	return m.diffEnabled || m.summaryMode == SummaryModeComments
+}
+
+// moveComment changes the selected comment and shows it from the top.
+func (m *Model) moveComment(delta int) {
+	pr, ok := m.current()
+	if !ok {
+		return
+	}
+	next := m.commentIndex + delta
+	if next < 0 || next >= len(pr.Comments) {
+		return
+	}
+	m.commentIndex = next
+	m.diffVP.GotoTop()
+	m.diffXOffset = 0
+	m.syncDiffVP()
+	m.syncSummaryVP()
+	m.syncSummaryVPScroll()
 }
 
 func (m *Model) setSummaryMode(actionID string) bool {
@@ -1467,7 +1533,7 @@ func draftFilterMessage(hideDrafts bool) string {
 }
 
 func (m Model) handleColorschemeKey(key string) (tea.Model, tea.Cmd) {
-	palettes := uitheme.AllPalettes()
+	palettes := uitheme.AllPalettes(m.theme.IsDark)
 	action, ok := m.actions.actionForKey(actionContextColorscheme, key)
 	if !ok {
 		return m, nil
@@ -1475,24 +1541,24 @@ func (m Model) handleColorschemeKey(key string) (tea.Model, tea.Cmd) {
 	switch action.ID {
 	case "colorscheme-cancel":
 		// Revert to original theme (re-resolve from saved config).
-		m.theme = uitheme.DefaultWithName(m.cfg.Theme)
+		m.theme = uitheme.New(uitheme.PaletteByName(m.cfg.Theme, m.theme.IsDark), m.theme.Profile, m.theme.NoColor, m.theme.IsDark)
 		m.mode = m.prevMode
 		return m, nil
 	case "colorscheme-next":
 		if m.colorschemeIndex < len(palettes)-1 {
 			m.colorschemeIndex++
-			m.theme = uitheme.New(palettes[m.colorschemeIndex], m.theme.Profile, m.theme.NoColor)
+			m.theme = uitheme.New(palettes[m.colorschemeIndex], m.theme.Profile, m.theme.NoColor, m.theme.IsDark)
 		}
 	case "colorscheme-prev":
 		if m.colorschemeIndex > 0 {
 			m.colorschemeIndex--
-			m.theme = uitheme.New(palettes[m.colorschemeIndex], m.theme.Profile, m.theme.NoColor)
+			m.theme = uitheme.New(palettes[m.colorschemeIndex], m.theme.Profile, m.theme.NoColor, m.theme.IsDark)
 		}
 	case "colorscheme-confirm":
 		// Confirm: save to config.
 		chosen := palettes[m.colorschemeIndex]
 		m.cfg.Theme = chosen.Name
-		m.theme = uitheme.New(chosen, m.theme.Profile, m.theme.NoColor)
+		m.theme = uitheme.New(chosen, m.theme.Profile, m.theme.NoColor, m.theme.IsDark)
 		m.mode = m.prevMode
 		return m, tea.Batch(m.finishStatus("theme: "+chosen.Name, false), m.saveSettings())
 	}
@@ -1614,13 +1680,13 @@ func (m Model) handleHelpKey(key string) (tea.Model, tea.Cmd) {
 	}
 	switch key {
 	case "up":
-		m.helpVP.LineUp(1)
+		m.helpVP.ScrollUp(1)
 	case "down":
-		m.helpVP.LineDown(1)
+		m.helpVP.ScrollDown(1)
 	case "pgup":
-		m.helpVP.ViewUp()
+		m.helpVP.PageUp()
 	case "pgdown", " ":
-		m.helpVP.ViewDown()
+		m.helpVP.PageDown()
 	case "g":
 		m.helpVP.GotoTop()
 	case "G":
@@ -1644,7 +1710,7 @@ func (m *Model) syncHelpVP() {
 	if m.width <= 0 {
 		width = 54
 	}
-	m.helpVP.Width = max(1, width-1)
-	m.helpVP.Height = max(1, m.helpModalHeight()-6)
+	m.helpVP.SetWidth(max(1, width-1))
+	m.helpVP.SetHeight(max(1, m.helpModalHeight()-6))
 	m.helpVP.SetContent(m.helpPanel())
 }

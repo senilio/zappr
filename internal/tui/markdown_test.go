@@ -4,8 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/charmbracelet/lipgloss"
-	"github.com/muesli/termenv"
+	"github.com/charmbracelet/colorprofile"
 	"github.com/senilio/zappr/internal/model"
 	uitheme "github.com/senilio/zappr/internal/tui/theme"
 )
@@ -17,9 +16,7 @@ func TestCommentSummaryRendersMarkdown(t *testing.T) {
 		"<!-- hidden bot marker -->\n\n```shell\nmake plan\n```"
 	pr := model.PullRequest{Comments: []model.PRComment{{Author: "bot", Body: body}}}
 	m := modelWithPRs([]model.PullRequest{pr}, 0)
-	var b strings.Builder
-	m.writeCommentSummary(&b, pr, 100)
-	view := stripANSI(b.String())
+	view := stripANSI(m.commentDetail(pr.Comments[0]))
 	for _, want := range []string{"Plan", "To apply this plan, use make apply.", "First item", "Workflow", "https://example.com/run", "Show Output", "+ added", "- removed", " unchanged", "make plan"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("rendered comment missing %q: %q", want, view)
@@ -36,11 +33,8 @@ func TestCommentSummaryRendersMarkdown(t *testing.T) {
 }
 
 func TestCommentMarkdownStyles(t *testing.T) {
-	profile := lipgloss.ColorProfile()
-	lipgloss.SetColorProfile(termenv.TrueColor)
-	t.Cleanup(func() { lipgloss.SetColorProfile(profile) })
 	m := minimalModel()
-	m.theme = uitheme.New(uitheme.DarkDefault(), termenv.TrueColor, false)
+	m.theme = uitheme.New(uitheme.DarkDefault(), colorprofile.TrueColor, false)
 	view := m.renderCommentMarkdown("**bold** _italic_ [link](https://example.com)\n\n```diff\n+ added\n- removed\n```")
 	for _, want := range []string{
 		m.theme.Styles.App.Bold(true).Render("bold"),
@@ -53,7 +47,7 @@ func TestCommentMarkdownStyles(t *testing.T) {
 			t.Errorf("comment missing styled text %q: %q", want, view)
 		}
 	}
-	m.theme = uitheme.New(uitheme.DarkDefault(), termenv.TrueColor, true)
+	m.theme = uitheme.New(uitheme.DarkDefault(), colorprofile.TrueColor, true)
 	view = m.renderCommentMarkdown("# Heading\n\n`code`")
 	if strings.Contains(view, "38;") || strings.Contains(view, "48;") {
 		t.Errorf("no-color comment contains color escapes: %q", view)
@@ -104,14 +98,12 @@ func TestCommentMarkdownLooseAndNestedLists(t *testing.T) {
 	}
 }
 
-func TestCommentMarkdownKeepsCodeLiteralAndTruncates(t *testing.T) {
+func TestCommentMarkdownKeepsCodeLiteralOnOneLine(t *testing.T) {
 	code := "<details> **literal** `code` " + strings.Repeat("x", 100)
 	body := "```text\n" + code + "\n```"
 	pr := model.PullRequest{Comments: []model.PRComment{{Author: "bot", Body: body}}}
 	m := modelWithPRs([]model.PullRequest{pr}, 0)
-	var b strings.Builder
-	m.writeCommentSummary(&b, pr, 40)
-	view := stripANSI(b.String())
+	view := stripANSI(m.commentDetail(pr.Comments[0]))
 	if !strings.Contains(view, "<details> **literal** `code`") {
 		t.Fatalf("code contents were interpreted as markup: %q", view)
 	}
@@ -120,9 +112,6 @@ func TestCommentMarkdownKeepsCodeLiteralAndTruncates(t *testing.T) {
 	}
 	codeLines := 0
 	for _, line := range strings.Split(view, "\n") {
-		if lipgloss.Width(line) > 40 {
-			t.Fatalf("rendered line exceeds pane width: %q", line)
-		}
 		if strings.Contains(line, "xxx") {
 			codeLines++
 		}

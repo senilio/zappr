@@ -31,12 +31,11 @@ func summaryTimestamp(date, now time.Time) string {
 	now = now.Local()
 	// Use UTC for calendar arithmetic so midnight DST changes cannot shift the day.
 	yesterday := time.Date(now.Year(), now.Month(), now.Day()-1, 0, 0, 0, 0, time.UTC)
-	day := date.Format("2006-01-02")
-	switch day {
+	switch date.Format("2006-01-02") {
 	case now.Format("2006-01-02"):
-		day = "Today"
+		return "Today " + date.Format("15:04")
 	case yesterday.Format("2006-01-02"):
-		day = "Yesterday"
+		return "Yesterday " + date.Format("15:04")
 	}
-	return day + " " + date.Format("15:04")
+	return date.Format("Jan 2 15:04")
 }

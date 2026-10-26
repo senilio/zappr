@@ -8,20 +8,20 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/senilio/zappr/internal/config"
 	"github.com/senilio/zappr/internal/model"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 func TestWrappedSummaryRetainsContentAndSelectionRows(t *testing.T) {
-	for _, mode := range []SummaryMode{SummaryModeCommits, SummaryModeComments} {
+	for _, mode := range []SummaryMode{SummaryModeCommits} {
 		m := wrappedModel(t, "summary")
 		m.width, m.height, m.summaryMode = 24, 12, mode
 		m.prs[0].Commits = []model.PRCommit{{OID: "abcdef0", Headline: "alpha bravo charlie delta echo FINISH"}, {OID: "1234567", Headline: "second"}}
-		m.prs[0].Comments = []model.PRComment{{Author: "author", Body: "- alpha bravo charlie delta echo FINISH\n\n```\n    some_really_long_identifier_FINISH\n```"}}
 		content := stripANSI(m.summaryContent(m.prs[0], 20))
 		joined := strings.Join(strings.Fields(content), "")
 		if want := "FINISH"; !strings.Contains(joined, want) {
@@ -33,15 +33,32 @@ func TestWrappedSummaryRetainsContentAndSelectionRows(t *testing.T) {
 			}
 		}
 		m.resizeViewports()
-		if mode != SummaryModeComments {
-			m.summaryVP.Height = 4
-			m.fileIndex, m.commitIndex = 1, 1
-			m.syncSummaryVP()
-			m.syncSummaryVPScroll()
-			view := stripANSI(m.summaryPanel(24, 6))
-			if !strings.Contains(view, "second") {
-				t.Errorf("mode %d selection not visible: %q", mode, view)
-			}
+		m.summaryVP.SetHeight(4)
+		m.fileIndex, m.commitIndex, m.commentIndex = 1, 1, 1
+		m.syncSummaryVP()
+		m.syncSummaryVPScroll()
+		view := stripANSI(m.summaryPanel(24, 6))
+		if !strings.Contains(view, "second") {
+			t.Errorf("mode %d selection not visible: %q", mode, view)
+		}
+	}
+}
+
+func TestWrappedSummaryKeepsCommentsOnOneRow(t *testing.T) {
+	m := wrappedModel(t, "summary")
+	m.summaryMode = SummaryModeComments
+	m.prs[0].Comments = []model.PRComment{{Author: "a-very-long-commenter-name-FINISH", CreatedAt: time.Now()}, {Author: "second"}}
+	content, spans := m.summaryLayout(m.prs[0], 20)
+	lines := strings.Split(strings.TrimSuffix(stripANSI(content), "\n"), "\n")
+	if len(lines) != 2 || strings.Contains(content, "FINISH") || !strings.HasPrefix(lines[0], "Today ") {
+		t.Fatalf("comment list wrapped or not cut off: %q", lines)
+	}
+	if len(spans) != 2 || spans[1] != (rowSpan{1, 2}) {
+		t.Fatalf("unexpected spans: %#v", spans)
+	}
+	for _, line := range lines {
+		if lipgloss.Width(line) > 20 {
+			t.Fatalf("comment row exceeds width: %q", line)
 		}
 	}
 }
@@ -130,7 +147,7 @@ func TestWrapShortcutFocusAndPersistence(t *testing.T) {
 			m.mode = ModeDiff
 			m.width = 60
 		}
-		next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'w'}})
+		next, cmd := m.Update(tea.KeyPressMsg{Code: 'w', Text: "w"})
 		m = next.(Model)
 		if cmd == nil {
 			t.Fatalf("focus %d: w did not save wrapping", focus)
@@ -156,10 +173,10 @@ func TestRapidWrapSavesCannotOverwriteNewerSettings(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	m := minimalModel()
 	m.cfg = config.Default()
-	next, first := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'w'}})
+	next, first := m.Update(tea.KeyPressMsg{Code: 'w', Text: "w"})
 	m = next.(Model)
 	m.focus = FocusSummary
-	next, second := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'w'}})
+	next, second := m.Update(tea.KeyPressMsg{Code: 'w', Text: "w"})
 	m = next.(Model)
 	if first == nil || second == nil {
 		t.Fatal("missing save commands")
@@ -185,7 +202,7 @@ func TestWrapSaveErrorPreservesPaneAndMode(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", blocked)
 	m := minimalModel()
 	m.focus, m.mode = FocusSummary, ModeDetail
-	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'w'}})
+	next, cmd := m.Update(tea.KeyPressMsg{Code: 'w', Text: "w"})
 	m = next.(Model)
 	if cmd == nil {
 		t.Fatal("missing save")
@@ -237,7 +254,7 @@ func TestWrapShortcutDoesNotInterceptInput(t *testing.T) {
 	for _, mode := range []Mode{ModeComment, ModeCommand} {
 		m := minimalModel()
 		m.mode = mode
-		next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'w'}})
+		next, _ := m.Update(tea.KeyPressMsg{Code: 'w', Text: "w"})
 		m = next.(Model)
 		if m.comment != "w" && m.commandInput != "w" {
 			t.Fatalf("w intercepted in mode %d", mode)
@@ -263,12 +280,12 @@ func TestWrappedInboxTallItemCanBePaged(t *testing.T) {
 	if !strings.HasPrefix(first, "alpha") {
 		t.Fatalf("tall selection must start at title: %q", first)
 	}
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyPgDown})
+	next, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyPgDown})
 	m = next.(Model)
-	if m.inboxVP.YOffset == 0 {
+	if m.inboxVP.YOffset() == 0 {
 		t.Fatal("cannot page within tall title")
 	}
-	if m.inboxOffset(20, 5) != m.inboxVP.YOffset {
+	if m.inboxOffset(20, 5) != m.inboxVP.YOffset() {
 		t.Fatal("rendering snaps back after manual scrolling")
 	}
 	// The first title must remain visible on further renders, without resetting scroll.
@@ -284,7 +301,7 @@ func TestWrapToggleAndResizePreserveDiffLineAnchor(t *testing.T) {
 	m.diff = strings.Repeat("alpha bravo charlie delta echo foxtrot\n", 12) + "ANCHOR\n" + strings.Repeat("tail\n", 20)
 	m.resizeViewports()
 	m.diffVP.SetYOffset(12)
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'w'}})
+	next, _ := m.Update(tea.KeyPressMsg{Code: 'w', Text: "w"})
 	m = next.(Model)
 	if m.diffAnchor() != 12 {
 		t.Fatalf("toggle changed source anchor to %d", m.diffAnchor())
@@ -294,7 +311,7 @@ func TestWrapToggleAndResizePreserveDiffLineAnchor(t *testing.T) {
 	if m.diffAnchor() != 12 {
 		t.Fatalf("resize changed source anchor to %d", m.diffAnchor())
 	}
-	if !strings.HasPrefix(stripANSI(m.renderDiffViewport(m.diffVP.Width, 6)), "ANCHOR") {
+	if !strings.HasPrefix(stripANSI(m.renderDiffViewport(m.diffVP.Width(), 6)), "ANCHOR") {
 		t.Fatal("anchored diff line not visible")
 	}
 }
@@ -304,12 +321,12 @@ func TestWrapBindingCanBeRemapped(t *testing.T) {
 	cfg := config.Default()
 	cfg.Actions["toggle-wrap"] = config.ActionConfig{Keys: []string{"W"}}
 	m, _ := configuredModel(t, cfg, true)
-	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'w'}})
+	next, cmd := m.Update(tea.KeyPressMsg{Code: 'w', Text: "w"})
 	m = next.(Model)
 	if cmd != nil || m.cfg.Wrap.Inbox {
 		t.Fatal("old binding still toggles wrapping")
 	}
-	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'W'}})
+	next, _ = m.Update(tea.KeyPressMsg{Code: 'W', Text: "W"})
 	m = next.(Model)
 	if !m.cfg.Wrap.Inbox || !strings.Contains(stripANSI(m.helpPanel()), "W") {
 		t.Fatal("remapped binding is not used")
@@ -327,15 +344,15 @@ func TestManualInboxScrollKeepsPRWhenWrappingChanges(t *testing.T) {
 	_, spans := m.inboxContent(20)
 	m.inboxManualScroll = true
 	m.inboxVP.SetYOffset(spans[3].start)
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'w'}})
+	next, _ := m.Update(tea.KeyPressMsg{Code: 'w', Text: "w"})
 	m = next.(Model)
 	_, spans = m.inboxContent(20)
-	if m.inboxVP.YOffset != spans[3].start {
-		t.Fatalf("wrap moved top PR: offset=%d want=%d", m.inboxVP.YOffset, spans[3].start)
+	if m.inboxVP.YOffset() != spans[3].start {
+		t.Fatalf("wrap moved top PR: offset=%d want=%d", m.inboxVP.YOffset(), spans[3].start)
 	}
-	next, _ = m.Update(tea.MouseMsg{Button: tea.MouseButtonWheelDown, Action: tea.MouseActionPress})
+	next, _ = m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
 	m = next.(Model)
-	if !m.inboxManualScroll || m.inboxOffset(20, m.inboxVP.Height) != m.inboxVP.YOffset {
+	if !m.inboxManualScroll || m.inboxOffset(20, m.inboxVP.Height()) != m.inboxVP.YOffset() {
 		t.Fatal("mouse wheel scrolling snaps to selection")
 	}
 }
@@ -345,9 +362,9 @@ func TestInboxWheelEnablesManualScroll(t *testing.T) {
 	m.width, m.height = 24, 8
 	m.prs[0].Title = strings.Repeat("alpha bravo charlie ", 20)
 	m.resizeViewports()
-	next, _ := m.Update(tea.MouseMsg{Button: tea.MouseButtonWheelDown, Action: tea.MouseActionPress})
+	next, _ := m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
 	m = next.(Model)
-	if !m.inboxManualScroll || m.inboxVP.YOffset == 0 {
+	if !m.inboxManualScroll || m.inboxVP.YOffset() == 0 {
 		t.Fatal("wheel does not retain scroll within tall item")
 	}
 }
@@ -367,14 +384,14 @@ func TestSideBySideWrapReflowsCachedRawDiff(t *testing.T) {
 	}
 	next, _ := m.Update(cmd())
 	m = next.(Model)
-	view := stripANSI(m.renderDiffViewport(m.diffVP.Width, 30))
+	view := stripANSI(m.renderDiffViewport(m.diffVP.Width(), 30))
 	for _, marker := range []string{"ENDOLD", "ENDNEW"} {
 		if !strings.Contains(view, marker) {
 			t.Fatalf("missing %s in side-by-side pane: %q", marker, view)
 		}
 	}
 	for _, row := range strings.Split(view, "\n") {
-		if lipgloss.Width(row) > m.diffVP.Width {
+		if lipgloss.Width(row) > m.diffVP.Width() {
 			t.Fatalf("side-by-side overflow: %q", row)
 		}
 	}
@@ -398,7 +415,7 @@ func TestSideLayoutFileNavigationStartsAtTop(t *testing.T) {
 	m.resizeViewports()
 	m.diffVP.SetYOffset(12)
 	m.actions.keys[actionContextNormal]["n"] = tuiAction{ID: "next-item"}
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	_, cmd := m.Update(tea.KeyPressMsg{Code: 'n', Text: "n"})
 	if cmd == nil {
 		t.Fatal("missing layout command")
 	}
@@ -418,25 +435,25 @@ func TestDiscardedSideLayoutAllowsRequestingSameLayoutAgain(t *testing.T) {
 	m.resizeViewports()
 	m.sideDiffKey = m.sideLayoutKey()
 	m.sideDiffContent = m.diff
-	widthA := m.diffVP.Width
-	m.diffVP.Width += 10
+	widthA := m.diffVP.Width()
+	m.diffVP.SetWidth(m.diffVP.Width() + 10)
 	if m.sideLayoutCmd(0) == nil {
 		t.Fatal("missing layout B request")
 	}
 	keyB := m.sideDiffRequested
-	m.diffVP.Width = widthA
+	m.diffVP.SetWidth(widthA)
 	next, _ := m.Update(sideLayoutMsg{key: keyB, content: "stale B"})
 	m = next.(Model)
 	if m.sideDiffRequested != "" {
 		t.Fatal("discarded completion retained a pending request")
 	}
-	m.diffVP.Width += 10
+	m.diffVP.SetWidth(m.diffVP.Width() + 10)
 	if m.sideLayoutCmd(0) == nil {
 		t.Fatal("discarded B layout permanently suppressed another request")
 	}
 	// A stale completion must not clear a different, newer request.
 	m.sideDiffRequested = "newer request"
-	m.diffVP.Width = widthA
+	m.diffVP.SetWidth(widthA)
 	next, _ = m.Update(sideLayoutMsg{key: keyB})
 	if next.(Model).sideDiffRequested != "newer request" {
 		t.Fatal("stale completion cleared the newer request")
@@ -477,7 +494,7 @@ func TestSideLayoutFailureSettlesRequestWithoutRetryLoop(t *testing.T) {
 	if m.sideLayoutCmd(0) != nil {
 		t.Fatal("failed layout automatically retries forever")
 	}
-	m.diffVP.Width++
+	m.diffVP.SetWidth(m.diffVP.Width() + 1)
 	if m.sideLayoutCmd(0) == nil {
 		t.Fatal("changed layout cannot retry formatting")
 	}

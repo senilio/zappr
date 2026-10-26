@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/senilio/zappr/internal/model"
 )
 
@@ -38,11 +38,11 @@ func TestSummarySelectionScrollsWithContextAndStopsAtEnds(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			m := summaryScrollModel(tt.mode, tt.wrap)
-			m.summaryVP.Height = tt.height
+			m.summaryVP.SetHeight(tt.height)
 			check := func(index int, down bool) {
 				t.Helper()
-				_, spans := m.summaryLayout(m.prs[0], m.summaryVP.Width)
-				offset := m.summaryVP.YOffset
+				_, spans := m.summaryLayout(m.prs[0], m.summaryVP.Width())
+				offset := m.summaryVP.YOffset()
 				span := spans[index]
 				if span.start < offset || span.end > offset+tt.height {
 					t.Fatalf("selection %d hidden: span=%+v offset=%d", index, span, offset)
@@ -60,19 +60,19 @@ func TestSummarySelectionScrollsWithContextAndStopsAtEnds(t *testing.T) {
 					t.Fatalf("bottom offset=%d, want %d", offset, spans[index].end-tt.height)
 				}
 				m.syncSummaryVPScroll()
-				if m.summaryVP.YOffset != offset {
+				if m.summaryVP.YOffset() != offset {
 					t.Fatalf("selection %d: repeated sync changed offset", index)
 				}
 			}
 			for index := range 10 {
 				if index > 0 {
-					next, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+					next, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 					m = next.(Model)
 				}
 				check(index, true)
 			}
 			for index := 8; index >= 0; index-- {
-				next, _ := m.Update(tea.KeyMsg{Type: tea.KeyUp})
+				next, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyUp})
 				m = next.(Model)
 				check(index, false)
 			}
@@ -86,13 +86,13 @@ func TestSummaryScrollMarginKeepsSelectionVisibleInSmallPane(t *testing.T) {
 			m := summaryScrollModel(mode, true)
 			m.fileIndex, m.commitIndex = 4, 4
 			m.syncSummaryVP()
-			_, spans := m.summaryLayout(m.prs[0], m.summaryVP.Width)
+			_, spans := m.summaryLayout(m.prs[0], m.summaryVP.Width())
 			span := spans[4]
-			m.summaryVP.Height = span.end - span.start + 2
+			m.summaryVP.SetHeight(span.end - span.start + 2)
 			for _, start := range []int{0, span.start} {
 				m.summaryVP.SetYOffset(start)
 				m.syncSummaryVPScroll()
-				if got, want := m.summaryVP.YOffset, span.start-1; got != want {
+				if got, want := m.summaryVP.YOffset(), span.start-1; got != want {
 					t.Fatalf("initial offset %d: offset=%d, want %d for one row of context on each side", start, got, want)
 				}
 			}
@@ -103,18 +103,18 @@ func TestSummaryScrollMarginKeepsSelectionVisibleInSmallPane(t *testing.T) {
 func TestTallSummaryCommitStartsAtHeadlineAndAllowsPaging(t *testing.T) {
 	m := summaryScrollModel(SummaryModeCommits, true)
 	m.commitIndex = 4
-	m.summaryVP.Height = 2
+	m.summaryVP.SetHeight(2)
 	m.syncSummaryVP()
 	m.syncSummaryVPScroll()
-	_, spans := m.summaryLayout(m.prs[0], m.summaryVP.Width)
-	if got := m.summaryVP.YOffset; got != spans[4].start {
+	_, spans := m.summaryLayout(m.prs[0], m.summaryVP.Width())
+	if got := m.summaryVP.YOffset(); got != spans[4].start {
 		t.Fatalf("tall commit offset=%d, want headline at %d", got, spans[4].start)
 	}
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyPgDown})
+	next, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyPgDown})
 	m = next.(Model)
-	offset := m.summaryVP.YOffset
-	_ = m.summaryPanel(m.summaryVP.Width+paneHFrame, m.summaryVP.Height+paneFrame)
-	if offset <= spans[4].start || m.summaryVP.YOffset != offset {
-		t.Fatalf("manual paging did not retain offset: %d", m.summaryVP.YOffset)
+	offset := m.summaryVP.YOffset()
+	_ = m.summaryPanel(m.summaryVP.Width()+paneHFrame, m.summaryVP.Height()+paneFrame)
+	if offset <= spans[4].start || m.summaryVP.YOffset() != offset {
+		t.Fatalf("manual paging did not retain offset: %d", m.summaryVP.YOffset())
 	}
 }
