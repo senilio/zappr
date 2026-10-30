@@ -28,6 +28,8 @@ type commentRecordingGitHub struct {
 	actionErr        error
 	listedPRs        []model.PullRequest
 	commitDiffSHAs   []string
+	getPR            model.PullRequest
+	getPRErr         error
 }
 
 func (f *commentRecordingGitHub) ListPRs(context.Context, string) ([]model.PullRequest, bool, error) {
@@ -35,7 +37,7 @@ func (f *commentRecordingGitHub) ListPRs(context.Context, string) ([]model.PullR
 }
 
 func (f *commentRecordingGitHub) GetPR(context.Context, string, int) (model.PullRequest, error) {
-	return model.PullRequest{}, nil
+	return f.getPR, f.getPRErr
 }
 
 func (f *commentRecordingGitHub) GetDiff(context.Context, string, int) (string, error) {
@@ -2586,5 +2588,404 @@ func TestAutoDetailsCmdFetchesMissingDetailsOnce(t *testing.T) {
 	m.prs[1].UpdatedAt = time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 	if cmd := m.autoDetailsCmd(); cmd == nil {
 		t.Fatal("updated PR should fetch details again")
+	}
+}
+
+// atlantisGuardModel builds a model with a cache store (RefreshPR writes to it),
+// one selected PR, and the provided actions registered.
+func atlantisGuardModel(t *testing.T, cfg config.Config, pr model.PullRequest) (Model, *commentRecordingGitHub) {
+	t.Helper()
+	provider := &commentRecordingGitHub{}
+	m, err := New(app.New(provider, cache.NewMemoryStore()), "org/repo", 0, "", cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	m.mode = ModeInbox
+	m.focus = FocusInbox
+	m.width = 120
+	m.height = 40
+	m.prs = []model.PullRequest{pr}
+	m.allPRs = m.prs
+	m.selected = 0
+	return m, provider
+}
+
+// runAtlantis executes cmd, finds the atlantisCheckMsg it produced (walking any
+// BatchMsg), feeds it to Update, runs the resulting cmd, and returns the model.
+func runAtlantis(t *testing.T, m Model, cmd tea.Cmd) Model {
+	t.Helper()
+	msg := collectAtlantisCheckMsg(cmd)
+	if msg == nil {
+		t.Fatal("no atlantisCheckMsg produced")
+	}
+	next, cmd2 := m.Update(*msg)
+	if cmd2 != nil {
+		runCmd(cmd2)
+	}
+	return next.(Model)
+}
+
+// collectAtlantisCheckMsg runs every command in cmd exactly once and returns
+// the atlantisCheckMsg among the results, if any.
+func collectAtlantisCheckMsg(cmd tea.Cmd) *atlantisCheckMsg {
+	if cmd == nil {
+		return nil
+	}
+	var found *atlantisCheckMsg
+	switch v := cmd().(type) {
+	case atlantisCheckMsg:
+		found = &v
+	case tea.BatchMsg:
+		for _, c := range v {
+			if got := collectAtlantisCheckMsg(c); got != nil {
+				found = got
+			}
+		}
+	}
+	return found
+}
+
+// typeComment types text into the comment editor using real key events.
+func typeComment(m Model, text string) Model {
+	for _, r := range text {
+		next, _ := m.Update(tea.KeyPressMsg{Code: r, Text: string(r)})
+		m = next.(Model)
+	}
+	return m
+}
+
+func atlantisDialogText(m Model) string {
+	return stripANSI(m.atlantisGuardPanel())
+}
+
+func atlantisConfig() config.Config {
+	cfg := config.Default()
+	enabled := true
+	cfg.Atlantis.Enabled = &enabled
+	return cfg
+}
+
+func TestAtlantisPlanBlockedWhileRunningFreeText(t *testing.T) {
+	cfg := atlantisConfig()
+	m, provider := atlantisGuardModel(t, cfg, model.PullRequest{Number: 1, Repo: "org/repo"})
+	provider.getPR = model.PullRequest{Number: 1, Repo: "org/repo", State: "OPEN",
+		Checks: []model.Check{{Context: "atlantis/plan", State: "PENDING"}}}
+
+	m = updateKey(m, "c")
+	assertMode(t, m, ModeComment)
+	m = typeComment(m, "atlantis plan")
+	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = next.(Model)
+	if len(provider.comments) != 0 {
+		t.Fatalf("comment posted before check: %#v", provider.comments)
+	}
+	m = runAtlantis(t, m, cmd)
+	assertMode(t, m, ModeConfirmAtlantis)
+	if !strings.Contains(atlantisDialogText(m), "running") {
+		t.Fatalf("dialog = %q, want 'running'", atlantisDialogText(m))
+	}
+	m = updateKey(m, "esc")
+	assertMode(t, m, ModeDetail)
+	if len(provider.comments) != 0 {
+		t.Fatalf("comments = %#v, want none after cancel", provider.comments)
+	}
+}
+
+func TestAtlantisSendAnywayPosts(t *testing.T) {
+	cfg := atlantisConfig()
+	m, provider := atlantisGuardModel(t, cfg, model.PullRequest{Number: 1, Repo: "org/repo"})
+	provider.getPR = model.PullRequest{Number: 1, Repo: "org/repo", State: "OPEN",
+		Checks: []model.Check{{Context: "atlantis/plan", State: "PENDING"}}}
+
+	m = updateKey(m, "c")
+	m = typeComment(m, "atlantis plan")
+	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = runAtlantis(t, next.(Model), cmd)
+	assertMode(t, m, ModeConfirmAtlantis)
+	m = updateKey(m, "y")
+	assertCommentBody(t, provider, "atlantis plan")
+}
+
+func TestAtlantisApplyBlockedPresetConfirm(t *testing.T) {
+	cfg := atlantisConfig()
+	confirm := true
+	cfg.Actions["atlantis-apply"] = config.ActionConfig{Operation: "comment", Comment: "atlantis apply", Commands: []string{"aa"}, Confirm: &confirm}
+	m, provider := atlantisGuardModel(t, cfg, model.PullRequest{Number: 1, Repo: "org/repo"})
+	provider.getPR = model.PullRequest{Number: 1, Repo: "org/repo", State: "OPEN"}
+
+	m = openCommandAndType(m, "aa")
+	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = runAtlantis(t, next.(Model), cmd)
+	assertMode(t, m, ModeConfirmAtlantis)
+	if !strings.Contains(atlantisDialogText(m), "no Atlantis plan") {
+		t.Fatalf("dialog = %q, want 'no plan'", atlantisDialogText(m))
+	}
+	m = updateKey(m, "y")
+	if len(provider.comments) != 1 || provider.comments[0] != "atlantis apply" {
+		t.Fatalf("comments = %#v, want one atlantis apply", provider.comments)
+	}
+	assertMode(t, m, ModeInbox)
+}
+
+func TestAtlantisApplyAllowedFallsThroughToConfirmation(t *testing.T) {
+	cfg := atlantisConfig()
+	confirm := true
+	cfg.Actions["atlantis-apply"] = config.ActionConfig{Operation: "comment", Comment: "atlantis apply", Commands: []string{"aa"}, Confirm: &confirm}
+	m, provider := atlantisGuardModel(t, cfg, model.PullRequest{Number: 1, Repo: "org/repo"})
+	provider.getPR = model.PullRequest{Number: 1, Repo: "org/repo", State: "OPEN",
+		Checks: []model.Check{
+			{Context: "atlantis/plan", State: "SUCCESS"},
+			{Context: "atlantis/policy_check", State: "SUCCESS"},
+		}}
+
+	m = openCommandAndType(m, "aa")
+	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = runAtlantis(t, next.(Model), cmd)
+	assertMode(t, m, ModeConfirmCommand)
+	m = updateKey(m, "y")
+	assertCommentBody(t, provider, "atlantis apply")
+}
+
+func TestAtlantisPlanImmediatePresetGuarded(t *testing.T) {
+	cfg := atlantisConfig()
+	confirm := false
+	cfg.Actions["atlantis-plan"] = config.ActionConfig{Operation: "comment", Comment: "atlantis plan", Keys: []string{"P"}, Confirm: &confirm}
+
+	// Blocked PR -> dialog.
+	m, provider := atlantisGuardModel(t, cfg, model.PullRequest{Number: 1, Repo: "org/repo"})
+	provider.getPR = model.PullRequest{Number: 1, Repo: "org/repo", State: "OPEN",
+		Checks: []model.Check{{Context: "atlantis/plan", State: "PENDING"}}}
+	next, cmd := m.Update(tea.KeyPressMsg{Text: "P"})
+	m = runAtlantis(t, next.(Model), cmd)
+	assertMode(t, m, ModeConfirmAtlantis)
+	if len(provider.comments) != 0 {
+		t.Fatalf("comments = %#v, want none while blocked", provider.comments)
+	}
+
+	// Clean PR -> posts directly.
+	m, provider = atlantisGuardModel(t, cfg, model.PullRequest{Number: 1, Repo: "org/repo"})
+	provider.getPR = model.PullRequest{Number: 1, Repo: "org/repo", State: "OPEN"}
+	next, cmd = m.Update(tea.KeyPressMsg{Text: "P"})
+	m = runAtlantis(t, next.(Model), cmd)
+	assertCommentBody(t, provider, "atlantis plan")
+}
+
+func TestAtlantisRefreshErrorShowsDialog(t *testing.T) {
+	cfg := atlantisConfig()
+	m, provider := atlantisGuardModel(t, cfg, model.PullRequest{Number: 1, Repo: "org/repo"})
+	provider.getPRErr = errors.New("boom")
+
+	m = updateKey(m, "c")
+	m = typeComment(m, "atlantis plan")
+	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = runAtlantis(t, next.(Model), cmd)
+	assertMode(t, m, ModeConfirmAtlantis)
+	if !strings.Contains(atlantisDialogText(m), "could not verify Atlantis status: boom") {
+		t.Fatalf("dialog = %q, want error reason", atlantisDialogText(m))
+	}
+	m = updateKey(m, "y")
+	assertCommentBody(t, provider, "atlantis plan")
+}
+
+func TestAtlantisRecentPlanBlocksApply(t *testing.T) {
+	cfg := atlantisConfig()
+	m, provider := atlantisGuardModel(t, cfg, model.PullRequest{Number: 1, Repo: "org/repo", HeadRefOID: "abc"})
+	provider.getPR = model.PullRequest{Number: 1, Repo: "org/repo", State: "OPEN", HeadRefOID: "abc"}
+
+	// Post atlantis plan (allowed on clean PR).
+	m = updateKey(m, "c")
+	m = typeComment(m, "atlantis plan")
+	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = runAtlantis(t, next.(Model), cmd)
+	assertCommentBody(t, provider, "atlantis plan")
+
+	// Now apply: a passed plan whose StartedAt predates the post -> blocked.
+	provider.getPR = model.PullRequest{Number: 1, Repo: "org/repo", State: "OPEN", HeadRefOID: "abc",
+		Checks: []model.Check{
+			{Context: "atlantis/plan", State: "SUCCESS", StartedAt: timeNow().Add(-time.Hour)},
+			{Context: "atlantis/policy_check", State: "SUCCESS"},
+		}}
+	m = updateKey(m, "c")
+	m = typeComment(m, "atlantis apply")
+	next, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = runAtlantis(t, next.(Model), cmd)
+	assertMode(t, m, ModeConfirmAtlantis)
+	if !strings.Contains(atlantisDialogText(m), "just requested") {
+		t.Fatalf("dialog = %q, want 'just requested'", atlantisDialogText(m))
+	}
+}
+
+func TestNonAtlantisCommentBypassesGuard(t *testing.T) {
+	cfg := atlantisConfig()
+	m, provider := atlantisGuardModel(t, cfg, model.PullRequest{Number: 1, Repo: "org/repo"})
+
+	m = updateKey(m, "c")
+	m = typeComment(m, "hello")
+	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	_ = next
+	if msg := collectAtlantisCheckMsg(cmd); msg != nil {
+		t.Fatal("non-atlantis comment produced atlantisCheckMsg")
+	}
+	assertCommentBody(t, provider, "hello")
+}
+
+func TestAtlantisGuardDisabled(t *testing.T) {
+	cfg := config.Default()
+	disabled := false
+	cfg.Atlantis.Enabled = &disabled
+	m, provider := atlantisGuardModel(t, cfg, model.PullRequest{Number: 1, Repo: "org/repo"})
+
+	m = updateKey(m, "c")
+	m = typeComment(m, "atlantis apply")
+	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	_ = next
+	if msg := collectAtlantisCheckMsg(cmd); msg != nil {
+		t.Fatal("disabled guard produced atlantisCheckMsg")
+	}
+	assertCommentBody(t, provider, "atlantis apply")
+}
+
+func TestAtlantisStaleCheckIgnored(t *testing.T) {
+	cfg := atlantisConfig()
+	m, provider := atlantisGuardModel(t, cfg, model.PullRequest{Number: 1, Repo: "org/repo"})
+	provider.getPR = model.PullRequest{Number: 1, Repo: "org/repo", State: "OPEN"}
+
+	m = updateKey(m, "c")
+	m = typeComment(m, "atlantis plan")
+	next, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = next.(Model)
+	next, cmd := m.Update(atlantisCheckMsg{repo: "org/repo", number: 99})
+	m = next.(Model)
+	if cmd != nil || !m.loading || len(provider.comments) != 0 {
+		t.Fatalf("stale check acted: cmd=%v loading=%v comments=%#v", cmd != nil, m.loading, provider.comments)
+	}
+}
+
+func TestAtlantisDismissedDialogDoesNotBlockNewGuard(t *testing.T) {
+	cfg := atlantisConfig()
+	m, provider := atlantisGuardModel(t, cfg, model.PullRequest{Number: 1, Repo: "org/repo"})
+	provider.getPR = model.PullRequest{Number: 1, Repo: "org/repo", State: "OPEN",
+		Checks: []model.Check{{Context: "atlantis/plan", State: "PENDING"}}}
+
+	m = updateKey(m, "c")
+	m = typeComment(m, "atlantis plan")
+	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = runAtlantis(t, next.(Model), cmd)
+	assertMode(t, m, ModeConfirmAtlantis)
+	m.mode = ModeInbox // e.g. a refresh emptied the inbox
+
+	m = updateKey(m, "c")
+	m = typeComment(m, "atlantis plan")
+	next, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = runAtlantis(t, next.(Model), cmd)
+	assertMode(t, m, ModeConfirmAtlantis)
+}
+
+func TestAtlantisPresetConfirmRecordsRecentPlan(t *testing.T) {
+	cfg := atlantisConfig()
+	confirm := true
+	cfg.Actions["atlantis-plan"] = config.ActionConfig{Operation: "comment", Comment: "atlantis plan", Commands: []string{"ap"}, Confirm: &confirm}
+	m, provider := atlantisGuardModel(t, cfg, model.PullRequest{Number: 1, Repo: "org/repo", HeadRefOID: "old"})
+	provider.getPR = model.PullRequest{Number: 1, Repo: "org/repo", State: "OPEN", HeadRefOID: "new"}
+
+	m = openCommandAndType(m, "ap")
+	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = runAtlantis(t, next.(Model), cmd)
+	assertMode(t, m, ModeConfirmCommand)
+	m = updateKey(m, "y")
+	assertCommentBody(t, provider, "atlantis plan")
+	assertMode(t, m, ModeInbox)
+	if _, ok := m.recentPlans[recentPlanKey{repo: "org/repo", number: 1, head: "new"}]; !ok {
+		t.Fatalf("recentPlans = %#v, want entry for refreshed head", m.recentPlans)
+	}
+}
+
+func TestAtlantisPRClosedDuringCheck(t *testing.T) {
+	cfg := atlantisConfig()
+	m, provider := atlantisGuardModel(t, cfg, model.PullRequest{Number: 1, Repo: "org/repo"})
+	provider.getPR = model.PullRequest{Number: 1, Repo: "org/repo", State: "MERGED"}
+
+	m = updateKey(m, "c")
+	m = typeComment(m, "atlantis apply")
+	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = runAtlantis(t, next.(Model), cmd)
+	if len(provider.comments) != 0 || m.loading || len(m.prs) != 0 || m.mode != ModeInbox || m.statusText != "PR closed" {
+		t.Fatalf("closed PR: comments=%#v loading=%v prs=%d mode=%v status=%q", provider.comments, m.loading, len(m.prs), m.mode, m.statusText)
+	}
+}
+
+func TestAtlantisCheckDiscardedWhenModalOpenedMidCheck(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		checks []model.Check
+	}{
+		{"blocked", []model.Check{{Context: "atlantis/plan", State: "PENDING"}}},
+		{"allowed", []model.Check{{Context: "atlantis/plan", State: "SUCCESS"}, {Context: "atlantis/policy_check", State: "SUCCESS"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := atlantisConfig()
+			confirm := true
+			cfg.Actions["atlantis-apply"] = config.ActionConfig{Operation: "comment", Comment: "atlantis apply", Commands: []string{"aa"}, Confirm: &confirm}
+			m, provider := atlantisGuardModel(t, cfg, model.PullRequest{Number: 1, Repo: "org/repo"})
+			provider.getPR = model.PullRequest{Number: 1, Repo: "org/repo", State: "OPEN", Checks: tc.checks}
+
+			m = openCommandAndType(m, "aa")
+			next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+			m = next.(Model)
+			// Open another confirmation before the check result arrives.
+			m = pressKey(m, "a")
+			assertMode(t, m, ModeConfirmApprove)
+			pending := m.pendingAction
+
+			m = runAtlantis(t, m, cmd)
+			assertMode(t, m, ModeConfirmApprove)
+			if !reflect.DeepEqual(m.pendingAction, pending) {
+				t.Fatalf("pendingAction = %#v, want %#v", m.pendingAction, pending)
+			}
+			if len(provider.comments) != 0 || m.loading || m.atlantisPending.cmd != atlantisCommandNone {
+				t.Fatalf("comments=%#v loading=%v pending=%#v", provider.comments, m.loading, m.atlantisPending)
+			}
+			if m.statusText != "Atlantis check discarded: view changed" {
+				t.Fatalf("status = %q", m.statusText)
+			}
+		})
+	}
+}
+
+func TestAtlantisCheckDiscardedWhenSelectionChanged(t *testing.T) {
+	cfg := atlantisConfig()
+	m, provider := atlantisGuardModel(t, cfg, model.PullRequest{Number: 1, Repo: "org/repo"})
+	m.prs = append(m.prs, model.PullRequest{Number: 2, Repo: "org/repo"})
+	m.allPRs = m.prs
+	provider.getPR = model.PullRequest{Number: 1, Repo: "org/repo", State: "OPEN"}
+
+	m = updateKey(m, "c")
+	m = typeComment(m, "atlantis plan")
+	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = next.(Model)
+	m.mode = ModeDetail
+	m.selected = 1
+	m = runAtlantis(t, m, cmd)
+	if len(provider.comments) != 0 || m.statusText != "Atlantis check discarded: view changed" {
+		t.Fatalf("comments=%#v status=%q", provider.comments, m.statusText)
+	}
+}
+
+func TestAtlantisGuardDialogShowsChoices(t *testing.T) {
+	cfg := atlantisConfig()
+	m, provider := atlantisGuardModel(t, cfg, model.PullRequest{Number: 1, Repo: "org/repo"})
+	provider.getPR = model.PullRequest{Number: 1, Repo: "org/repo", State: "OPEN",
+		Checks: []model.Check{{Context: "atlantis/plan", State: "PENDING"}}}
+
+	m = updateKey(m, "c")
+	m = typeComment(m, "atlantis plan")
+	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = runAtlantis(t, next.(Model), cmd)
+	assertMode(t, m, ModeConfirmAtlantis)
+	view := stripANSI(m.View().Content)
+	for _, want := range []string{"atlantis plan on #1?", "send anyway", "cancel"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("view missing %q:\n%s", want, view)
+		}
 	}
 }

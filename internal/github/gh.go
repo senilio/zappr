@@ -311,6 +311,7 @@ func (p ghPR) toModel(repo string) model.PullRequest {
 		Deletions:      p.Deletions,
 		ChangedFiles:   changedFiles,
 		CIStatus:       statusFromRollup(p.StatusCheckRollup),
+		Checks:         parseChecks(p.StatusCheckRollup),
 		ReviewDecision: p.ReviewDecision,
 		Draft:          p.Draft,
 		AutoMerge:      p.AutoMergeRequest != nil,
@@ -385,5 +386,70 @@ func statusFromRollup(raw json.RawMessage) string {
 		return "passing"
 	default:
 		return "unknown"
+	}
+}
+
+func parseChecks(raw json.RawMessage) []model.Check {
+	checks := []model.Check{}
+	if len(raw) == 0 || string(raw) == "null" {
+		return checks
+	}
+	var items []struct {
+		Typename     string `json:"__typename"`
+		Name         string `json:"name"`
+		WorkflowName string `json:"workflowName"`
+		Context      string `json:"context"`
+		State        string `json:"state"`
+		Conclusion   string `json:"conclusion"`
+		Status       string `json:"status"`
+		DetailsURL   string `json:"detailsUrl"`
+		TargetURL    string `json:"targetUrl"`
+		StartedAt    string `json:"startedAt"`
+		CompletedAt  string `json:"completedAt"`
+	}
+	if err := json.Unmarshal(raw, &items); err != nil {
+		return checks
+	}
+	for _, item := range items {
+		check := model.Check{
+			WorkflowName: item.WorkflowName,
+			StartedAt:    parseTime(item.StartedAt),
+			CompletedAt:  parseTime(item.CompletedAt),
+			URL:          item.DetailsURL,
+		}
+		if check.URL == "" {
+			check.URL = item.TargetURL
+		}
+		if item.Typename == "StatusContext" {
+			check.Name = item.Context
+			check.Context = item.Context
+			check.State = normalizeCheckState(item.State)
+		} else {
+			check.Name = item.Name
+			state := item.Conclusion
+			if strings.TrimSpace(state) == "" {
+				state = item.Status
+			}
+			check.State = normalizeCheckState(state)
+		}
+		checks = append(checks, check)
+	}
+	return checks
+}
+
+func normalizeCheckState(state string) string {
+	switch strings.ToLower(strings.TrimSpace(state)) {
+	case "success", "completed", "neutral", "skipped":
+		return "SUCCESS"
+	case "pending", "queued", "in_progress", "waiting", "requested":
+		return "PENDING"
+	case "expected":
+		return "EXPECTED"
+	case "failure", "failed", "cancelled", "timed_out", "action_required", "startup_failure", "stale":
+		return "FAILURE"
+	case "error":
+		return "ERROR"
+	default:
+		return ""
 	}
 }

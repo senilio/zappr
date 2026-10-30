@@ -499,3 +499,59 @@ func TestSideLayoutFailureSettlesRequestWithoutRetryLoop(t *testing.T) {
 		t.Fatal("changed layout cannot retry formatting")
 	}
 }
+
+func atlantisInboxModel(t *testing.T, wrapInbox bool) Model {
+	t.Helper()
+	checks := atlantisChecks("SUCCESS", time.Now().Add(-4*time.Minute))
+	m := modelWithPRs([]model.PullRequest{
+		{Number: 1, Title: "first", Author: "a", Checks: checks},
+		{Number: 2, Title: "second", Author: "b", Checks: checks},
+	}, 0)
+	m.cfg.Wrap.Inbox = wrapInbox
+	return m
+}
+
+func TestInboxShowsAtlantisRowOnSelectedOnly(t *testing.T) {
+	m := atlantisInboxModel(t, false)
+	content, spans := m.inboxContent(80)
+	if got := spans[0].end - spans[0].start; got != 3 {
+		t.Errorf("selected span = %d rows, want 3", got)
+	}
+	if got := spans[1].end - spans[1].start; got != 2 {
+		t.Errorf("unselected span = %d rows, want 2", got)
+	}
+	if got := strings.Count(stripANSI(content), "atlantis ·"); got != 1 {
+		t.Errorf("atlantis row appears %d times, want 1", got)
+	}
+
+	m.prs = append(m.prs, model.PullRequest{Number: 3, Title: "unplanned", Author: "c"})
+	m.allPRs = m.prs
+	m.selected = 2
+	content, spans = m.inboxContent(80)
+	if got := spans[2].end - spans[2].start; got != 3 {
+		t.Errorf("unplanned selected span = %d rows, want 3", got)
+	}
+	if !strings.Contains(stripANSI(content), "no plan") {
+		t.Errorf("unplanned selected PR missing no plan row: %q", stripANSI(content))
+	}
+
+	plain := modelWithPRs([]model.PullRequest{{Number: 1, Title: "a"}, {Number: 2, Title: "b"}}, 0)
+	_, spans = plain.inboxContent(80)
+	if got := spans[0].end - spans[0].start; got != 2 {
+		t.Errorf("non-atlantis selected span = %d rows, want 2", got)
+	}
+}
+
+func TestInboxAtlantisRowStaysOneLineWhenWrapped(t *testing.T) {
+	m := atlantisInboxModel(t, true)
+	m.prs[0].Title = "alpha bravo charlie delta echo foxtrot golf hotel"
+	content, spans := m.inboxContent(14)
+	titleRows := len(strings.Split(strings.TrimSpace(stripANSI(wrapLines(m.prs[0].Title, 14))), "\n"))
+	if got, want := spans[0].end-spans[0].start, titleRows+1+1; got != want {
+		t.Errorf("selected span = %d rows, want %d (title %d + meta + atlantis)", got, want, titleRows)
+	}
+	lines := strings.Split(content, "\n")
+	if got := strings.TrimSpace(stripANSI(lines[spans[0].end-1])); !strings.HasPrefix(got, "atlantis") {
+		t.Errorf("last selected row = %q, want atlantis row", got)
+	}
+}

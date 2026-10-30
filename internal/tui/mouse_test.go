@@ -239,7 +239,7 @@ func TestMouseWheelFilterLeavesOtherInputUntouched(t *testing.T) {
 			t.Errorf("non-wheel input %T was filtered", msg)
 		}
 	}
-	for _, mode := range []Mode{ModeHelp, ModeComment, ModeSettings, ModeCommand, ModeConfirmCommand, ModeConfirmApprove, ModeColorscheme} {
+	for _, mode := range []Mode{ModeHelp, ModeComment, ModeSettings, ModeCommand, ModeConfirmCommand, ModeConfirmApprove, ModeColorscheme, ModeConfirmAtlantis} {
 		m.mode = mode
 		if FilterMouseWheel(m, wheel(tea.MouseWheelUp)) == nil {
 			t.Errorf("modal input behavior changed in mode %d", mode)

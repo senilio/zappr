@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/senilio/zappr/internal/model"
 )
@@ -387,5 +388,42 @@ func TestSQLiteStoreListRepoScopesToRepo(t *testing.T) {
 	}
 	if len(empty) != 0 {
 		t.Fatalf("ListRepo(fresh/repo) len = %d, want 0 (stale cross-repo PRs leaked)", len(empty))
+	}
+}
+
+func TestSQLiteStoreRoundTripsChecks(t *testing.T) {
+	store, err := OpenSQLite(filepath.Join(t.TempDir(), "zappr.db"))
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	defer store.Close()
+	started := time.Date(2026, 10, 29, 16, 31, 14, 0, time.UTC)
+	checks := []model.Check{{
+		Name: "atlantis/plan: sso-sso", Context: "atlantis/plan: sso-sso", WorkflowName: "wf",
+		State: "SUCCESS", StartedAt: started, CompletedAt: started.Add(time.Minute), URL: "https://atlantis.example/jobs/abc",
+	}}
+	if err := store.Put(model.PullRequest{Repo: "owner/repo", Number: 9, Title: "T", Checks: checks}); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	pr, err := store.Get("owner/repo", 9)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if !reflect.DeepEqual(pr.Checks, checks) {
+		t.Fatalf("Checks = %#v, want %#v", pr.Checks, checks)
+	}
+	var data string
+	if err := store.db.QueryRow("select data from pull_requests where repo = ? and number = ?", "owner/repo", 9).Scan(&data); err != nil {
+		t.Fatalf("read stored data: %v", err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(data), &fields); err != nil {
+		t.Fatalf("decode stored data: %v", err)
+	}
+	if _, ok := fields["checks"]; !ok {
+		t.Fatalf("stored data has no checks key: %s", data)
+	}
+	if _, ok := fields["atlantis_plan"]; ok {
+		t.Fatalf("stored data contains atlantis_plan: %s", data)
 	}
 }

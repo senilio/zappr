@@ -393,6 +393,56 @@ func TestSaveRoundTripsHideDrafts(t *testing.T) {
 	}
 }
 
+func TestDefaultAtlantisEnabled(t *testing.T) {
+	if !Default().AtlantisEnabled() {
+		t.Fatal("AtlantisEnabled() = false, want true")
+	}
+}
+
+func TestSaveRoundTripsAtlantisDisabled(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(t.TempDir(), "config"))
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(t.TempDir(), "cache"))
+
+	cfg := Default()
+	disabled := false
+	cfg.Atlantis.Enabled = &disabled
+	if err := Save(cfg); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	got, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got.AtlantisEnabled() {
+		t.Fatal("AtlantisEnabled() = true, want false")
+	}
+	if got.Atlantis.Enabled == nil || *got.Atlantis.Enabled {
+		t.Fatalf("Atlantis.Enabled = %v, want explicit false", got.Atlantis.Enabled)
+	}
+}
+
+func TestSaveRoundTripsAtlantisEnabled(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(t.TempDir(), "config"))
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(t.TempDir(), "cache"))
+
+	cfg := Default()
+	enabled := true
+	cfg.Atlantis.Enabled = &enabled
+	if err := Save(cfg); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	got, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !got.AtlantisEnabled() {
+		t.Fatal("AtlantisEnabled() = false, want true")
+	}
+	if got.Atlantis.Enabled == nil || !*got.Atlantis.Enabled {
+		t.Fatalf("Atlantis.Enabled = %v, want explicit true", got.Atlantis.Enabled)
+	}
+}
+
 func TestSaveGenericActions(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(t.TempDir(), "config"))
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(t.TempDir(), "cache"))

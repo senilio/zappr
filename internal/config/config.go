@@ -28,6 +28,7 @@ type Config struct {
 	Sort       string                  `yaml:"sort,omitempty"`
 	HideDrafts bool                    `yaml:"hide_drafts"`
 	Wrap       WrapConfig              `yaml:"wrap"`
+	Atlantis   AtlantisConfig          `yaml:"atlantis,omitempty"`
 	Actions    map[string]ActionConfig `yaml:"actions"`
 }
 
@@ -35,6 +36,14 @@ type WrapConfig struct {
 	Inbox   bool `yaml:"inbox"`
 	Summary bool `yaml:"summary"`
 	Diff    bool `yaml:"diff"`
+}
+
+type AtlantisConfig struct {
+	Enabled *bool `yaml:"enabled,omitempty"`
+}
+
+func (cfg Config) AtlantisEnabled() bool {
+	return cfg.Atlantis.Enabled == nil || *cfg.Atlantis.Enabled
 }
 
 type ActionConfig struct {
@@ -237,6 +246,7 @@ func Load() (Config, error) {
 		Sort       string                    `yaml:"sort,omitempty"`
 		HideDrafts bool                      `yaml:"hide_drafts,omitempty"`
 		Wrap       WrapConfig                `yaml:"wrap"`
+		Atlantis   AtlantisConfig            `yaml:"atlantis,omitempty"`
 		Actions    map[string]actionOverride `yaml:"actions"`
 	}{
 		Refresh:    cfg.Refresh,
@@ -244,6 +254,7 @@ func Load() (Config, error) {
 		Theme:      cfg.Theme,
 		Sort:       cfg.Sort,
 		HideDrafts: cfg.HideDrafts,
+		Atlantis:   cfg.Atlantis,
 	}
 	if err := yaml.Unmarshal(data, &file); err != nil {
 		return cfg, fmt.Errorf("parse config %s: %w", path, err)
@@ -254,6 +265,7 @@ func Load() (Config, error) {
 	cfg.Sort = file.Sort
 	cfg.HideDrafts = file.HideDrafts
 	cfg.Wrap = file.Wrap
+	cfg.Atlantis = file.Atlantis
 	for id, override := range file.Actions {
 		if !actionIDPattern.MatchString(id) {
 			return cfg, fmt.Errorf("actions.%s: invalid action ID", id)

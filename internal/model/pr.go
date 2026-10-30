@@ -29,6 +29,19 @@ type PRComment struct {
 	Side         string `json:",omitempty"`
 }
 
+// Check is one entry of a PR's status check rollup (a CheckRun or a
+// StatusContext). State is normalized to SUCCESS, PENDING, FAILURE, ERROR,
+// EXPECTED, or "" when unrecognized.
+type Check struct {
+	Name         string
+	Context      string
+	WorkflowName string
+	State        string
+	StartedAt    time.Time
+	CompletedAt  time.Time
+	URL          string
+}
+
 type PullRequest struct {
 	Repo           string
 	Number         int
@@ -41,6 +54,7 @@ type PullRequest struct {
 	Deletions      int
 	ChangedFiles   int
 	CIStatus       string
+	Checks         []Check `json:"checks,omitempty"`
 	ReviewDecision string
 	Draft          bool
 	AutoMerge      bool

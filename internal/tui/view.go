@@ -43,7 +43,7 @@ func (m Model) viewContent() string {
 		return m.helpView()
 	case ModeSettings:
 		return m.settingsView()
-	case ModeCommand, ModeConfirmCommand:
+	case ModeCommand, ModeConfirmCommand, ModeConfirmAtlantis:
 		return m.commandView()
 	case ModeColorscheme:
 		return m.layoutView()
@@ -317,6 +317,8 @@ func (m Model) layoutView() string {
 		modal = m.renderModalBox(m.colorschemePanel())
 	case m.mode == ModeCommand || m.mode == ModeConfirmCommand:
 		modal = m.renderCommandModal()
+	case m.mode == ModeConfirmAtlantis:
+		modal = m.renderModalBox(m.atlantisGuardPanel())
 	}
 	if modal != "" {
 		body = overlayModal(body, modal, m.width, bodyHeight, m.selectedInboxPreserveRanges(bodyHeight))
@@ -1351,6 +1353,9 @@ func (m Model) commandView() string {
 	if m.width > 0 {
 		return m.layoutView()
 	}
+	if m.mode == ModeConfirmAtlantis {
+		return m.atlantisGuardPanel() + "\n"
+	}
 	return fmt.Sprintf(":%s\n\n%s execute  %s cancel\n", m.commandInput, m.actionAlias("command-submit"), m.actionAlias("command-cancel"))
 }
 
@@ -1403,6 +1408,18 @@ func (m Model) commandPanel() string {
 
 	b.WriteString("\n")
 	b.WriteString(s.Muted.Render(m.actionAlias("command-submit") + " execute  " + m.actionAlias("command-cancel") + " cancel"))
+	return b.String()
+}
+
+func (m Model) atlantisGuardPanel() string {
+	g := m.atlantisPending
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s on #%d?\n\n", g.body, g.pr.Number)
+	for _, reason := range g.reasons {
+		b.WriteString("• " + reason + "\n")
+	}
+	b.WriteString("\n")
+	b.WriteString(m.actionAlias("command-confirm") + " send anyway  " + m.actionAlias("command-cancel-confirmation") + " cancel")
 	return b.String()
 }
 

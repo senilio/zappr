@@ -178,6 +178,8 @@ wrap:
   inbox: false
   summary: false
   diff: false
+atlantis:
+  enabled: true
 ```
 
 ### TUI actions
@@ -254,9 +256,45 @@ actions:
 #### Atlantis comment commands
 
 For repositories that already use Atlantis, generic comment actions can post
-its commands. The action IDs and aliases below are user-defined; zappr has no
-built-in Atlantis actions or dedicated plan view. Bot replies remain available
-in the Comments summary (`3`).
+its commands. The action IDs and aliases below are user-defined. Bot replies
+remain available in the Comments summary (`3`).
+
+When any open PR in the current inbox has `atlantis/*` commit statuses, the
+selected inbox item shows one extra row with the plan, policy, and apply state
+read from those statuses. zappr does not parse comments for this. The row is a
+single line and is never wrapped. Example:
+
+```text
+atlantis · plan ✓ sso-sso 4m ago · policy ✓ · apply –
+```
+
+The plan part reads `no plan`, `plan running…`, `plan ✓` or `plan ✗`, and how
+long ago it reported. A single project is named. With several projects, a
+passed plan shows `N projects`, while a running or failed plan names the first
+affected project and counts the rest (for example `plan ✗ a +1`). The policy
+part appears when a policy status exists. The apply part reads `apply –`,
+`apply running…`, `apply ✗`, `apply ✓`, or `nothing to apply`.
+
+Comments whose first two words are `atlantis plan` or `atlantis apply` (case
+insensitive) are guarded, whether they come from an action or from free text.
+zappr refreshes the PR first, then decides:
+
+- `atlantis plan` is held while any Atlantis status is running, or while a plan
+  posted by zappr on the same PR and head commit within the last 2 minutes has
+  not reported yet.
+- `atlantis apply` is held when any Atlantis status is running, when a plan was
+  just requested, when a plan or policy check failed, or when there is no plan
+  for the latest commit. A missing plan is not held if apply already
+  succeeded; the other reasons still are.
+
+If the refresh fails, the dialog says zappr could not verify Atlantis status.
+A held comment opens a dialog that lists the reasons and offers to send anyway
+or cancel. When the guard passes, the action's normal confirmation (if any)
+still applies; a blocked dialog replaces that confirmation, so you are asked
+once.
+
+Set `atlantis.enabled: false` to disable both the status row and the guards.
+It defaults to `true`.
 
 ```yaml
 actions:

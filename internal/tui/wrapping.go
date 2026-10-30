@@ -332,6 +332,7 @@ func (m Model) buildInboxContent(innerW int) (string, []rowSpan) {
 	var b strings.Builder
 	spans := make([]rowSpan, len(m.prs))
 	row := 0
+	atlantisRepo := m.isAtlantisRepo()
 	for i, pr := range m.prs {
 		spans[i].start = row
 		selected := i == m.selected
@@ -384,6 +385,12 @@ func (m Model) buildInboxContent(innerW int) (string, []rowSpan) {
 		}
 		b.WriteString(truncatePaneLineWidth(meta, innerW) + "\n")
 		row++
+		if selected && atlantisRepo {
+			if line := m.atlantisRow(pr, innerW); line != "" {
+				b.WriteString(line + "\n")
+				row++
+			}
+		}
 		spans[i].end = row
 		if i < len(m.prs)-1 {
 			b.WriteString(s.Muted.Render(strings.Repeat("─", innerW)) + "\n")

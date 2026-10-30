@@ -144,18 +144,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = false
 		if msg.err != nil {
 			if errors.Is(msg.err, app.ErrPRNotOpen) {
-				m.error = ""
-				m.message = "PR closed"
-				m.removeCachedPR(msg.repo, msg.number)
-				m.applyPRSettings()
-				m.lastFetch = timeNow()
-				if len(m.prs) == 0 {
-					m.mode = ModeInbox
-					m.focus = FocusInbox
-					m.resizeViewports()
-				}
-				m.syncSummaryVP()
-				return m, m.finishStatus("PR closed", false)
+				return m, m.handlePRClosed(msg.repo, msg.number)
 			}
 			m.error = msg.err.Error()
 			return m, m.finishStatus("error: "+msg.err.Error(), true)
@@ -174,6 +163,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.syncSummaryVP()
 		return m, tea.Batch(cmds...)
+
+	case atlantisCheckMsg:
+		return m.handleAtlantisCheck(msg)
 
 	case commitDiffMsg:
 		if msg.err != nil {
@@ -297,6 +289,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 	case tea.MouseClickMsg:
+		if m.mode == ModeConfirmAtlantis {
+			// Clicks must not dismiss the guard dialog; it is answered by key only.
+			return m, nil
+		}
 		if msg.Button == tea.MouseLeft {
 			return m.handleMouseClick(msg)
 		}
@@ -446,6 +442,8 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.handleCommandKey(key)
 	case ModeConfirmCommand:
 		return m.handleConfirmCommandKey(key)
+	case ModeConfirmAtlantis:
+		return m.handleConfirmAtlantisKey(key)
 	case ModeColorscheme:
 		return m.handleColorschemeKey(key)
 	case ModeHelp:
@@ -471,6 +469,10 @@ func (m Model) triggerAction(action tuiAction) (tea.Model, tea.Cmd) {
 		if _, ok := m.current(); !ok {
 			return m, m.finishStatus("no PR selected", true)
 		}
+	}
+	if action.Operation == "comment" && action.Comment != "" && m.atlantisEnabled() && classifyAtlantisComment(action.Comment) != atlantisCommandNone {
+		pr, _ := m.current()
+		return m.guardComment(pr, action.Comment, action, action.Confirmation != confirmationNone)
 	}
 	if action.Confirmation != confirmationNone {
 		if action.Operation == "approve" {
@@ -550,6 +552,10 @@ func (m Model) executeAction(action tuiAction) (tea.Model, tea.Cmd) {
 			m.comment = ""
 			m.mode = ModeComment
 			return m, nil
+		}
+		if m.atlantisEnabled() && classifyAtlantisComment(action.Comment) == atlantisCommandPlan {
+			// Reached only after the guard allowed it and the normal confirmation was accepted.
+			m.recordRecentPlan(pr)
 		}
 		return m, tea.Batch(m.startStatus("commenting…"), commentCmd(m.app, pr, action.Comment))
 	}
@@ -1576,8 +1582,7 @@ func (m Model) handleCommentKey(key string) (tea.Model, tea.Cmd) {
 			if !ok || m.comment == "" {
 				return m, nil
 			}
-			m.loading = true
-			return m, tea.Batch(m.startStatus("commenting…"), commentCmd(m.app, pr, m.comment))
+			return m.guardComment(pr, m.comment, tuiAction{}, false)
 		case "comment-backspace":
 			if len(m.comment) > 0 {
 				m.comment = m.comment[:len(m.comment)-1]
@@ -1671,6 +1676,43 @@ func (m Model) handleConfirmCommandKey(key string) (tea.Model, tea.Cmd) {
 		return m.executeAction(m.pendingAction)
 	}
 	return m, nil
+}
+
+func (m Model) handleConfirmAtlantisKey(key string) (tea.Model, tea.Cmd) {
+	action, ok := m.actions.actionForKey(actionContextCommandConfirmation, key)
+	if !ok {
+		return m, nil
+	}
+	g := m.atlantisPending
+	switch action.ID {
+	case "command-cancel-confirmation":
+		m.mode = g.returnMode
+		m.atlantisPending = atlantisGuard{}
+		m.commandInput = ""
+		return m, nil
+	case "command-confirm":
+		m.mode = g.returnMode
+		m.atlantisPending = atlantisGuard{}
+		m.commandInput = ""
+		return m.postGuardedComment(g, g.pr)
+	}
+	return m, nil
+}
+
+// handlePRClosed drops a PR that GitHub reports as no longer open.
+func (m *Model) handlePRClosed(repo string, number int) tea.Cmd {
+	m.error = ""
+	m.message = "PR closed"
+	m.removeCachedPR(repo, number)
+	m.applyPRSettings()
+	m.lastFetch = timeNow()
+	if len(m.prs) == 0 {
+		m.mode = ModeInbox
+		m.focus = FocusInbox
+		m.resizeViewports()
+	}
+	m.syncSummaryVP()
+	return m.finishStatus("PR closed", false)
 }
 
 func (m Model) handleHelpKey(key string) (tea.Model, tea.Cmd) {

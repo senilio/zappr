@@ -276,3 +276,52 @@ func TestGetPRSurfacesInlineCommentErrors(t *testing.T) {
 		})
 	}
 }
+
+func TestParseChecksFromRollup(t *testing.T) {
+	raw := []byte(`[
+		{"__typename":"CheckRun","name":"Check tflint","workflowName":"check-tflint","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-10-29T16:25:39Z","completedAt":"2026-10-29T16:27:17Z","detailsUrl":"https://example/run"},
+		{"__typename":"StatusContext","context":"atlantis/plan: sso-sso","state":"SUCCESS","startedAt":"2026-10-29T16:31:14Z","targetUrl":"https://atlantis.example/jobs/abc"}
+	]`)
+	checks := parseChecks(raw)
+	if len(checks) != 2 {
+		t.Fatalf("parseChecks returned %d checks, want 2: %#v", len(checks), checks)
+	}
+	run := checks[0]
+	if run.Name != "Check tflint" || run.WorkflowName != "check-tflint" || run.State != "SUCCESS" || run.Context != "" || run.URL != "https://example/run" || run.StartedAt.IsZero() || run.CompletedAt.IsZero() {
+		t.Fatalf("CheckRun = %#v", run)
+	}
+	status := checks[1]
+	if status.Name != "atlantis/plan: sso-sso" || status.Context != "atlantis/plan: sso-sso" || status.State != "SUCCESS" || status.URL != "https://atlantis.example/jobs/abc" || status.StartedAt.IsZero() {
+		t.Fatalf("StatusContext = %#v", status)
+	}
+	for _, empty := range [][]byte{nil, []byte("null")} {
+		got := parseChecks(empty)
+		if got == nil || len(got) != 0 {
+			t.Fatalf("parseChecks(%q) = %#v, want non-nil empty slice", empty, got)
+		}
+	}
+}
+
+func TestParseChecksNormalizesStates(t *testing.T) {
+	raw := []byte(`[
+		{"__typename":"CheckRun","name":"a","status":"COMPLETED","conclusion":"SKIPPED"},
+		{"__typename":"CheckRun","name":"b","status":"COMPLETED","conclusion":""},
+		{"__typename":"CheckRun","name":"c","status":"IN_PROGRESS","conclusion":""},
+		{"__typename":"CheckRun","name":"d","status":"COMPLETED","conclusion":"TIMED_OUT"},
+		{"__typename":"CheckRun","name":"e","status":"COMPLETED","conclusion":"WEIRD"},
+		{"__typename":"StatusContext","context":"f","state":"EXPECTED"},
+		{"__typename":"StatusContext","context":"g","state":"ERROR"},
+		{"__typename":"StatusContext","context":"h","state":"pending"},
+		{"__typename":"StatusContext","context":"i","state":"FAILURE"}
+	]`)
+	want := []string{"SUCCESS", "SUCCESS", "PENDING", "FAILURE", "", "EXPECTED", "ERROR", "PENDING", "FAILURE"}
+	checks := parseChecks(raw)
+	if len(checks) != len(want) {
+		t.Fatalf("parseChecks returned %d checks, want %d", len(checks), len(want))
+	}
+	for i, w := range want {
+		if checks[i].State != w {
+			t.Errorf("check %q state = %q, want %q", checks[i].Name, checks[i].State, w)
+		}
+	}
+}

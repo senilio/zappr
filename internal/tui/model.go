@@ -31,6 +31,7 @@ const (
 	ModeCommand
 	ModeConfirmCommand
 	ModeColorscheme
+	ModeConfirmAtlantis
 )
 
 type Model struct {
@@ -109,6 +110,20 @@ type Model struct {
 	pendingPR     model.PullRequest // auto-merge confirmation target and original state
 	commandCursor int               // selected index in command palette list
 
+	atlantisPending atlantisGuard
+	recentPlans     map[recentPlanKey]time.Time
+}
+
+// atlantisGuard is an Atlantis comment awaiting a status check or the guard dialog.
+// confirm records whether the original path still needs its normal confirmation.
+type atlantisGuard struct {
+	pr         model.PullRequest
+	body       string
+	cmd        atlantisCommand
+	confirm    bool
+	action     tuiAction
+	reasons    []string
+	returnMode Mode
 }
 
 type SummaryMode int
@@ -168,7 +183,7 @@ func New(zappr *app.App, repo string, pollEvery time.Duration, themeName string,
 	hvp := viewport.New()
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
-	return Model{app: zappr, repo: repo, loading: true, pollEvery: pollEvery, sortMode: app.ParseSortMode(cfg.Sort), hideDrafts: cfg.HideDrafts, theme: uitheme.DefaultWithName(themeName), cfg: cfg, actions: actions, inboxVP: ivp, summaryVP: vp, diffVP: dvp, helpVP: hvp, statusSpinner: sp, summaryMode: SummaryModeFiles, diffEnabled: true}, nil
+	return Model{app: zappr, repo: repo, loading: true, pollEvery: pollEvery, sortMode: app.ParseSortMode(cfg.Sort), hideDrafts: cfg.HideDrafts, theme: uitheme.DefaultWithName(themeName), cfg: cfg, actions: actions, inboxVP: ivp, summaryVP: vp, diffVP: dvp, helpVP: hvp, statusSpinner: sp, summaryMode: SummaryModeFiles, diffEnabled: true, recentPlans: map[recentPlanKey]time.Time{}}, nil
 }
 
 func (m Model) Init() tea.Cmd {
@@ -181,6 +196,13 @@ type refreshMsg struct {
 }
 
 type refreshPRMsg struct {
+	repo   string
+	number int
+	pr     model.PullRequest
+	err    error
+}
+
+type atlantisCheckMsg struct {
 	repo   string
 	number int
 	pr     model.PullRequest
@@ -275,6 +297,15 @@ func refreshPRCmd(app *app.App, pr model.PullRequest) tea.Cmd {
 		defer cancel()
 		fresh, err := app.RefreshPR(ctx, pr.Repo, pr.Number)
 		return refreshPRMsg{repo: pr.Repo, number: pr.Number, pr: fresh, err: err}
+	}
+}
+
+func atlantisCheckCmd(app *app.App, pr model.PullRequest) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		fresh, err := app.RefreshPR(ctx, pr.Repo, pr.Number)
+		return atlantisCheckMsg{repo: pr.Repo, number: pr.Number, pr: fresh, err: err}
 	}
 }
 

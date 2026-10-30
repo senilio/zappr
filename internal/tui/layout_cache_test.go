@@ -213,3 +213,14 @@ func BenchmarkWheelScrolling(b *testing.B) {
 		})
 	}
 }
+
+func TestInboxLayoutCacheInvalidatesOnAtlantisChange(t *testing.T) {
+	m := scrollModel(t, 2)
+	m.prs[0].Checks = atlantisChecks("PENDING", time.Time{})
+	before, _ := m.inboxContent(80)
+	m.prs[0].Checks = atlantisChecks("SUCCESS", time.Now().Add(-4*time.Minute))
+	after, _ := m.inboxContent(80)
+	if after == before || !strings.Contains(stripANSI(after), "plan ✓") {
+		t.Fatalf("stale Inbox after Atlantis change: %q", stripANSI(after))
+	}
+}
