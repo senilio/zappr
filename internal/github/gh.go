@@ -27,7 +27,7 @@ func NewGHProvider() *GHProvider {
 func (p *GHProvider) ListPRs(ctx context.Context, repo string) ([]model.PullRequest, bool, error) {
 	// Commits and comments are omitted: their nested connections dominate the
 	// GraphQL cost of a list query. GetPR fetches them for the selected PR.
-	args := []string{"pr", "list", "--repo", repo, "--state", "open", "--search", "sort:updated-desc", "--limit", strconv.Itoa(prListLimit), "--json", "number,title,author,url,labels,additions,deletions,changedFiles,isDraft,autoMergeRequest,state,headRefOid,statusCheckRollup,reviewDecision,files,updatedAt"}
+	args := []string{"pr", "list", "--repo", repo, "--state", "open", "--search", "sort:updated-desc", "--limit", strconv.Itoa(prListLimit), "--json", "number,title,author,url,labels,additions,deletions,changedFiles,isDraft,autoMergeRequest,state,headRefOid,statusCheckRollup,reviewDecision,mergeStateStatus,files,updatedAt"}
 	out, err := p.run(ctx, args...)
 	if err != nil {
 		return nil, false, err
@@ -46,7 +46,7 @@ func (p *GHProvider) ListPRs(ctx context.Context, repo string) ([]model.PullRequ
 }
 
 func (p *GHProvider) GetPR(ctx context.Context, repo string, number int) (model.PullRequest, error) {
-	out, err := p.run(ctx, "pr", "view", strconv.Itoa(number), "--repo", repo, "--json", "number,title,author,url,labels,additions,deletions,changedFiles,isDraft,autoMergeRequest,state,headRefOid,statusCheckRollup,reviewDecision,files,commits,comments,reviews,updatedAt")
+	out, err := p.run(ctx, "pr", "view", strconv.Itoa(number), "--repo", repo, "--json", "number,title,author,url,labels,additions,deletions,changedFiles,isDraft,autoMergeRequest,state,headRefOid,statusCheckRollup,reviewDecision,files,commits,comments,reviews,latestReviews,reviewRequests,mergeStateStatus,updatedAt")
 	if err != nil {
 		return model.PullRequest{}, err
 	}
@@ -82,6 +82,8 @@ func (p *GHProvider) GetPR(ctx context.Context, repo string, number int) (model.
 			})
 		}
 	}
+	pr.Reviewers = reviewersFrom(raw.LatestReviews, raw.ReviewRequests)
+	pr.ReviewersLoaded = true
 	pr.DetailsLoaded = true
 	pr.ReviewCommentsLoaded = true
 	return pr, nil
@@ -205,25 +207,28 @@ func (p *GHProvider) run(ctx context.Context, args ...string) ([]byte, error) {
 }
 
 type ghPR struct {
-	Number            int             `json:"number"`
-	Title             string          `json:"title"`
-	Author            ghAuthor        `json:"author"`
-	URL               string          `json:"url"`
-	Labels            []ghLabel       `json:"labels"`
-	Additions         int             `json:"additions"`
-	Deletions         int             `json:"deletions"`
-	ChangedFiles      int             `json:"changedFiles"`
-	Draft             bool            `json:"isDraft"`
-	AutoMergeRequest  *struct{}       `json:"autoMergeRequest"`
-	State             string          `json:"state"`
-	StatusCheckRollup json.RawMessage `json:"statusCheckRollup"`
-	ReviewDecision    string          `json:"reviewDecision"`
-	HeadRefOID        string          `json:"headRefOid"`
-	Files             []ghFile        `json:"files"`
-	Commits           []ghCommit      `json:"commits"`
-	Comments          []ghComment     `json:"comments"`
-	Reviews           []ghReview      `json:"reviews"`
-	UpdatedAt         string          `json:"updatedAt"`
+	Number            int               `json:"number"`
+	Title             string            `json:"title"`
+	Author            ghAuthor          `json:"author"`
+	URL               string            `json:"url"`
+	Labels            []ghLabel         `json:"labels"`
+	Additions         int               `json:"additions"`
+	Deletions         int               `json:"deletions"`
+	ChangedFiles      int               `json:"changedFiles"`
+	Draft             bool              `json:"isDraft"`
+	AutoMergeRequest  *struct{}         `json:"autoMergeRequest"`
+	State             string            `json:"state"`
+	StatusCheckRollup json.RawMessage   `json:"statusCheckRollup"`
+	ReviewDecision    string            `json:"reviewDecision"`
+	MergeStateStatus  string            `json:"mergeStateStatus"`
+	LatestReviews     []ghReview        `json:"latestReviews"`
+	ReviewRequests    []ghReviewRequest `json:"reviewRequests"`
+	HeadRefOID        string            `json:"headRefOid"`
+	Files             []ghFile          `json:"files"`
+	Commits           []ghCommit        `json:"commits"`
+	Comments          []ghComment       `json:"comments"`
+	Reviews           []ghReview        `json:"reviews"`
+	UpdatedAt         string            `json:"updatedAt"`
 }
 
 type ghAuthor struct {
@@ -271,6 +276,65 @@ type ghReview struct {
 	State       string   `json:"state"`
 }
 
+type ghReviewRequest struct {
+	Typename string `json:"__typename"`
+	Login    string `json:"login"`
+	Name     string `json:"name"`
+	Slug     string `json:"slug"`
+}
+
+// reviewersFrom merges latest reviews with pending review requests. A
+// re-requested reviewer shows as REQUESTED. Humans come first, then teams,
+// then bots, each group keeping its order.
+func reviewersFrom(reviews []ghReview, requests []ghReviewRequest) []model.Reviewer {
+	var users, teams []model.Reviewer
+	index := map[string]int{}
+	for _, review := range reviews {
+		login := strings.TrimSpace(review.Author.Login)
+		if login == "" || review.State == "PENDING" {
+			continue
+		}
+		if i, ok := index[login]; ok {
+			users[i].State = review.State
+			continue
+		}
+		index[login] = len(users)
+		users = append(users, model.Reviewer{Login: login, State: review.State})
+	}
+	for _, request := range requests {
+		if request.Typename == "Team" || (request.Login == "" && (request.Slug != "" || request.Name != "")) {
+			slug := request.Slug
+			if slug == "" {
+				slug = request.Name
+			}
+			teams = append(teams, model.Reviewer{Login: slug, State: "REQUESTED"})
+			continue
+		}
+		login := strings.TrimSpace(request.Login)
+		if login == "" {
+			continue
+		}
+		if i, ok := index[login]; ok {
+			users[i].State = "REQUESTED"
+			continue
+		}
+		index[login] = len(users)
+		users = append(users, model.Reviewer{Login: login, State: "REQUESTED"})
+	}
+	out := make([]model.Reviewer, 0, len(users)+len(teams))
+	var bots []model.Reviewer
+	for _, r := range users {
+		if model.IsBotLogin(r.Login) {
+			r.Bot = true
+			bots = append(bots, r)
+			continue
+		}
+		out = append(out, r)
+	}
+	out = append(out, teams...)
+	return append(out, bots...)
+}
+
 type ghReviewComment struct {
 	User         ghAuthor `json:"user"`
 	Body         string   `json:"body"`
@@ -313,6 +377,7 @@ func (p ghPR) toModel(repo string) model.PullRequest {
 		CIStatus:       statusFromRollup(p.StatusCheckRollup),
 		Checks:         parseChecks(p.StatusCheckRollup),
 		ReviewDecision: p.ReviewDecision,
+		MergeState:     strings.ToUpper(p.MergeStateStatus),
 		Draft:          p.Draft,
 		AutoMerge:      p.AutoMergeRequest != nil,
 		State:          p.State,

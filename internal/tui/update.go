@@ -237,7 +237,13 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.error = ""
 		m.message = msg.message
 		m.mode = ModeInbox
-		return m, tea.Batch(m.finishStatus(msg.message, false), refreshCmd(m.app, m.repo, !m.hideDrafts))
+		refresh := refreshCmd(m.app, m.repo, !m.hideDrafts)
+		if msg.refreshPR != nil {
+			// Refresh details last so an older list snapshot cannot overwrite
+			// the reviewers returned after the review action.
+			refresh = tea.Sequence(refresh, refreshPRCmd(m.app, *msg.refreshPR))
+		}
+		return m, tea.Batch(m.finishStatus(msg.message, false), refresh)
 	case settingsSavedMsg:
 		if msg.err != nil {
 			m.error = "failed to save settings: " + msg.err.Error()
@@ -1005,11 +1011,12 @@ func (m *Model) selectionCmd() tea.Cmd {
 	return tea.Batch(m.autoDiffCmd(), m.autoDetailsCmd())
 }
 
-// autoDetailsCmd fetches commits and comments for the selected PR when the
-// inbox list refresh did not include them. It fetches each PR version once.
+// autoDetailsCmd fetches commits, comments, and reviewers for the selected PR
+// when the inbox list refresh did not include them. It fetches each PR
+// version once.
 func (m *Model) autoDetailsCmd() tea.Cmd {
 	pr, ok := m.current()
-	if !ok || (pr.DetailsLoaded && pr.ReviewCommentsLoaded) {
+	if !ok || (pr.DetailsLoaded && pr.ReviewCommentsLoaded && pr.ReviewersLoaded) {
 		return nil
 	}
 	key := fmt.Sprintf("%s#%d@%s", pr.Repo, pr.Number, pr.UpdatedAt.Format(time.RFC3339Nano))

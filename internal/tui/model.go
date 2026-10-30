@@ -223,6 +223,9 @@ type diffMsg struct {
 type actionMsg struct {
 	message string
 	err     error
+	// refreshPR is refetched after a successful review so the reviewers
+	// row reflects the new review.
+	refreshPR *model.PullRequest
 }
 
 type pagerMsg struct {
@@ -366,7 +369,7 @@ func approveCmd(app *app.App, pr model.PullRequest) tea.Cmd {
 		defer cancel()
 		body := ""
 		err := app.Approve(ctx, pr.Repo, pr.Number, body)
-		return actionMsg{message: fmt.Sprintf("approved %s#%d", pr.Repo, pr.Number), err: err}
+		return actionMsg{message: fmt.Sprintf("approved %s#%d", pr.Repo, pr.Number), err: err, refreshPR: &pr}
 	}
 }
 
@@ -430,7 +433,7 @@ func requestChangesCmd(app *app.App, pr model.PullRequest, body string) tea.Cmd 
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		err := app.RequestChanges(ctx, pr.Repo, pr.Number, body)
-		return actionMsg{message: fmt.Sprintf("requested changes on %s#%d", pr.Repo, pr.Number), err: err}
+		return actionMsg{message: fmt.Sprintf("requested changes on %s#%d", pr.Repo, pr.Number), err: err, refreshPR: &pr}
 	}
 }
 

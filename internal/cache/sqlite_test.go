@@ -427,3 +427,63 @@ func TestSQLiteStoreRoundTripsChecks(t *testing.T) {
 		t.Fatalf("stored data contains atlantis_plan: %s", data)
 	}
 }
+
+func TestSQLiteStoreRoundTripsReviewers(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "zappr.db")
+	store, err := OpenSQLite(path)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	reviewers := []model.Reviewer{{Login: "alice", State: "APPROVED"}}
+	if err := store.Put(model.PullRequest{Repo: "owner/repo", Number: 9, MergeState: "BEHIND", Reviewers: reviewers, ReviewersLoaded: true}); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	store.Close()
+	store, err = OpenSQLite(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer store.Close()
+	pr, err := store.Get("owner/repo", 9)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if pr.MergeState != "BEHIND" || !pr.ReviewersLoaded || !reflect.DeepEqual(pr.Reviewers, reviewers) {
+		t.Fatalf("cached PR = %#v", pr)
+	}
+	var data string
+	if err := store.db.QueryRow("select data from pull_requests where repo = ? and number = ?", "owner/repo", 9).Scan(&data); err != nil {
+		t.Fatalf("read stored data: %v", err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(data), &fields); err != nil {
+		t.Fatalf("decode stored data: %v", err)
+	}
+	for _, key := range []string{"merge_state", "reviewers", "reviewers_loaded"} {
+		if _, ok := fields[key]; !ok {
+			t.Fatalf("stored data has no %s key: %s", key, data)
+		}
+	}
+}
+
+func TestSQLiteStoreLoadsLegacyRowWithoutReviewers(t *testing.T) {
+	store, err := OpenSQLite(filepath.Join(t.TempDir(), "zappr.db"))
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	defer store.Close()
+	if err := store.Put(model.PullRequest{Repo: "owner/repo", Number: 7}); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	data := `{"Repo":"owner/repo","Number":7,"Title":"Cached PR","details_loaded":true,"review_comments_loaded":true}`
+	if _, err := store.db.Exec("update pull_requests set data = ? where repo = ? and number = ?", data, "owner/repo", 7); err != nil {
+		t.Fatalf("write legacy data: %v", err)
+	}
+	pr, err := store.Get("owner/repo", 7)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if !pr.DetailsLoaded || pr.ReviewersLoaded || pr.Reviewers != nil || pr.MergeState != "" {
+		t.Fatalf("legacy PR = %#v", pr)
+	}
+}

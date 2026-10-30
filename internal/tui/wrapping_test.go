@@ -514,13 +514,13 @@ func atlantisInboxModel(t *testing.T, wrapInbox bool) Model {
 func TestInboxShowsAtlantisRowOnSelectedOnly(t *testing.T) {
 	m := atlantisInboxModel(t, false)
 	content, spans := m.inboxContent(80)
-	if got := spans[0].end - spans[0].start; got != 3 {
-		t.Errorf("selected span = %d rows, want 3", got)
+	if got := spans[0].end - spans[0].start; got != 4 {
+		t.Errorf("selected span = %d rows, want 4", got)
 	}
 	if got := spans[1].end - spans[1].start; got != 2 {
 		t.Errorf("unselected span = %d rows, want 2", got)
 	}
-	if got := strings.Count(stripANSI(content), "atlantis ·"); got != 1 {
+	if got := strings.Count(stripANSI(content), "PLAN OK"); got != 1 {
 		t.Errorf("atlantis row appears %d times, want 1", got)
 	}
 
@@ -528,17 +528,17 @@ func TestInboxShowsAtlantisRowOnSelectedOnly(t *testing.T) {
 	m.allPRs = m.prs
 	m.selected = 2
 	content, spans = m.inboxContent(80)
-	if got := spans[2].end - spans[2].start; got != 3 {
-		t.Errorf("unplanned selected span = %d rows, want 3", got)
+	if got := spans[2].end - spans[2].start; got != 4 {
+		t.Errorf("unplanned selected span = %d rows, want 4", got)
 	}
-	if !strings.Contains(stripANSI(content), "no plan") {
+	if !strings.Contains(stripANSI(content), "NO PLAN") {
 		t.Errorf("unplanned selected PR missing no plan row: %q", stripANSI(content))
 	}
 
 	plain := modelWithPRs([]model.PullRequest{{Number: 1, Title: "a"}, {Number: 2, Title: "b"}}, 0)
 	_, spans = plain.inboxContent(80)
-	if got := spans[0].end - spans[0].start; got != 2 {
-		t.Errorf("non-atlantis selected span = %d rows, want 2", got)
+	if got := spans[0].end - spans[0].start; got != 3 {
+		t.Errorf("non-atlantis selected span = %d rows, want 3", got)
 	}
 }
 
@@ -547,11 +547,36 @@ func TestInboxAtlantisRowStaysOneLineWhenWrapped(t *testing.T) {
 	m.prs[0].Title = "alpha bravo charlie delta echo foxtrot golf hotel"
 	content, spans := m.inboxContent(14)
 	titleRows := len(strings.Split(strings.TrimSpace(stripANSI(wrapLines(m.prs[0].Title, 14))), "\n"))
-	if got, want := spans[0].end-spans[0].start, titleRows+1+1; got != want {
-		t.Errorf("selected span = %d rows, want %d (title %d + meta + atlantis)", got, want, titleRows)
+	if got, want := spans[0].end-spans[0].start, titleRows+1+1+1; got != want {
+		t.Errorf("selected span = %d rows, want %d (title %d + meta + reviews + atlantis)", got, want, titleRows)
 	}
 	lines := strings.Split(content, "\n")
 	if got := strings.TrimSpace(stripANSI(lines[spans[0].end-1])); !strings.HasPrefix(got, "atlantis") {
 		t.Errorf("last selected row = %q, want atlantis row", got)
+	}
+}
+
+func TestInboxSelectedSpanHeights(t *testing.T) {
+	region := paneRegion{focus: FocusInbox, w: 84, h: 40}
+	for _, tc := range []struct {
+		name string
+		m    Model
+		want int
+	}{
+		{"plain", modelWithPRs([]model.PullRequest{{Number: 1, Title: "a"}, {Number: 2, Title: "b"}}, 0), 3},
+		{"atlantis", atlantisInboxModel(t, false), 4},
+	} {
+		_, spans := tc.m.inboxContent(80)
+		if got := spans[0].end - spans[0].start; got != tc.want {
+			t.Errorf("%s: selected span = %d, want %d", tc.name, got, tc.want)
+		}
+		if got := spans[1].end - spans[1].start; got != 2 {
+			t.Errorf("%s: unselected span = %d, want 2", tc.name, got)
+		}
+		for row := spans[0].start; row < spans[0].end; row++ {
+			if idx, ok := tc.m.inboxIndexAt(region, 2, row+1); !ok || idx != 0 {
+				t.Errorf("%s: row %d selects %d, %v", tc.name, row, idx, ok)
+			}
+		}
 	}
 }

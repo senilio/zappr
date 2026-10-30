@@ -17,12 +17,12 @@ func TestInboxSelectionScrollsWithContextAndStopsAtEnds(t *testing.T) {
 		wantUp []int
 	}{
 		{
-			name: "truncated", height: 17,
+			name: "truncated", height: 18,
 			want:   []int{0, 0, 0, 3, 6, 9, 12, 15, 15, 15},
 			wantUp: []int{15, 15, 12, 9, 6, 3, 0, 0, 0},
 		},
 		{
-			name: "wrapped", wrap: true, height: 25,
+			name: "wrapped", wrap: true, height: 26,
 			want:   []int{0, 0, 0, 1, 4, 8, 13, 16, 16, 16},
 			wantUp: []int{16, 16, 15, 12, 7, 3, 0, 0, 0},
 		},
@@ -71,7 +71,7 @@ func TestInboxSelectionScrollsWithContextAndStopsAtEnds(t *testing.T) {
 
 func TestInboxScrollMarginKeepsSelectionVisibleInSmallPane(t *testing.T) {
 	m := modelWithPRs(make([]model.PullRequest, 10), 4)
-	m.width, m.height = 24, 7
+	m.width, m.height = 24, 8
 	m.resizeViewports()
 	_, spans := m.inboxContent(m.inboxVP.Width())
 	span := spans[m.selected]

@@ -40,14 +40,15 @@ func (m Model) layoutTheme() layoutTheme {
 }
 
 type inboxItem struct {
-	number                    int
-	title, author, ci, review string
-	draft, autoMerge          bool
-	atlantis                  model.AtlantisSummary
+	number                                int
+	title, author, ci, review, mergeState string
+	draft, autoMerge                      bool
+	atlantis                              model.AtlantisSummary
+	reviewers                             string
 }
 
 func inboxRenderItem(pr model.PullRequest) inboxItem {
-	return inboxItem{pr.Number, pr.Title, pr.Author, pr.CIStatus, pr.ReviewDecision, pr.Draft, pr.AutoMerge, model.DeriveAtlantis(pr.Checks)}
+	return inboxItem{pr.Number, pr.Title, pr.Author, pr.CIStatus, pr.ReviewDecision, pr.MergeState, pr.Draft, pr.AutoMerge, model.DeriveAtlantis(pr.Checks), fmt.Sprint(pr.ReviewersLoaded, pr.Reviewers)}
 }
 
 type inboxLayoutKey struct {
@@ -56,6 +57,7 @@ type inboxLayoutKey struct {
 	theme           layoutTheme
 	atlantisRepo    bool
 	minute          int64
+	pills           uitheme.PillShape
 }
 
 type inboxLayoutCache struct {
@@ -65,7 +67,7 @@ type inboxLayoutCache struct {
 }
 
 func (m *Model) inboxPane(width int) *paneLayout {
-	key := inboxLayoutKey{width: width, selected: m.selected, wrap: m.cfg.Wrap.Inbox, theme: m.layoutTheme()}
+	key := inboxLayoutKey{width: width, selected: m.selected, wrap: m.cfg.Wrap.Inbox, theme: m.layoutTheme(), pills: m.pillShape()}
 	if key.atlantisRepo = m.isAtlantisRepo(); key.atlantisRepo {
 		key.minute = timeNow().Unix() / 60
 	}

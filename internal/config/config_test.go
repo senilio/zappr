@@ -548,3 +548,47 @@ func actionLine(data, id string) string {
 	}
 	return ""
 }
+
+func TestDefaultPillsIsRounded(t *testing.T) {
+	if got := Default().Pills; got != "" {
+		t.Fatalf("Default().Pills = %q, want empty (rounded)", got)
+	}
+}
+
+func TestSaveRoundTripsPillsSquare(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(t.TempDir(), "config"))
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(t.TempDir(), "cache"))
+	path, err := DefaultConfigPath()
+	if err != nil {
+		t.Fatalf("DefaultConfigPath: %v", err)
+	}
+	if err := Save(Default()); err != nil {
+		t.Fatalf("Save default: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	if strings.Contains(string(data), "pills:") {
+		t.Fatalf("default config contains pills: %q", data)
+	}
+	cfg := Default()
+	cfg.Pills = "square"
+	if err := Save(cfg); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	got, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got.Pills != "square" {
+		t.Fatalf("Pills = %q, want square", got.Pills)
+	}
+	data, err = os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	if !strings.Contains(string(data), "pills: square") {
+		t.Fatalf("saved config lacks pills: square: %q", data)
+	}
+}

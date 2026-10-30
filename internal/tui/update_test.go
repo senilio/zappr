@@ -1093,15 +1093,16 @@ func TestFullFileDiffModeRendersSelectedFileContent(t *testing.T) {
 }
 
 func TestInboxMarksDraftPRs(t *testing.T) {
-	m := modelWithPRs([]model.PullRequest{{Number: 1, Title: "draft", Author: "alice", Draft: true}}, 0)
+	m := modelWithPRs([]model.PullRequest{{Number: 1, Title: "work", Author: "alice", Draft: true}}, 0)
 
 	view := stripANSI(m.inboxPanel(80, 10))
+	lines := strings.Split(view, "\n")
 
-	if !strings.Contains(view, "[draft]") {
-		t.Fatalf("inbox missing draft marker: %q", view)
+	if strings.Contains(lines[0], "draft") {
+		t.Fatal("draft marker must not be on the title line")
 	}
-	if !strings.Contains(strings.Split(view, "\n")[0], "[draft]") {
-		t.Fatal("draft badge must be on title line")
+	if !strings.Contains(lines[1], "draft") {
+		t.Fatalf("draft pill missing from metadata row: %q", view)
 	}
 }
 
@@ -1109,13 +1110,14 @@ func TestInboxReservesStateBadges(t *testing.T) {
 	for _, width := range []int{18, 30, 80} {
 		for _, selected := range []int{0, 1} {
 			m := modelWithPRs([]model.PullRequest{{Number: 1, Title: strings.Repeat("界", 80), Author: "alice", Draft: true, AutoMerge: true}, {Number: 2, Title: "ordinary"}}, selected)
+			m.cfg.Pills = "square"
 			view := stripANSI(m.inboxPanel(width, 10))
 			lines := strings.Split(view, "\n")
-			if !strings.HasSuffix(strings.TrimRight(lines[0], " "), "[auto] [draft]") {
-				t.Fatalf("badges lost at width %d: %q", width, lines[0])
+			if strings.Contains(lines[0], "draft") || strings.Contains(lines[0], "auto") {
+				t.Fatalf("badges on title row at width %d: %q", width, lines[0])
 			}
-			if strings.Contains(lines[1], "[draft]") || strings.Contains(lines[1], "[auto]") {
-				t.Fatal("badges duplicated in metadata")
+			if width == 80 && (!strings.Contains(lines[1], " draft ") || !strings.Contains(lines[1], " auto ")) {
+				t.Fatalf("badges lost at width %d: %q", width, lines[1])
 			}
 			for _, line := range lines {
 				if lipgloss.Width(line) > width-paneHFrame {
@@ -1886,7 +1888,7 @@ func TestInboxScrollKeepsSelectedPRVisible(t *testing.T) {
 	if !strings.Contains(view, prs[len(prs)-1].Title) {
 		t.Fatalf("inbox view missing selected PR title %q: %q", prs[len(prs)-1].Title, view)
 	}
-	if !strings.Contains(view, "CI pass") || !strings.Contains(view, "#8 · author") {
+	if !strings.Contains(stripANSI(view), "CI") || !strings.Contains(view, "#8 · author") {
 		t.Fatalf("inbox view missing full selected PR details: %q", view)
 	}
 }
@@ -2571,7 +2573,7 @@ func contains(s, sub string) bool {
 
 func TestAutoDetailsCmdFetchesMissingDetailsOnce(t *testing.T) {
 	m := modelWithPRs([]model.PullRequest{
-		{Number: 1, Repo: "org/repo", DetailsLoaded: true, ReviewCommentsLoaded: true},
+		{Number: 1, Repo: "org/repo", DetailsLoaded: true, ReviewCommentsLoaded: true, ReviewersLoaded: true},
 		{Number: 2, Repo: "org/repo"},
 	}, 0)
 
@@ -2987,5 +2989,102 @@ func TestAtlantisGuardDialogShowsChoices(t *testing.T) {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view missing %q:\n%s", want, view)
 		}
+	}
+}
+
+func TestSelectionFetchesWhenReviewersNotLoaded(t *testing.T) {
+	m := modelWithPRs([]model.PullRequest{{Repo: "org/repo", Number: 1, DetailsLoaded: true, ReviewCommentsLoaded: true}}, 0)
+	m.app = app.New(&commentRecordingGitHub{}, cache.NewMemoryStore())
+	if cmd := m.autoDetailsCmd(); cmd == nil {
+		t.Fatal("autoDetailsCmd = nil for PR without loaded reviewers")
+	}
+	m = modelWithPRs([]model.PullRequest{{Repo: "org/repo", Number: 1, DetailsLoaded: true, ReviewCommentsLoaded: true, ReviewersLoaded: true}}, 0)
+	if cmd := m.autoDetailsCmd(); cmd != nil {
+		t.Fatal("autoDetailsCmd fetched a fully loaded PR")
+	}
+}
+
+// batchMsgs expands a command into its messages, skipping commands that do
+// not return promptly (status dismiss ticks).
+func batchMsgs(cmd tea.Cmd) []tea.Msg {
+	if cmd == nil {
+		return nil
+	}
+	done := make(chan tea.Msg, 1)
+	go func() { done <- cmd() }()
+	var msg tea.Msg
+	select {
+	case msg = <-done:
+	case <-time.After(200 * time.Millisecond):
+		return nil
+	}
+	if batch, ok := msg.(tea.BatchMsg); ok {
+		var out []tea.Msg
+		for _, c := range batch {
+			out = append(out, batchMsgs(c)...)
+		}
+		return out
+	}
+	return []tea.Msg{msg}
+}
+
+func assertReviewActionRefreshesPR(t *testing.T, cmd func(*app.App, model.PullRequest) tea.Cmd, state string) {
+	t.Helper()
+	pr := model.PullRequest{Repo: "org/repo", Number: 7, State: "OPEN",
+		DetailsLoaded: true, ReviewCommentsLoaded: true, ReviewersLoaded: true,
+		Reviewers: []model.Reviewer{{Login: "alice", State: "REQUESTED"}}}
+	fresh := pr
+	fresh.Reviewers = []model.Reviewer{{Login: "alice", State: state}}
+	provider := &commentRecordingGitHub{listedPRs: []model.PullRequest{pr}, getPR: fresh}
+	m := modelWithPRs([]model.PullRequest{pr}, 0)
+	m.repo = pr.Repo
+	m.app = app.New(provider, cache.NewMemoryStore())
+	if err := m.app.Cache.Put(pr); err != nil {
+		t.Fatal(err)
+	}
+	msg, ok := cmd(m.app, pr)().(actionMsg)
+	if !ok || msg.refreshPR == nil || msg.refreshPR.Number != pr.Number {
+		t.Fatalf("actionMsg = %#v, want refreshPR for #7", msg)
+	}
+	next, refresh := m.Update(msg)
+	m = next.(Model)
+	messages := batchMsgs(refresh)
+	if len(messages) != 1 || fmt.Sprintf("%T", messages[0]) != "tea.sequenceMsg" {
+		t.Fatalf("review refresh = %#v, want sequential list then PR refresh so the list cannot restore stale reviewers", messages)
+	}
+	commands := reflect.ValueOf(messages[0])
+	if commands.Len() != 2 {
+		t.Fatalf("review refresh has %d commands, want list then PR", commands.Len())
+	}
+	for i := 0; i < commands.Len(); i++ {
+		got := commands.Index(i).Interface().(tea.Cmd)()
+		if i == 0 {
+			if _, ok := got.(refreshMsg); !ok {
+				t.Fatalf("first refresh = %T, want refreshMsg", got)
+			}
+		} else if refreshed, ok := got.(refreshPRMsg); !ok || refreshed.number != pr.Number {
+			t.Fatalf("second refresh = %#v, want refreshPRMsg for #7", got)
+		}
+		next, _ = m.Update(got)
+		m = next.(Model)
+	}
+	if got, ok := m.current(); !ok || !reflect.DeepEqual(got.Reviewers, fresh.Reviewers) {
+		t.Fatalf("reviewers after refresh = %#v, want %#v", got.Reviewers, fresh.Reviewers)
+	}
+}
+
+func TestApproveRefreshesSelectedPR(t *testing.T) {
+	assertReviewActionRefreshesPR(t, approveCmd, "APPROVED")
+}
+
+func TestRequestChangesRefreshesSelectedPR(t *testing.T) {
+	assertReviewActionRefreshesPR(t, func(a *app.App, pr model.PullRequest) tea.Cmd { return requestChangesCmd(a, pr, "") }, "CHANGES_REQUESTED")
+}
+
+func TestCommentActionDoesNotRefreshPR(t *testing.T) {
+	pr := model.PullRequest{Repo: "org/repo", Number: 7}
+	msg, ok := commentCmd(app.New(&commentRecordingGitHub{}, cache.NewMemoryStore()), pr, "hi")().(actionMsg)
+	if !ok || msg.refreshPR != nil {
+		t.Fatalf("comment actionMsg = %#v, want no refreshPR", msg)
 	}
 }

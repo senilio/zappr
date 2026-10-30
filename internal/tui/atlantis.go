@@ -9,6 +9,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/senilio/zappr/internal/app"
 	"github.com/senilio/zappr/internal/model"
+	uitheme "github.com/senilio/zappr/internal/tui/theme"
 )
 
 func (m Model) atlantisEnabled() bool { return m.cfg.AtlantisEnabled() }
@@ -27,63 +28,60 @@ func (m Model) isAtlantisRepo() bool {
 	return false
 }
 
-func (m Model) atlantisRow(pr model.PullRequest, innerW int) string {
-	s := m.theme.Styles
-	a := model.DeriveAtlantis(pr.Checks)
-	dot := s.Muted.Render(" · ")
-
-	plan := s.Muted.Render("no plan")
-	switch a.Plan {
-	case model.PlanRunning:
-		plan = s.Pending.Render("plan running…") + atlantisProjects(a)
-	case model.PlanPassed:
-		plan = s.SuccessCI.Render("plan ✓") + atlantisProjects(a)
-	case model.PlanFailed:
-		plan = s.Error.Render("plan ✗") + atlantisProjects(a)
-	}
+// atlantisVerdict picks the one headline for the selected PR's atlantis
+// row; the first matching state wins.
+func atlantisVerdict(a model.AtlantisSummary, now time.Time) (string, uitheme.PillState, string) {
+	age := ""
 	if !a.PlanAt.IsZero() {
-		age := timeNow().Sub(a.PlanAt)
-		if age < 0 {
-			age = 0
+		d := now.Sub(a.PlanAt)
+		if d < 0 {
+			d = 0
 		}
-		plan += s.Muted.Render(" " + shortDuration(age) + " ago")
+		age = shortDuration(d) + " ago"
 	}
-
-	parts := []string{s.Muted.Render("atlantis"), plan}
-	switch a.Policy {
-	case model.PolicyRunning:
-		parts = append(parts, s.Pending.Render("policy running…"))
-	case model.PolicyPassed:
-		parts = append(parts, s.SuccessCI.Render("policy ✓"))
-	case model.PolicyFailed:
-		parts = append(parts, s.Error.Render("policy ✗"))
+	switch {
+	case a.Apply == model.ApplyFailed:
+		return "APPLY FAILED", uitheme.PillFailed, ""
+	case a.Plan == model.PlanFailed:
+		note := a.PlanProject
+		if a.PlanAffectedCount > 1 {
+			note += fmt.Sprintf(" +%d", a.PlanAffectedCount-1)
+		}
+		return "PLAN FAILED", uitheme.PillFailed, note
+	case a.Policy == model.PolicyFailed:
+		return "PLAN FAILED", uitheme.PillFailed, "policy check failed"
+	case a.Apply == model.ApplyRunning:
+		return "APPLYING", uitheme.PillWait, ""
+	case a.Plan == model.PlanRunning || a.Policy == model.PolicyRunning:
+		return "PLANNING", uitheme.PillWait, age
+	case a.Plan == model.PlanPassed:
+		parts := []string{"ready to apply"}
+		switch a.Apply {
+		case model.ApplyDone:
+			parts[0] = "applied"
+		case model.ApplyNothing:
+			parts[0] = "nothing to apply"
+		}
+		if a.PlanProjectCount > 1 {
+			parts = append(parts, fmt.Sprintf("%d projects", a.PlanProjectCount))
+		} else if a.PlanProject != "" {
+			parts = append(parts, a.PlanProject)
+		}
+		if age != "" {
+			parts = append(parts, age)
+		}
+		return "PLAN OK", uitheme.PillPassed, strings.Join(parts, " · ")
 	}
-
-	apply := s.Muted.Render("apply –")
-	switch a.Apply {
-	case model.ApplyRunning:
-		apply = s.Pending.Render("apply running…")
-	case model.ApplyFailed:
-		apply = s.Error.Render("apply ✗")
-	case model.ApplyDone:
-		apply = s.SuccessCI.Render("apply ✓")
-	case model.ApplyNothing:
-		apply = s.Muted.Render("nothing to apply")
-	}
-	parts = append(parts, apply)
-	return truncatePaneLineWidth(strings.Join(parts, dot), innerW)
+	return "NO PLAN", uitheme.PillNone, ""
 }
 
-func atlantisProjects(a model.AtlantisSummary) string {
-	switch {
-	case a.PlanAffectedCount > 1:
-		return fmt.Sprintf(" %s +%d", a.PlanProject, a.PlanAffectedCount-1)
-	case a.PlanProject != "":
-		return " " + a.PlanProject
-	case a.Plan == model.PlanPassed && a.PlanProjectCount > 1:
-		return fmt.Sprintf(" %d projects", a.PlanProjectCount)
+func (m Model) atlantisRow(pr model.PullRequest, innerW int) string {
+	label, state, note := atlantisVerdict(model.DeriveAtlantis(pr.Checks), timeNow())
+	content := m.theme.Pill(label, state, m.pillShape())
+	if note != "" {
+		content += "  " + m.theme.Styles.Muted.Render(note)
 	}
-	return ""
+	return m.expandedRow("atlantis", content, innerW)
 }
 
 type atlantisCommand int

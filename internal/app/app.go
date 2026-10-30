@@ -74,6 +74,15 @@ func (a *App) Refresh(ctx context.Context, repo string, includeDrafts bool) ([]m
 				prs[i].DetailsLoaded = true
 				prs[i].ReviewCommentsLoaded = true
 			}
+			if cached.ReviewersLoaded && cached.UpdatedAt.Equal(prs[i].UpdatedAt) {
+				prs[i].Reviewers = cached.Reviewers
+				prs[i].ReviewersLoaded = true
+			}
+			// The list query often reports UNKNOWN while GitHub recomputes
+			// mergeability; keep the last known state instead.
+			if (prs[i].MergeState == "" || prs[i].MergeState == "UNKNOWN") && cached.MergeState != "" {
+				prs[i].MergeState = cached.MergeState
+			}
 		}
 		if err := a.Cache.Put(prs[i]); err != nil {
 			return nil, err

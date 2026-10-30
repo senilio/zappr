@@ -233,7 +233,7 @@ func (m Model) helpPanel() string {
 		}
 	}
 	section("Actions", actions...)
-	section("PR badges", shortcut{"[auto]", "auto-merge enabled"}, shortcut{"[draft]", "draft pull request"})
+	section("PR status", shortcut{"CI", "checks: green pass, yellow running, red failed"}, shortcut{"TF", "Atlantis plan (Atlantis repos)"}, shortcut{"draft/auto", "draft PR / auto-merge enabled"}, shortcut{"behind/conflict/blocked", "branch behind, merge conflict, merge blocked"})
 	content := strings.TrimSuffix(b.String(), "\n")
 	if m.helpInput == "" {
 		return content

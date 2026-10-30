@@ -123,7 +123,32 @@ expands every PR title while keeping metadata on one row. Diff wrapping keeps
 line-number gutters and side-by-side columns intact. With wrapping off, long
 lines are hard-truncated and diffs support horizontal scrolling. Horizontal
 panning is disabled while wrapping is on. Keyboard shortcuts are available via `?`.
-Inbox title badges show `[auto]` when auto-merge is enabled and `[draft]` for draft PRs.
+
+### Inbox status
+
+Each inbox item shows its title, then `#number · author` with status pills
+aligned to the right:
+
+- `CI`: green when checks passed, yellow while running, red when failed, grey
+  when unknown.
+- Review icon: green approved, red changes requested, yellow review required,
+  grey for no review decision or a draft.
+- `TF`, in Atlantis repositories: the plan and policy state.
+- Occasional pills: `draft`, `auto` (auto-merge enabled), `behind`, `conflict`,
+  and `blocked`. `blocked` appears only when CI passed and the PR is approved
+  but GitHub still blocks the merge. On narrow panes these drop first.
+
+The selected PR adds a `reviews` row listing reviewers colored by state:
+approvals green, requested changes red, pending requests yellow, comments
+muted. Bots are muted, listed last, and never shown as an approval; a login is
+treated as a bot when it ends in `[bot]`, `-bot`, or `-reviewer`. In Atlantis
+repositories an `atlantis` row with a verdict pill follows.
+
+Pills use Nerd Font rounded ends by default. Set `pills: square` to avoid Nerd
+Font glyphs. Terminals without color show symbols instead: `CI✓`, `CI…`,
+`CI✗`, `CI–`. Reviewer names use `✓` for approval, `✗` for changes requested,
+and `●` for pending requests; comments, dismissed reviews, and bots have
+explicit labels.
 
 ### Command palette
 
@@ -174,6 +199,7 @@ refresh:
   interval: 30s
 cache:
   path: /Users/you/.cache/zappr/zappr.db
+pills: rounded
 wrap:
   inbox: false
   summary: false
@@ -181,6 +207,9 @@ wrap:
 atlantis:
   enabled: true
 ```
+
+`pills: rounded` (the default) needs a Nerd Font; `pills: square` avoids Nerd
+Font glyphs.
 
 ### TUI actions
 
@@ -260,20 +289,19 @@ its commands. The action IDs and aliases below are user-defined. Bot replies
 remain available in the Comments summary (`3`).
 
 When any open PR in the current inbox has `atlantis/*` commit statuses, the
-selected inbox item shows one extra row with the plan, policy, and apply state
-read from those statuses. zappr does not parse comments for this. The row is a
-single line and is never wrapped. Example:
+inbox shows a `TF` pill on every item and the selected item adds an `atlantis`
+row with a verdict read from those statuses. zappr does not parse comments for
+this. The row is a single line and is never wrapped. Example:
 
 ```text
-atlantis · plan ✓ sso-sso 4m ago · policy ✓ · apply –
+atlantis  PLAN OK  ready to apply · 12 projects · 6m ago
 ```
 
-The plan part reads `no plan`, `plan running…`, `plan ✓` or `plan ✗`, and how
-long ago it reported. A single project is named. With several projects, a
-passed plan shows `N projects`, while a running or failed plan names the first
-affected project and counts the rest (for example `plan ✗ a +1`). The policy
-part appears when a policy status exists. The apply part reads `apply –`,
-`apply running…`, `apply ✗`, `apply ✓`, or `nothing to apply`.
+The verdict is the first that applies: `APPLY FAILED`, `PLAN FAILED` (naming
+the failed project, or noting a failed policy check), `APPLYING`, `PLANNING`,
+`PLAN OK`, or `NO PLAN`. For `PLAN OK` the note says `ready to apply`,
+`applied`, or `nothing to apply`, followed by the project (or project count) and how long ago the
+plan reported.
 
 Comments whose first two words are `atlantis plan` or `atlantis apply` (case
 insensitive) are guarded, whether they come from an action or from free text.
@@ -293,7 +321,8 @@ or cancel. When the guard passes, the action's normal confirmation (if any)
 still applies; a blocked dialog replaces that confirmation, so you are asked
 once.
 
-Set `atlantis.enabled: false` to disable both the status row and the guards.
+Set `atlantis.enabled: false` to disable the `TF` pill, the `atlantis` row, and
+the guards.
 It defaults to `true`.
 
 ```yaml

@@ -2,7 +2,6 @@ package tui
 
 import (
 	"context"
-	"fmt"
 	"regexp"
 	"strings"
 	"sync"
@@ -336,58 +335,25 @@ func (m Model) buildInboxContent(innerW int) (string, []rowSpan) {
 	for i, pr := range m.prs {
 		spans[i].start = row
 		selected := i == m.selected
-		var badges []string
-		if pr.AutoMerge {
-			badges = append(badges, "[auto]")
-		}
-		if pr.Draft {
-			badges = append(badges, "[draft]")
-		}
-		badge := truncateANSIWidth(strings.Join(badges, " "), innerW)
-		titleWidth := innerW
-		if badge != "" {
-			titleWidth = max(0, innerW-ansi.StringWidth(badge)-1)
-		}
-		title := truncateANSIWidth(pr.Title, titleWidth)
+		title := truncateANSIWidth(pr.Title, innerW)
 		if m.cfg.Wrap.Inbox {
-			title = wrapLines(pr.Title, max(1, titleWidth))
-			if titleWidth == 0 {
-				title = wrapLines(pr.Title, innerW) + "\n" + badge
-				badge = ""
-			}
+			title = wrapLines(pr.Title, max(1, innerW))
 		}
-		titleStyle, badgeStyle := s.Muted, s.Muted
+		titleStyle := s.Muted
 		if selected {
-			titleStyle, badgeStyle = s.TitleStrong, s.Title
+			titleStyle = s.TitleStrong
 		}
-		for j, line := range strings.Split(title, "\n") {
-			titleRow := titleStyle.Render(line)
-			if j == 0 && badge != "" {
-				titleRow += strings.Repeat(" ", max(0, innerW-ansi.StringWidth(line)-ansi.StringWidth(badge))) + badgeStyle.Render(badge)
-			}
-			b.WriteString(truncatePaneLineWidth(titleRow, innerW) + "\n")
+		for _, line := range strings.Split(title, "\n") {
+			b.WriteString(truncatePaneLineWidth(titleStyle.Render(line), innerW) + "\n")
 			row++
 		}
-		dot := s.Muted.Render(" · ")
-		meta := fmt.Sprintf("#%d · %s", pr.Number, pr.Author)
-		ci, review := m.theme.CIStatus(pr.CIStatus), m.theme.ReviewStatus(pr.ReviewDecision)
-		if selected {
-			meta = s.TitleStrong.Render(meta) + dot + ci
-			if review != "" {
-				meta += dot + review
-			}
-		} else {
-			meta += " · " + stripANSI(ci)
-			if review != "" {
-				meta += " · " + stripANSI(review)
-			}
-			meta = s.Muted.Render(meta)
-		}
-		b.WriteString(truncatePaneLineWidth(meta, innerW) + "\n")
+		b.WriteString(m.inboxMetaRow(pr, selected, atlantisRepo, innerW) + "\n")
 		row++
-		if selected && atlantisRepo {
-			if line := m.atlantisRow(pr, innerW); line != "" {
-				b.WriteString(line + "\n")
+		if selected {
+			b.WriteString(m.reviewsRow(pr, innerW) + "\n")
+			row++
+			if atlantisRepo {
+				b.WriteString(m.atlantisRow(pr, innerW) + "\n")
 				row++
 			}
 		}

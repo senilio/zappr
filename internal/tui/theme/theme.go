@@ -14,6 +14,7 @@ type Palette struct {
 	Safe    color.Color
 	Block   color.Color
 	Pending color.Color
+	Wait    color.Color
 	Muted   color.Color
 	Focus   color.Color
 	Text    color.Color
@@ -46,6 +47,7 @@ type Styles struct {
 	Success     lipgloss.Style
 	SuccessCI   lipgloss.Style
 	Pending     lipgloss.Style
+	Wait        lipgloss.Style
 	Add         lipgloss.Style
 	Delete      lipgloss.Style
 	Hunk        lipgloss.Style
@@ -93,6 +95,7 @@ func New(p Palette, profile colorprofile.Profile, noColor bool, isDark ...bool) 
 		Success:     base.Bold(true).Foreground(p.Safe),
 		SuccessCI:   base.Foreground(p.Safe),
 		Pending:     base.Bold(true).Foreground(p.Pending),
+		Wait:        base.Foreground(p.Wait),
 		Add:         base.Foreground(p.Safe),
 		Delete:      base.Foreground(p.Block),
 		Hunk:        base.Foreground(p.Focus).Bold(true),
@@ -114,6 +117,7 @@ func New(p Palette, profile colorprofile.Profile, noColor bool, isDark ...bool) 
 			Success:     lipgloss.NewStyle().Bold(true),
 			SuccessCI:   lipgloss.NewStyle(),
 			Pending:     lipgloss.NewStyle().Bold(true),
+			Wait:        lipgloss.NewStyle(),
 			Add:         lipgloss.NewStyle(),
 			Delete:      lipgloss.NewStyle(),
 			Hunk:        lipgloss.NewStyle().Bold(true),
@@ -135,6 +139,7 @@ func DarkDefault(isDark ...bool) Palette {
 		Safe:    ld(lipgloss.Color("#047857"), lipgloss.Color("#4ade80")),
 		Block:   ld(lipgloss.Color("#b91c1c"), lipgloss.Color("#f87171")),
 		Pending: ld(lipgloss.Color("#1d4ed8"), lipgloss.Color("#60a5fa")),
+		Wait:    ld(lipgloss.Color("#a16207"), lipgloss.Color("#facc15")),
 		Muted:   ld(lipgloss.Color("#6b7280"), lipgloss.Color("#9ca3af")),
 		Focus:   ld(lipgloss.Color("#7c3aed"), lipgloss.Color("#a78bfa")),
 		Text:    ld(lipgloss.Color("#111827"), lipgloss.Color("#e5e7eb")),
@@ -151,6 +156,7 @@ func DarkANSI(isDark ...bool) Palette {
 		Safe:    lipgloss.Color("2"),
 		Block:   lipgloss.Color("1"),
 		Pending: lipgloss.Color("4"),
+		Wait:    lipgloss.Color("3"),
 		Muted:   lipgloss.Color("8"),
 		Focus:   lipgloss.Color("5"),
 		Text:    lipgloss.Color("15"),
@@ -168,6 +174,7 @@ func NordPalette(isDark ...bool) Palette {
 		Safe:    ld(lipgloss.Color("#4CAF7D"), lipgloss.Color("#a3be8c")),
 		Block:   ld(lipgloss.Color("#BF616A"), lipgloss.Color("#bf616a")),
 		Pending: ld(lipgloss.Color("#5E81AC"), lipgloss.Color("#81a1c1")),
+		Wait:    ld(lipgloss.Color("#B48A2C"), lipgloss.Color("#ebcb8b")),
 		Muted:   ld(lipgloss.Color("#7B8EA8"), lipgloss.Color("#4c566a")),
 		Focus:   ld(lipgloss.Color("#5E81AC"), lipgloss.Color("#88c0d0")),
 		Text:    ld(lipgloss.Color("#2E3440"), lipgloss.Color("#eceff4")),
@@ -185,6 +192,7 @@ func GruvboxPalette(isDark ...bool) Palette {
 		Safe:    ld(lipgloss.Color("#79740E"), lipgloss.Color("#b8bb26")),
 		Block:   ld(lipgloss.Color("#CC241D"), lipgloss.Color("#fb4934")),
 		Pending: ld(lipgloss.Color("#076678"), lipgloss.Color("#83a598")),
+		Wait:    ld(lipgloss.Color("#B57614"), lipgloss.Color("#fabd2f")),
 		Muted:   ld(lipgloss.Color("#928374"), lipgloss.Color("#928374")),
 		Focus:   ld(lipgloss.Color("#8F3F71"), lipgloss.Color("#d3869b")),
 		Text:    ld(lipgloss.Color("#3C3836"), lipgloss.Color("#ebdbb2")),
@@ -202,6 +210,7 @@ func CatppuccinPalette(isDark ...bool) Palette {
 		Safe:    ld(lipgloss.Color("#40A02B"), lipgloss.Color("#a6e3a1")),
 		Block:   ld(lipgloss.Color("#D20F39"), lipgloss.Color("#f38ba8")),
 		Pending: ld(lipgloss.Color("#1E66F5"), lipgloss.Color("#89b4fa")),
+		Wait:    ld(lipgloss.Color("#DF8E1D"), lipgloss.Color("#f9e2af")),
 		Muted:   ld(lipgloss.Color("#8C8FA1"), lipgloss.Color("#585b70")),
 		Focus:   ld(lipgloss.Color("#7287FD"), lipgloss.Color("#cba6f7")),
 		Text:    ld(lipgloss.Color("#4C4F69"), lipgloss.Color("#cdd6f4")),
@@ -219,6 +228,7 @@ func EverforestPalette(isDark ...bool) Palette {
 		Safe:    ld(lipgloss.Color("#8DA101"), lipgloss.Color("#a7c080")),
 		Block:   ld(lipgloss.Color("#F85552"), lipgloss.Color("#e67e80")),
 		Pending: ld(lipgloss.Color("#3A94C5"), lipgloss.Color("#7fbbb3")),
+		Wait:    ld(lipgloss.Color("#DFA000"), lipgloss.Color("#dbbc7f")),
 		Muted:   ld(lipgloss.Color("#939F91"), lipgloss.Color("#859289")),
 		Focus:   ld(lipgloss.Color("#DF69BA"), lipgloss.Color("#d699b6")),
 		Text:    ld(lipgloss.Color("#5C6A72"), lipgloss.Color("#d3c6aa")),
@@ -243,30 +253,4 @@ func PaletteByName(name string, isDark ...bool) Palette {
 		}
 	}
 	return DarkDefault(isDark...)
-}
-
-func (t Theme) CIStatus(status string) string {
-	switch strings.ToLower(status) {
-	case "passing", "success":
-		return t.Styles.SuccessCI.Render("CI pass")
-	case "pending", "queued", "in_progress":
-		return t.Styles.Pending.Render("CI pending")
-	case "failing", "failed", "failure", "error":
-		return t.Styles.Error.Render("CI failed")
-	default:
-		return t.Styles.Muted.Render(status)
-	}
-}
-
-func (t Theme) ReviewStatus(decision string) string {
-	switch strings.ToUpper(decision) {
-	case "APPROVED":
-		return t.Styles.SuccessCI.Render("approved")
-	case "CHANGES_REQUESTED":
-		return t.Styles.Error.Render("changes requested")
-	case "REVIEW_REQUIRED":
-		return t.Styles.Muted.Render("awaiting approval")
-	default:
-		return ""
-	}
 }

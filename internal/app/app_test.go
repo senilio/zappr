@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
@@ -317,4 +318,57 @@ func (f fakeGitHub) RequestChanges(context.Context, string, int, string) error {
 
 func (f fakeGitHub) MergePR(context.Context, string, int) error {
 	return nil
+}
+
+func refreshOne(t *testing.T, cached, listed model.PullRequest) model.PullRequest {
+	t.Helper()
+	store := cache.NewMemoryStore()
+	if err := store.Put(cached); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	prs, err := New(fakeGitHub{prs: []model.PullRequest{listed}}, store).Refresh(context.Background(), "owner/repo", false)
+	if err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	if len(prs) != 1 {
+		t.Fatalf("prs = %#v", prs)
+	}
+	return prs[0]
+}
+
+func TestRefreshKeepsCachedReviewersWhenPRUnchanged(t *testing.T) {
+	updated := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	reviewers := []model.Reviewer{{Login: "alice", State: "APPROVED"}}
+	got := refreshOne(t,
+		model.PullRequest{Repo: "owner/repo", Number: 1, UpdatedAt: updated, Reviewers: reviewers, ReviewersLoaded: true},
+		model.PullRequest{Repo: "owner/repo", Number: 1, UpdatedAt: updated})
+	if !got.ReviewersLoaded || !reflect.DeepEqual(got.Reviewers, reviewers) {
+		t.Fatalf("reviewers not preserved: %#v", got)
+	}
+}
+
+func TestRefreshDropsCachedReviewersWhenPRUpdated(t *testing.T) {
+	updated := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	got := refreshOne(t,
+		model.PullRequest{Repo: "owner/repo", Number: 1, UpdatedAt: updated, Reviewers: []model.Reviewer{{Login: "alice", State: "APPROVED"}}, ReviewersLoaded: true},
+		model.PullRequest{Repo: "owner/repo", Number: 1, UpdatedAt: updated.Add(time.Minute)})
+	if got.ReviewersLoaded || got.Reviewers != nil {
+		t.Fatalf("stale reviewers kept: %#v", got)
+	}
+}
+
+func TestRefreshKeepsCachedMergeStateWhenListUnknown(t *testing.T) {
+	updated := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	for _, tc := range []struct{ cached, listed, want string }{
+		{"BEHIND", "UNKNOWN", "BEHIND"},
+		{"BEHIND", "CLEAN", "CLEAN"},
+		{"BEHIND", "", "BEHIND"},
+	} {
+		got := refreshOne(t,
+			model.PullRequest{Repo: "owner/repo", Number: 1, UpdatedAt: updated, MergeState: tc.cached},
+			model.PullRequest{Repo: "owner/repo", Number: 1, UpdatedAt: updated.Add(time.Minute), MergeState: tc.listed})
+		if got.MergeState != tc.want {
+			t.Errorf("cached %q listed %q: MergeState = %q, want %q", tc.cached, tc.listed, got.MergeState, tc.want)
+		}
+	}
 }

@@ -25,6 +25,7 @@ type Config struct {
 	Refresh    RefreshConfig           `yaml:"refresh"`
 	Cache      CacheConfig             `yaml:"cache"`
 	Theme      string                  `yaml:"theme,omitempty"`
+	Pills      string                  `yaml:"pills,omitempty"`
 	Sort       string                  `yaml:"sort,omitempty"`
 	HideDrafts bool                    `yaml:"hide_drafts"`
 	Wrap       WrapConfig              `yaml:"wrap"`
@@ -243,6 +244,7 @@ func Load() (Config, error) {
 		Refresh    RefreshConfig             `yaml:"refresh"`
 		Cache      CacheConfig               `yaml:"cache"`
 		Theme      string                    `yaml:"theme,omitempty"`
+		Pills      string                    `yaml:"pills,omitempty"`
 		Sort       string                    `yaml:"sort,omitempty"`
 		HideDrafts bool                      `yaml:"hide_drafts,omitempty"`
 		Wrap       WrapConfig                `yaml:"wrap"`
@@ -252,6 +254,7 @@ func Load() (Config, error) {
 		Refresh:    cfg.Refresh,
 		Cache:      cfg.Cache,
 		Theme:      cfg.Theme,
+		Pills:      cfg.Pills,
 		Sort:       cfg.Sort,
 		HideDrafts: cfg.HideDrafts,
 		Atlantis:   cfg.Atlantis,
@@ -262,6 +265,7 @@ func Load() (Config, error) {
 	cfg.Refresh = file.Refresh
 	cfg.Cache = file.Cache
 	cfg.Theme = file.Theme
+	cfg.Pills = file.Pills
 	cfg.Sort = file.Sort
 	cfg.HideDrafts = file.HideDrafts
 	cfg.Wrap = file.Wrap

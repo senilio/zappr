@@ -55,7 +55,7 @@ func TestInboxLayoutTracksInPlaceChanges(t *testing.T) {
 	m.prs[0].Draft, m.prs[0].AutoMerge = true, true
 	m.prs[0].Author = "someone else"
 	after, _ := m.inboxContent(50)
-	if after == before || !strings.Contains(stripANSI(after), "updated title") || !strings.Contains(stripANSI(after), "[draft]") {
+	if after == before || !strings.Contains(stripANSI(after), "updated title") || !strings.Contains(stripANSI(after), "draft") {
 		t.Fatalf("stale Inbox after in-place update: %q", after)
 	}
 }
@@ -220,7 +220,18 @@ func TestInboxLayoutCacheInvalidatesOnAtlantisChange(t *testing.T) {
 	before, _ := m.inboxContent(80)
 	m.prs[0].Checks = atlantisChecks("SUCCESS", time.Now().Add(-4*time.Minute))
 	after, _ := m.inboxContent(80)
-	if after == before || !strings.Contains(stripANSI(after), "plan ✓") {
+	if after == before || !strings.Contains(stripANSI(after), "PLAN OK") {
 		t.Fatalf("stale Inbox after Atlantis change: %q", stripANSI(after))
+	}
+}
+
+func TestInboxLayoutCacheInvalidatesOnReviewers(t *testing.T) {
+	m := scrollModel(t, 2)
+	before, _ := m.inboxContent(80)
+	m.prs[0].Reviewers = []model.Reviewer{{Login: "zelda", State: "APPROVED"}}
+	m.prs[0].ReviewersLoaded = true
+	after, _ := m.inboxContent(80)
+	if after == before || !strings.Contains(stripANSI(after), "zelda") {
+		t.Fatalf("stale Inbox after reviewers change: %q", stripANSI(after))
 	}
 }

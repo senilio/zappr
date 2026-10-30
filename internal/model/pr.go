@@ -42,6 +42,14 @@ type Check struct {
 	URL          string
 }
 
+// Reviewer is one person, team, or bot on a pull request's review list.
+// State is APPROVED, CHANGES_REQUESTED, COMMENTED, DISMISSED, or REQUESTED.
+type Reviewer struct {
+	Login string
+	State string
+	Bot   bool
+}
+
 type PullRequest struct {
 	Repo           string
 	Number         int
@@ -56,13 +64,18 @@ type PullRequest struct {
 	CIStatus       string
 	Checks         []Check `json:"checks,omitempty"`
 	ReviewDecision string
-	Draft          bool
-	AutoMerge      bool
-	State          string
-	HeadRefOID     string
-	UpdatedAt      time.Time
-	Commits        []PRCommit
-	Comments       []PRComment
+	MergeState     string     `json:"merge_state,omitempty"`
+	Reviewers      []Reviewer `json:"reviewers,omitempty"`
+	// ReviewersLoaded reports whether Reviewers came from a selected-PR
+	// fetch; inbox list refreshes do not include them.
+	ReviewersLoaded bool `json:"reviewers_loaded,omitempty"`
+	Draft           bool
+	AutoMerge       bool
+	State           string
+	HeadRefOID      string
+	UpdatedAt       time.Time
+	Commits         []PRCommit
+	Comments        []PRComment
 	// DetailsLoaded reports whether Commits and Comments were
 	// fetched; inbox list refreshes do not include them.
 	DetailsLoaded bool `json:"details_loaded,omitempty"`

@@ -6,7 +6,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/x/ansi"
 	"github.com/senilio/zappr/internal/model"
+	uitheme "github.com/senilio/zappr/internal/tui/theme"
 )
 
 func atlantisChecks(planState string, planAt time.Time) []model.Check {
@@ -17,80 +19,65 @@ func atlantisChecks(planState string, planAt time.Time) []model.Check {
 	}
 }
 
-func TestAtlantisRowContent(t *testing.T) {
-	pr := model.PullRequest{Number: 1, Checks: atlantisChecks("SUCCESS", time.Now().Add(-4*time.Minute))}
-	s := model.DeriveAtlantis(pr.Checks)
-	if s.Plan != model.PlanPassed || s.PlanProject != "sso-sso" || s.Policy != model.PolicyPassed || s.Apply != model.ApplyNone {
-		t.Fatalf("unexpected summary: %+v", s)
+func TestAtlantisVerdict(t *testing.T) {
+	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
+	planAt := now.Add(-6 * time.Minute)
+	passed := model.AtlantisSummary{HasAtlantis: true, Plan: model.PlanPassed, PlanAt: planAt}
+	with := func(a model.AtlantisSummary, f func(*model.AtlantisSummary)) model.AtlantisSummary {
+		f(&a)
+		return a
 	}
-	m := modelWithPRs([]model.PullRequest{pr}, 0)
-	row := stripANSI(m.atlantisRow(pr, 80))
-	for _, want := range []string{"atlantis", "plan", "sso-sso", "4m", "policy", "apply"} {
-		if !strings.Contains(row, want) {
-			t.Errorf("row %q missing %q", row, want)
+	cases := []struct {
+		name  string
+		a     model.AtlantisSummary
+		label string
+		state uitheme.PillState
+		note  string
+	}{
+		{"apply failed", with(passed, func(a *model.AtlantisSummary) { a.Apply = model.ApplyFailed }), "APPLY FAILED", uitheme.PillFailed, ""},
+		{"plan failed", model.AtlantisSummary{Plan: model.PlanFailed, PlanProject: "a", PlanAffectedCount: 2, PlanAt: planAt}, "PLAN FAILED", uitheme.PillFailed, "a +1"},
+		{"policy failed", with(passed, func(a *model.AtlantisSummary) { a.Policy = model.PolicyFailed }), "PLAN FAILED", uitheme.PillFailed, "policy check failed"},
+		{"apply running", with(passed, func(a *model.AtlantisSummary) { a.Apply = model.ApplyRunning }), "APPLYING", uitheme.PillWait, ""},
+		{"plan running", model.AtlantisSummary{Plan: model.PlanRunning, PlanAt: planAt}, "PLANNING", uitheme.PillWait, "6m ago"},
+		{"policy running", with(passed, func(a *model.AtlantisSummary) { a.Policy = model.PolicyRunning }), "PLANNING", uitheme.PillWait, "6m ago"},
+		{"passed 12 projects", with(passed, func(a *model.AtlantisSummary) { a.PlanProjectCount = 12 }), "PLAN OK", uitheme.PillPassed, "ready to apply · 12 projects · 6m ago"},
+		{"passed 1 project", with(passed, func(a *model.AtlantisSummary) { a.PlanProjectCount, a.PlanProject = 1, "sso-sso" }), "PLAN OK", uitheme.PillPassed, "ready to apply · sso-sso · 6m ago"},
+		{"applied", with(passed, func(a *model.AtlantisSummary) { a.Apply = model.ApplyDone }), "PLAN OK", uitheme.PillPassed, "applied · 6m ago"},
+		{"nothing to apply", with(passed, func(a *model.AtlantisSummary) { a.Apply = model.ApplyNothing }), "PLAN OK", uitheme.PillPassed, "nothing to apply · 6m ago"},
+		{"plan failed beats apply done", model.AtlantisSummary{Plan: model.PlanFailed, Apply: model.ApplyDone}, "PLAN FAILED", uitheme.PillFailed, ""},
+		{"none", model.AtlantisSummary{}, "NO PLAN", uitheme.PillNone, ""},
+		{"future plan", with(passed, func(a *model.AtlantisSummary) { a.PlanAt = now.Add(time.Hour) }), "PLAN OK", uitheme.PillPassed, "ready to apply · 0s ago"},
+	}
+	for _, tc := range cases {
+		label, state, note := atlantisVerdict(tc.a, now)
+		if label != tc.label || state != tc.state || note != tc.note {
+			t.Errorf("%s: (%q, %v, %q), want (%q, %v, %q)", tc.name, label, state, note, tc.label, tc.state, tc.note)
 		}
 	}
 }
 
-func TestAtlantisRowNoPlan(t *testing.T) {
-	pr := model.PullRequest{Number: 1}
-	m := modelWithPRs([]model.PullRequest{pr}, 0)
-	row := stripANSI(m.atlantisRow(pr, 80))
-	if !strings.Contains(row, "no plan") || !strings.Contains(row, "apply –") {
-		t.Errorf("row %q missing no plan / apply –", row)
+func manyProjectChecks(n int, planAt time.Time) []model.Check {
+	checks := []model.Check{{Context: "atlantis/plan", State: "SUCCESS", StartedAt: planAt}}
+	for i := 0; i < n; i++ {
+		checks = append(checks, model.Check{Context: fmt.Sprintf("atlantis/plan: p%d", i), State: "SUCCESS", StartedAt: planAt})
 	}
-	if strings.Contains(row, "ago") || strings.Contains(row, "policy") {
-		t.Errorf("row %q must not contain age or policy", row)
-	}
+	return checks
 }
 
-func TestAtlantisRowMultipleProjects(t *testing.T) {
-	at := time.Now().Add(-time.Minute)
-	tests := []struct {
-		name   string
-		states []string
-		want   string
-	}{
-		{"failed names first affected", []string{"SUCCESS", "FAILURE", "ERROR", "SUCCESS", "SUCCESS"}, "plan ✗ p1 +1"},
-		{"running names first affected", []string{"PENDING", "PENDING", "PENDING", "SUCCESS"}, "plan running… p0 +2 1m ago"},
-		{"single failed is named", []string{"SUCCESS", "FAILURE"}, "plan ✗ p1 "},
-		{"passed shows count", []string{"SUCCESS", "SUCCESS", "SUCCESS"}, "plan ✓ 3 projects"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			aggState := "SUCCESS"
-			checks := []model.Check{}
-			for i, st := range tt.states {
-				checks = append(checks, model.Check{Context: fmt.Sprintf("atlantis/plan: p%d", i), State: st, StartedAt: at})
-				if st != "SUCCESS" {
-					aggState = st
-				}
-			}
-			checks = append(checks, model.Check{Context: "atlantis/plan", State: aggState, StartedAt: at})
-			pr := model.PullRequest{Number: 1, Checks: checks}
-			m := modelWithPRs([]model.PullRequest{pr}, 0)
-			row := stripANSI(m.atlantisRow(pr, 120))
-			if !strings.Contains(row, tt.want) {
-				t.Errorf("row %q missing %q", row, tt.want)
-			}
-		})
-	}
-}
-
-func TestAtlantisRowFuturePlanTimeClampsToZero(t *testing.T) {
-	pr := model.PullRequest{Number: 1, Checks: atlantisChecks("SUCCESS", time.Now().Add(time.Hour))}
+func TestAtlantisRowContent(t *testing.T) {
+	pr := model.PullRequest{Number: 1, Checks: manyProjectChecks(12, time.Now().Add(-6*time.Minute))}
 	m := modelWithPRs([]model.PullRequest{pr}, 0)
-	row := stripANSI(m.atlantisRow(pr, 80))
-	if !strings.Contains(row, " 0s ago") || strings.Contains(row, " -") {
-		t.Errorf("row %q should show 0s ago without a negative age", row)
+	m.cfg.Pills = "square"
+	if got, want := stripANSI(m.atlantisRow(pr, 80)), "  atlantis  PLAN OK   ready to apply · 12 projects · 6m ago"; got != want {
+		t.Errorf("row = %q, want %q", got, want)
 	}
 }
 
 func TestAtlantisRowTruncatesToWidth(t *testing.T) {
-	pr := model.PullRequest{Number: 1, Checks: atlantisChecks("SUCCESS", time.Now().Add(-time.Minute))}
+	pr := model.PullRequest{Number: 1, Checks: manyProjectChecks(12, time.Now().Add(-time.Minute))}
 	m := modelWithPRs([]model.PullRequest{pr}, 0)
-	if got := len([]rune(stripANSI(m.atlantisRow(pr, 12)))); got > 12 {
-		t.Errorf("row width %d exceeds 12", got)
+	if got := ansi.StringWidth(m.atlantisRow(pr, 20)); got > 20 {
+		t.Errorf("row width %d exceeds 20", got)
 	}
 }
 

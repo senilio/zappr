@@ -31,7 +31,7 @@ func TestListPRsUsesSingleListCallWithoutCommitsOrComments(t *testing.T) {
 	dir := t.TempDir()
 	callsPath := filepath.Join(dir, "calls")
 	bin := filepath.Join(dir, "gh")
-	response := `[{"number":7,"title":"Draft","isDraft":true,"autoMergeRequest":{"enabledAt":"2026-10-07T10:00:00Z"},"files":[{"path":"old.go","additions":0,"deletions":4,"changeType":"DELETED"}]}]`
+	response := `[{"number":7,"title":"Draft","isDraft":true,"autoMergeRequest":{"enabledAt":"2026-10-07T10:00:00Z"},"mergeStateStatus":"BEHIND","files":[{"path":"old.go","additions":0,"deletions":4,"changeType":"DELETED"}]}]`
 	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + testShellQuote(callsPath) + "\nprintf '%s' " + testShellQuote(response) + "\n"
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatalf("write fake gh: %v", err)
@@ -50,13 +50,16 @@ func TestListPRsUsesSingleListCallWithoutCommitsOrComments(t *testing.T) {
 	if prs[0].Files[0].Status != "removed" {
 		t.Fatalf("file status = %q, want removed", prs[0].Files[0].Status)
 	}
+	if prs[0].MergeState != "BEHIND" || prs[0].ReviewersLoaded {
+		t.Fatalf("MergeState = %q, ReviewersLoaded = %v; want BEHIND, false", prs[0].MergeState, prs[0].ReviewersLoaded)
+	}
 
 	data, err := os.ReadFile(callsPath)
 	if err != nil {
 		t.Fatalf("read calls: %v", err)
 	}
 	got := strings.Split(strings.TrimSpace(string(data)), "\n")
-	fields := "number,title,author,url,labels,additions,deletions,changedFiles,isDraft,autoMergeRequest,state,headRefOid,statusCheckRollup,reviewDecision,files,updatedAt"
+	fields := "number,title,author,url,labels,additions,deletions,changedFiles,isDraft,autoMergeRequest,state,headRefOid,statusCheckRollup,reviewDecision,mergeStateStatus,files,updatedAt"
 	want := []string{
 		"pr list --repo owner/repo --state open --search sort:updated-desc --limit 60 --json " + fields,
 	}
@@ -196,6 +199,57 @@ func TestGetPRAutoMergeState(t *testing.T) {
 				t.Fatalf("AutoMerge = %v, want %v", pr.AutoMerge, enabled)
 			}
 		})
+	}
+}
+
+func TestGetPRParsesReviewers(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "gh")
+	response := `{"number":1,"mergeStateStatus":"dirty",
+	 "latestReviews":[
+	   {"author":{"login":"alice"},"state":"APPROVED","submittedAt":"2026-10-30T10:00:00Z"},
+	   {"author":{"login":"copilot-pull-request-reviewer"},"state":"COMMENTED","submittedAt":"2026-10-30T10:01:00Z"},
+	   {"author":{"login":"bob"},"state":"CHANGES_REQUESTED","submittedAt":"2026-10-30T10:02:00Z"},
+	   {"author":{"login":"carol"},"state":"APPROVED","submittedAt":"2026-10-30T10:03:00Z"}],
+	 "reviewRequests":[
+	   {"__typename":"User","login":"carol"},
+	   {"__typename":"User","login":"dan"},
+	   {"__typename":"Team","name":"Platform","slug":"platform"}]}`
+	script := "#!/bin/sh\nif [ \"$1\" = api ]; then printf '[[]]'; exit; fi\ncase \"$*\" in *latestReviews*reviewRequests*mergeStateStatus*) ;; *) exit 1 ;; esac\nprintf '%s' " + testShellQuote(response) + "\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	pr, err := (&GHProvider{Bin: bin}).GetPR(context.Background(), "owner/repo", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pr.MergeState != "DIRTY" || !pr.ReviewersLoaded {
+		t.Fatalf("MergeState = %q, ReviewersLoaded = %v", pr.MergeState, pr.ReviewersLoaded)
+	}
+	want := []model.Reviewer{
+		{Login: "alice", State: "APPROVED"},
+		{Login: "bob", State: "CHANGES_REQUESTED"},
+		{Login: "carol", State: "REQUESTED"},
+		{Login: "dan", State: "REQUESTED"},
+		{Login: "platform", State: "REQUESTED"},
+		{Login: "copilot-pull-request-reviewer", State: "COMMENTED", Bot: true},
+	}
+	if !reflect.DeepEqual(pr.Reviewers, want) {
+		t.Fatalf("Reviewers = %#v, want %#v", pr.Reviewers, want)
+	}
+}
+
+func TestGetPRNoReviewersIsLoadedEmpty(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "gh")
+	script := "#!/bin/sh\nif [ \"$1\" = api ]; then printf '[[]]'; exit; fi\nprintf '%s' " + testShellQuote(`{"number":2}`) + "\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	pr, err := (&GHProvider{Bin: bin}).GetPR(context.Background(), "owner/repo", 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !pr.ReviewersLoaded || len(pr.Reviewers) != 0 {
+		t.Fatalf("ReviewersLoaded = %v, Reviewers = %#v", pr.ReviewersLoaded, pr.Reviewers)
 	}
 }
 
