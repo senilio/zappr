@@ -71,13 +71,14 @@ func occasionalPills(pr model.PullRequest) []rowPill {
 // status pills right-aligned to innerW.
 func (m Model) inboxMetaRow(pr model.PullRequest, selected, atlantisRepo bool, innerW int) string {
 	shape := m.pillShape()
-	fixed := []string{m.theme.Pill("CI", ciPillState(pr.CIStatus), shape), m.theme.ReviewIcon(pr.ReviewDecision, pr.Draft, shape)}
+	opacity := m.cfg.EffectivePillOpacity()
+	fixed := []string{m.theme.Pill("CI", ciPillState(pr.CIStatus), shape, opacity), m.theme.ReviewIcon(pr.ReviewDecision, pr.Draft, shape)}
 	if atlantisRepo {
-		fixed = append(fixed, m.theme.Pill("TF", tfPillState(model.DeriveAtlantis(pr.Checks)), shape))
+		fixed = append(fixed, m.theme.Pill("TF", tfPillState(model.DeriveAtlantis(pr.Checks)), shape, opacity))
 	}
 	var occasional []string
 	for _, p := range occasionalPills(pr) {
-		occasional = append(occasional, m.theme.Pill(p.label, p.state, shape))
+		occasional = append(occasional, m.theme.Pill(p.label, p.state, shape, opacity))
 	}
 	number := fmt.Sprintf("#%d", pr.Number)
 	minLeftW := ansi.StringWidth(number)

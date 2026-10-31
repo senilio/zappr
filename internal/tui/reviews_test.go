@@ -32,17 +32,36 @@ func TestReviewsRowMergeAndOrder(t *testing.T) {
 	m := modelWithPRs([]model.PullRequest{pr}, 0)
 	m.theme = uitheme.New(uitheme.DarkDefault(), colorprofile.TrueColor, false)
 	row := m.reviewsRow(pr, 120)
-	if got, want := stripANSI(row), "  reviews  alice  carol  platform  copilot-pull-request-reviewer"; got != want {
+	if got, want := stripANSI(row), "  reviews  approved alice · waiting carol, platform · bots 1"; got != want {
 		t.Fatalf("row = %q, want %q", got, want)
 	}
 	s := m.theme.Styles
-	for _, want := range []string{s.SuccessCI.Render("alice"), s.Wait.Render("carol"), s.Muted.Render("copilot-pull-request-reviewer")} {
+	for _, want := range []string{s.SuccessCI.Render("alice"), s.Wait.Render("carol"), s.Muted.Render("bots 1")} {
 		if !strings.Contains(row, want) {
 			t.Errorf("row %q lacks styled segment %q", row, want)
 		}
 	}
-	if strings.Contains(row, s.SuccessCI.Render("copilot-pull-request-reviewer")) {
-		t.Error("bot rendered as approval")
+	if strings.Contains(row, "copilot-pull-request-reviewer") {
+		t.Error("bot name should be summarized separately")
+	}
+}
+
+func TestReviewsRowGroupsStableOrder(t *testing.T) {
+	pr := model.PullRequest{ReviewersLoaded: true, Reviewers: []model.Reviewer{
+		{Login: "unknown", State: "FUTURE_STATE"},
+		{Login: "build-bot", State: "APPROVED", Bot: true},
+		{Login: "carol", State: "REQUESTED"},
+		{Login: "dana", State: "DISMISSED"},
+		{Login: "alice", State: "APPROVED"},
+		{Login: "bob", State: "CHANGES_REQUESTED"},
+		{Login: "erin", State: "COMMENTED"},
+		{Login: "frank", State: "APPROVED"},
+		{Login: "review-bot", State: "CHANGES_REQUESTED", Bot: true},
+	}}
+	m := modelWithPRs([]model.PullRequest{pr}, 0)
+	want := "  reviews  approved alice, frank · changes bob · waiting carol · commented erin · dismissed dana · reviewed unknown · bots 2"
+	if got := stripANSI(m.reviewsRow(pr, 180)); got != want {
+		t.Fatalf("grouped row = %q, want %q", got, want)
 	}
 }
 
@@ -63,13 +82,14 @@ func TestReviewsRowNoColorPreservesStates(t *testing.T) {
 		bot   bool
 		want  string
 	}{
-		{name: "approved", state: "APPROVED", want: "alice✓"},
-		{name: "changes requested", state: "CHANGES_REQUESTED", want: "alice✗"},
-		{name: "requested again", state: "REQUESTED", want: "alice●"},
-		{name: "commented", state: "COMMENTED", want: "alice (commented)"},
-		{name: "dismissed", state: "DISMISSED", want: "alice (dismissed)"},
-		{name: "bot approval is advisory", state: "APPROVED", bot: true, want: "alice (bot)"},
-		{name: "bot changes are advisory", state: "CHANGES_REQUESTED", bot: true, want: "alice (bot)"},
+		{name: "approved", state: "APPROVED", want: "approved alice"},
+		{name: "changes requested", state: "CHANGES_REQUESTED", want: "changes alice"},
+		{name: "requested again", state: "REQUESTED", want: "waiting alice"},
+		{name: "commented", state: "COMMENTED", want: "commented alice"},
+		{name: "dismissed", state: "DISMISSED", want: "dismissed alice"},
+		{name: "unknown", state: "FUTURE_STATE", want: "reviewed alice"},
+		{name: "bot approval is advisory", state: "APPROVED", bot: true, want: "bots 1"},
+		{name: "bot changes are advisory", state: "CHANGES_REQUESTED", bot: true, want: "bots 1"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			pr := model.PullRequest{ReviewersLoaded: true, Reviewers: []model.Reviewer{{Login: "alice", State: tt.state, Bot: tt.bot}}}

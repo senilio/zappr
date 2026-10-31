@@ -7,8 +7,10 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/colorprofile"
 	"github.com/senilio/zappr/internal/config"
 	"github.com/senilio/zappr/internal/model"
+	uitheme "github.com/senilio/zappr/internal/tui/theme"
 )
 
 func scrollModel(t testing.TB, count int) Model {
@@ -233,5 +235,17 @@ func TestInboxLayoutCacheInvalidatesOnReviewers(t *testing.T) {
 	after, _ := m.inboxContent(80)
 	if after == before || !strings.Contains(stripANSI(after), "zelda") {
 		t.Fatalf("stale Inbox after reviewers change: %q", stripANSI(after))
+	}
+}
+
+func TestInboxLayoutCacheInvalidatesOnPillOpacity(t *testing.T) {
+	m := scrollModel(t, 2)
+	m.theme = uitheme.New(uitheme.DarkDefault(), colorprofile.TrueColor, false)
+	before := m.inboxPane(80)
+	value := 0.2
+	m.cfg.PillOpacity = &value
+	after := m.inboxPane(80)
+	if before == after || before.content == after.content {
+		t.Fatal("opacity change reused stale inbox layout")
 	}
 }

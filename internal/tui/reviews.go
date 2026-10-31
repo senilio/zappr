@@ -27,34 +27,37 @@ func (m Model) reviewsRow(pr model.PullRequest, innerW int) string {
 	if len(pr.Reviewers) == 0 {
 		return m.expandedRow("reviews", s.Muted.Render("none"), innerW)
 	}
-	names := make([]string, 0, len(pr.Reviewers))
+	groups := make(map[string][]string)
+	bots := 0
 	for _, r := range pr.Reviewers {
-		style := s.Muted
-		suffix := ""
 		if r.Bot {
-			suffix = " (bot)"
-		} else {
-			switch r.State {
-			case "APPROVED":
-				style = s.SuccessCI
-				suffix = "✓"
-			case "CHANGES_REQUESTED":
-				style = s.Error
-				suffix = "✗"
-			case "REQUESTED":
-				style = s.Wait
-				suffix = "●"
-			case "COMMENTED":
-				suffix = " (commented)"
-			case "DISMISSED":
-				suffix = " (dismissed)"
-			}
+			bots++
+			continue
 		}
-		name := r.Login
-		if m.theme.NoColor {
-			name += suffix
+		style := s.Muted
+		group := "reviewed"
+		switch r.State {
+		case "APPROVED":
+			group, style = "approved", s.SuccessCI
+		case "CHANGES_REQUESTED":
+			group, style = "changes", s.Error
+		case "REQUESTED":
+			group, style = "waiting", s.Wait
+		case "COMMENTED":
+			group = "commented"
+		case "DISMISSED":
+			group = "dismissed"
 		}
-		names = append(names, style.Render(name))
+		groups[group] = append(groups[group], style.Render(r.Login))
 	}
-	return m.expandedRow("reviews", strings.Join(names, "  "), innerW)
+	parts := make([]string, 0, len(groups)+1)
+	for _, group := range []string{"approved", "changes", "waiting", "commented", "dismissed", "reviewed"} {
+		if names := groups[group]; len(names) > 0 {
+			parts = append(parts, s.Muted.Render(group+" ")+strings.Join(names, s.Muted.Render(", ")))
+		}
+	}
+	if bots > 0 {
+		parts = append(parts, s.Muted.Render(fmt.Sprintf("bots %d", bots)))
+	}
+	return m.expandedRow("reviews", strings.Join(parts, s.Muted.Render(" · ")), innerW)
 }

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -552,6 +553,50 @@ func actionLine(data, id string) string {
 func TestDefaultPillsIsRounded(t *testing.T) {
 	if got := Default().Pills; got != "" {
 		t.Fatalf("Default().Pills = %q, want empty (rounded)", got)
+	}
+}
+
+func TestPillOpacityConfig(t *testing.T) {
+	if got := Default().EffectivePillOpacity(); got != 0.7 {
+		t.Fatalf("default pill opacity = %v, want 0.7", got)
+	}
+	for _, value := range []float64{0, 0.3, 1} {
+		t.Run(fmt.Sprint(value), func(t *testing.T) {
+			t.Setenv("XDG_CONFIG_HOME", filepath.Join(t.TempDir(), "config"))
+			cfg := Default()
+			cfg.PillOpacity = &value
+			if err := Save(cfg); err != nil {
+				t.Fatal(err)
+			}
+			got, err := Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.PillOpacity == nil || got.EffectivePillOpacity() != value {
+				t.Fatalf("round-trip opacity = %v, want %v", got.PillOpacity, value)
+			}
+		})
+	}
+}
+
+func TestLoadRejectsInvalidPillOpacity(t *testing.T) {
+	for _, value := range []string{"-0.1", "1.1", ".nan", ".inf", "-.inf"} {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv("XDG_CONFIG_HOME", filepath.Join(t.TempDir(), "config"))
+			if err := Save(Default()); err != nil {
+				t.Fatal(err)
+			}
+			path, err := DefaultConfigPath()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte("pill_opacity: "+value+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Load(); err == nil || !strings.Contains(err.Error(), "pill_opacity") {
+				t.Fatalf("Load invalid opacity %s: %v", value, err)
+			}
+		})
 	}
 }
 

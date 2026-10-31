@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -22,15 +23,24 @@ var (
 )
 
 type Config struct {
-	Refresh    RefreshConfig           `yaml:"refresh"`
-	Cache      CacheConfig             `yaml:"cache"`
-	Theme      string                  `yaml:"theme,omitempty"`
-	Pills      string                  `yaml:"pills,omitempty"`
-	Sort       string                  `yaml:"sort,omitempty"`
-	HideDrafts bool                    `yaml:"hide_drafts"`
-	Wrap       WrapConfig              `yaml:"wrap"`
-	Atlantis   AtlantisConfig          `yaml:"atlantis,omitempty"`
-	Actions    map[string]ActionConfig `yaml:"actions"`
+	Refresh     RefreshConfig           `yaml:"refresh"`
+	Cache       CacheConfig             `yaml:"cache"`
+	Theme       string                  `yaml:"theme,omitempty"`
+	Pills       string                  `yaml:"pills,omitempty"`
+	PillOpacity *float64                `yaml:"pill_opacity,omitempty"`
+	Sort        string                  `yaml:"sort,omitempty"`
+	HideDrafts  bool                    `yaml:"hide_drafts"`
+	Wrap        WrapConfig              `yaml:"wrap"`
+	Atlantis    AtlantisConfig          `yaml:"atlantis,omitempty"`
+	Actions     map[string]ActionConfig `yaml:"actions"`
+}
+
+// EffectivePillOpacity leaves unset configurations slightly softer by default.
+func (cfg Config) EffectivePillOpacity() float64 {
+	if cfg.PillOpacity == nil {
+		return 0.7
+	}
+	return *cfg.PillOpacity
 }
 
 type WrapConfig struct {
@@ -241,23 +251,25 @@ func Load() (Config, error) {
 		return cfg, err
 	}
 	file := struct {
-		Refresh    RefreshConfig             `yaml:"refresh"`
-		Cache      CacheConfig               `yaml:"cache"`
-		Theme      string                    `yaml:"theme,omitempty"`
-		Pills      string                    `yaml:"pills,omitempty"`
-		Sort       string                    `yaml:"sort,omitempty"`
-		HideDrafts bool                      `yaml:"hide_drafts,omitempty"`
-		Wrap       WrapConfig                `yaml:"wrap"`
-		Atlantis   AtlantisConfig            `yaml:"atlantis,omitempty"`
-		Actions    map[string]actionOverride `yaml:"actions"`
+		Refresh     RefreshConfig             `yaml:"refresh"`
+		Cache       CacheConfig               `yaml:"cache"`
+		Theme       string                    `yaml:"theme,omitempty"`
+		Pills       string                    `yaml:"pills,omitempty"`
+		PillOpacity *float64                  `yaml:"pill_opacity,omitempty"`
+		Sort        string                    `yaml:"sort,omitempty"`
+		HideDrafts  bool                      `yaml:"hide_drafts,omitempty"`
+		Wrap        WrapConfig                `yaml:"wrap"`
+		Atlantis    AtlantisConfig            `yaml:"atlantis,omitempty"`
+		Actions     map[string]actionOverride `yaml:"actions"`
 	}{
-		Refresh:    cfg.Refresh,
-		Cache:      cfg.Cache,
-		Theme:      cfg.Theme,
-		Pills:      cfg.Pills,
-		Sort:       cfg.Sort,
-		HideDrafts: cfg.HideDrafts,
-		Atlantis:   cfg.Atlantis,
+		Refresh:     cfg.Refresh,
+		Cache:       cfg.Cache,
+		Theme:       cfg.Theme,
+		Pills:       cfg.Pills,
+		PillOpacity: cfg.PillOpacity,
+		Sort:        cfg.Sort,
+		HideDrafts:  cfg.HideDrafts,
+		Atlantis:    cfg.Atlantis,
 	}
 	if err := yaml.Unmarshal(data, &file); err != nil {
 		return cfg, fmt.Errorf("parse config %s: %w", path, err)
@@ -266,6 +278,10 @@ func Load() (Config, error) {
 	cfg.Cache = file.Cache
 	cfg.Theme = file.Theme
 	cfg.Pills = file.Pills
+	cfg.PillOpacity = file.PillOpacity
+	if opacity := cfg.EffectivePillOpacity(); math.IsNaN(opacity) || math.IsInf(opacity, 0) || opacity < 0 || opacity > 1 {
+		return cfg, fmt.Errorf("pill_opacity must be a finite number between 0 and 1")
+	}
 	cfg.Sort = file.Sort
 	cfg.HideDrafts = file.HideDrafts
 	cfg.Wrap = file.Wrap

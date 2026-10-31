@@ -551,8 +551,8 @@ func TestInboxAtlantisRowStaysOneLineWhenWrapped(t *testing.T) {
 		t.Errorf("selected span = %d rows, want %d (title %d + meta + reviews + atlantis)", got, want, titleRows)
 	}
 	lines := strings.Split(content, "\n")
-	if got := strings.TrimSpace(stripANSI(lines[spans[0].end-1])); !strings.HasPrefix(got, "atlantis") {
-		t.Errorf("last selected row = %q, want atlantis row", got)
+	if got := strings.TrimSpace(stripANSI(lines[spans[0].end-1])); !strings.HasPrefix(got, "tf ") {
+		t.Errorf("last selected row = %q, want compact Atlantis row", got)
 	}
 }
 

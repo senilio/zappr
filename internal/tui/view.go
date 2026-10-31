@@ -2,13 +2,16 @@ package tui
 
 import (
 	"fmt"
+	"io"
 	"regexp"
 	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/charmbracelet/x/cellbuf"
 	"github.com/senilio/zappr/internal/model"
 	uitheme "github.com/senilio/zappr/internal/tui/theme"
 )
@@ -321,7 +324,7 @@ func (m Model) layoutView() string {
 		modal = m.renderModalBox(m.atlantisGuardPanel())
 	}
 	if modal != "" {
-		body = overlayModal(body, modal, m.width, bodyHeight, m.selectedInboxPreserveRanges(bodyHeight))
+		body = m.overlayModal(body, modal, m.width, bodyHeight, m.selectedInboxPreserveRanges(bodyHeight))
 	}
 
 	return fit(lipgloss.JoinVertical(lipgloss.Left, header, body))
@@ -370,17 +373,16 @@ func (m Model) commandModalWidth() int {
 	return min(60, max(32, m.width-8))
 }
 
-// overlayModal composites a modal box centered over a dimmed background.
-// bg is expected to be bodyHeight lines wide at width columns.
-// The background is stripped of color and dimmed; the modal renders at full color.
 type preserveRange struct {
 	row        int
 	start, end int
 }
 
-func overlayModal(bg, modal string, width, height int, preserve []preserveRange) string {
-	// Strip ANSI from each background line, then apply uniform dim.
-	// This ensures no internal reset sequences break the dim attribute.
+// overlayModal composites a full-color modal over a styled, dimmed background.
+func (m Model) overlayModal(bg, modal string, width, height int, preserve []preserveRange) string {
+	if width <= 0 || height <= 0 {
+		return ""
+	}
 	bgLines := strings.Split(bg, "\n")
 	for len(bgLines) < height {
 		bgLines = append(bgLines, "")
@@ -388,7 +390,7 @@ func overlayModal(bg, modal string, width, height int, preserve []preserveRange)
 	bgLines = bgLines[:height]
 	dimmedBg := make([]string, height)
 	for i, line := range bgLines {
-		dimmedBg[i] = dimLineWithPreserve(line, width, rangesForRow(preserve, i))
+		dimmedBg[i] = m.dimLineWithPreserve(line, width, rangesForRow(preserve, i))
 	}
 
 	// Split modal into lines and measure its width.
@@ -416,35 +418,18 @@ func overlayModal(bg, modal string, width, height int, preserve []preserveRange)
 		if row >= height {
 			break
 		}
-		// bg line is plain text (no ANSI); slice by column directly.
-		plain := stripANSI(bgLines[row])
-		missing := width - ansi.StringWidth(plain)
-		if missing > 0 {
-			plain += strings.Repeat(" ", missing)
-		}
-		left := ""
-		if startCol > 0 {
-			left = "\x1b[2m" + ansi.Cut(plain, 0, startCol) + "\x1b[0m"
-		}
-		right := ""
-		modalEnd := startCol + modalW
-		if modalEnd < width {
-			right = "\x1b[2m" + ansi.Cut(plain, modalEnd, width) + "\x1b[0m"
-		}
-		result[row] = left + mLine + right
+		modalEnd := min(width, startCol+modalW)
+		left := cutModalLine(dimmedBg[row], 0, startCol)
+		right := cutModalLine(dimmedBg[row], modalEnd, width)
+		result[row] = left + cutModalLine(mLine, 0, modalEnd-startCol) + right
 	}
 
 	return strings.Join(result, "\n")
 }
 
-func dimLineWithPreserve(line string, width int, ranges []preserveRange) string {
-	plain := stripANSI(line)
-	missing := width - ansi.StringWidth(plain)
-	if missing > 0 {
-		plain += strings.Repeat(" ", missing)
-	}
+func (m Model) dimLineWithPreserve(line string, width int, ranges []preserveRange) string {
 	if len(ranges) == 0 {
-		return "\x1b[2m" + plain + "\x1b[0m"
+		return m.dimStyledLine(cutModalLine(line, 0, width))
 	}
 	var b strings.Builder
 	pos := 0
@@ -452,17 +437,107 @@ func dimLineWithPreserve(line string, width int, ranges []preserveRange) string 
 		start := max(pos, min(width, r.start))
 		end := max(start, min(width, r.end))
 		if start > pos {
-			b.WriteString("\x1b[2m" + ansi.Cut(plain, pos, start) + "\x1b[0m")
+			b.WriteString(m.dimStyledLine(cutModalLine(line, pos, start)))
 		}
 		if end > start {
-			b.WriteString(ansi.Cut(line, start, end))
+			b.WriteString(cutModalLine(line, start, end))
 		}
 		pos = end
 	}
 	if pos < width {
-		b.WriteString("\x1b[2m" + ansi.Cut(plain, pos, width) + "\x1b[0m")
+		b.WriteString(m.dimStyledLine(cutModalLine(line, pos, width)))
 	}
 	return b.String()
+}
+
+func (m Model) dimStyledLine(line string) string {
+	pen := cellbuf.NewPenWriter(io.Discard)
+	defer pen.Close()
+	indexed := m.theme.Palette.Name == "ansi" || m.theme.Profile <= colorprofile.ANSI
+	var b strings.Builder
+	var previous cellbuf.Style
+	var link cellbuf.Link
+	var state byte
+	for len(line) > 0 {
+		seq, _, n, next, printable := decodeModalSequence(line, state)
+		_, _ = pen.Write([]byte(seq))
+		if printable {
+			style := pen.Style()
+			if indexed {
+				// Keep terminal-defined colors intact instead of rounding faded RGB to black.
+				style.Faint(true)
+			} else {
+				style.Fg = m.theme.Fade(style.Fg, 0.4)
+				style.Bg = m.theme.Fade(style.Bg, 0.4)
+				style.Ul = m.theme.Fade(style.Ul, 0.4)
+				style.Faint(style.Fg == nil)
+			}
+			if !style.Equal(&previous) {
+				b.WriteString(ansi.ResetStyle)
+				b.WriteString(style.Sequence())
+				previous = style
+			}
+			if nextLink := pen.Link(); nextLink != link {
+				b.WriteString(ansi.SetHyperlink(nextLink.URL, nextLink.Params))
+				link = nextLink
+			}
+			b.WriteString(seq)
+		}
+		line, state = line[n:], next
+	}
+	if !link.Empty() {
+		b.WriteString(ansi.ResetHyperlink())
+	}
+	b.WriteString(ansi.ResetStyle)
+	return b.String()
+}
+
+// cutModalLine isolates a column slice, replacing partial wide glyphs with
+// spaces so clipping cannot shift the modal or its right-hand backdrop.
+func cutModalLine(line string, left, right int) string {
+	if right <= left {
+		return ""
+	}
+	var b strings.Builder
+	var state byte
+	pos := 0
+	keepBase := left == 0
+	for len(line) > 0 {
+		seq, width, n, next, printable := decodeModalSequence(line, state)
+		if !printable {
+			b.WriteString(seq)
+		} else if width == 0 {
+			if keepBase {
+				b.WriteString(seq)
+			}
+		} else {
+			keepBase = false
+			if start, end := max(left, pos), min(right, pos+width); end > start {
+				if start != pos || end != pos+width {
+					b.WriteString(strings.Repeat(" ", end-start))
+				} else {
+					b.WriteString(seq)
+					keepBase = true
+				}
+			}
+		}
+		pos += width
+		line, state = line[n:], next
+	}
+	b.WriteString(ansi.ResetStyle)
+	b.WriteString(strings.Repeat(" ", max(0, right-max(left, pos))))
+	return b.String()
+}
+
+// Decode text as full graphemes: DecodeSequence's ASCII fast path splits off
+// combining marks, and zero cell width alone does not identify an ANSI control.
+func decodeModalSequence(line string, state byte) (seq string, width, n int, next byte, printable bool) {
+	if state == ansi.NormalState && (line[0] > ansi.US && line[0] < ansi.DEL || line[0] >= 0xc0) {
+		seq, width = ansi.FirstGraphemeCluster(line, ansi.GraphemeWidth)
+		return seq, width, len(seq), ansi.NormalState, true
+	}
+	seq, width, n, next = ansi.DecodeSequence(line, state, nil)
+	return seq, width, n, next, false
 }
 
 func rangesForRow(ranges []preserveRange, row int) []preserveRange {

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/senilio/zappr/internal/model"
 	uitheme "github.com/senilio/zappr/internal/tui/theme"
@@ -36,17 +37,20 @@ func TestAtlantisVerdict(t *testing.T) {
 	}{
 		{"apply failed", with(passed, func(a *model.AtlantisSummary) { a.Apply = model.ApplyFailed }), "APPLY FAILED", uitheme.PillFailed, ""},
 		{"plan failed", model.AtlantisSummary{Plan: model.PlanFailed, PlanProject: "a", PlanAffectedCount: 2, PlanAt: planAt}, "PLAN FAILED", uitheme.PillFailed, "a +1"},
-		{"policy failed", with(passed, func(a *model.AtlantisSummary) { a.Policy = model.PolicyFailed }), "PLAN FAILED", uitheme.PillFailed, "policy check failed"},
+		{"policy failed", with(passed, func(a *model.AtlantisSummary) { a.Policy = model.PolicyFailed }), "PLAN FAILED", uitheme.PillFailed, "policy failed"},
 		{"apply running", with(passed, func(a *model.AtlantisSummary) { a.Apply = model.ApplyRunning }), "APPLYING", uitheme.PillWait, ""},
-		{"plan running", model.AtlantisSummary{Plan: model.PlanRunning, PlanAt: planAt}, "PLANNING", uitheme.PillWait, "6m ago"},
-		{"policy running", with(passed, func(a *model.AtlantisSummary) { a.Policy = model.PolicyRunning }), "PLANNING", uitheme.PillWait, "6m ago"},
-		{"passed 12 projects", with(passed, func(a *model.AtlantisSummary) { a.PlanProjectCount = 12 }), "PLAN OK", uitheme.PillPassed, "ready to apply · 12 projects · 6m ago"},
-		{"passed 1 project", with(passed, func(a *model.AtlantisSummary) { a.PlanProjectCount, a.PlanProject = 1, "sso-sso" }), "PLAN OK", uitheme.PillPassed, "ready to apply · sso-sso · 6m ago"},
-		{"applied", with(passed, func(a *model.AtlantisSummary) { a.Apply = model.ApplyDone }), "PLAN OK", uitheme.PillPassed, "applied · 6m ago"},
-		{"nothing to apply", with(passed, func(a *model.AtlantisSummary) { a.Apply = model.ApplyNothing }), "PLAN OK", uitheme.PillPassed, "nothing to apply · 6m ago"},
+		{"plan running", model.AtlantisSummary{Plan: model.PlanRunning, PlanAt: planAt}, "PLANNING", uitheme.PillWait, "6m"},
+		{"policy running", with(passed, func(a *model.AtlantisSummary) { a.Policy = model.PolicyRunning }), "PLANNING", uitheme.PillWait, "6m"},
+		{"passed 12 projects", with(passed, func(a *model.AtlantisSummary) { a.PlanProjectCount = 12 }), "PLAN OK", uitheme.PillPassed, "ready · 12p · 6m"},
+		{"passed 1 project", with(passed, func(a *model.AtlantisSummary) { a.PlanProjectCount, a.PlanProject = 1, "sso-sso" }), "PLAN OK", uitheme.PillPassed, "ready · sso-sso · 6m"},
+		{"applied", with(passed, func(a *model.AtlantisSummary) { a.Apply = model.ApplyDone }), "PLAN OK", uitheme.PillPassed, "applied · 6m"},
+		{"nothing to apply", with(passed, func(a *model.AtlantisSummary) { a.Apply = model.ApplyNothing }), "PLAN OK", uitheme.PillPassed, "no changes · 6m"},
 		{"plan failed beats apply done", model.AtlantisSummary{Plan: model.PlanFailed, Apply: model.ApplyDone}, "PLAN FAILED", uitheme.PillFailed, ""},
+		{"apply failure beats plan failure", model.AtlantisSummary{Plan: model.PlanFailed, Apply: model.ApplyFailed}, "APPLY FAILED", uitheme.PillFailed, ""},
+		{"plan failure beats apply running", model.AtlantisSummary{Plan: model.PlanFailed, Apply: model.ApplyRunning}, "PLAN FAILED", uitheme.PillFailed, ""},
+		{"policy failure beats plan running", model.AtlantisSummary{Plan: model.PlanRunning, Policy: model.PolicyFailed}, "PLAN FAILED", uitheme.PillFailed, "policy failed"},
 		{"none", model.AtlantisSummary{}, "NO PLAN", uitheme.PillNone, ""},
-		{"future plan", with(passed, func(a *model.AtlantisSummary) { a.PlanAt = now.Add(time.Hour) }), "PLAN OK", uitheme.PillPassed, "ready to apply · 0s ago"},
+		{"future plan", with(passed, func(a *model.AtlantisSummary) { a.PlanAt = now.Add(time.Hour) }), "PLAN OK", uitheme.PillPassed, "ready · 0s"},
 	}
 	for _, tc := range cases {
 		label, state, note := atlantisVerdict(tc.a, now)
@@ -68,7 +72,7 @@ func TestAtlantisRowContent(t *testing.T) {
 	pr := model.PullRequest{Number: 1, Checks: manyProjectChecks(12, time.Now().Add(-6*time.Minute))}
 	m := modelWithPRs([]model.PullRequest{pr}, 0)
 	m.cfg.Pills = "square"
-	if got, want := stripANSI(m.atlantisRow(pr, 80)), "  atlantis  PLAN OK   ready to apply · 12 projects · 6m ago"; got != want {
+	if got, want := stripANSI(m.atlantisRow(pr, 80)), "  atlantis  PLAN OK   ready · 12p · 6m"; got != want {
 		t.Errorf("row = %q, want %q", got, want)
 	}
 }
@@ -78,6 +82,57 @@ func TestAtlantisRowTruncatesToWidth(t *testing.T) {
 	m := modelWithPRs([]model.PullRequest{pr}, 0)
 	if got := ansi.StringWidth(m.atlantisRow(pr, 20)); got > 20 {
 		t.Errorf("row width %d exceeds 20", got)
+	}
+}
+
+func TestAtlantisRowPrioritizesOutcome(t *testing.T) {
+	pr := model.PullRequest{Checks: append(manyProjectChecks(12, time.Now().Add(-6*time.Minute)), model.Check{Context: "atlantis/apply", State: "SUCCESS"})}
+	m := modelWithPRs([]model.PullRequest{pr}, 0)
+	m.theme = uitheme.New(uitheme.DarkDefault(), colorprofile.TrueColor, false)
+	for _, tt := range []struct {
+		width       int
+		wantPrefix  string
+		wantProject bool
+		wantAge     bool
+	}{
+		{80, "  atlantis", true, true},
+		{40, "  atlantis", false, true},
+		{32, "  atlantis", false, false},
+		{31, "  tf ", false, true},
+	} {
+		t.Run(fmt.Sprint(tt.width), func(t *testing.T) {
+			row := m.atlantisRow(pr, tt.width)
+			plain := stripANSI(row)
+			if !strings.HasPrefix(plain, tt.wantPrefix) || !strings.Contains(plain, "PLAN OK") || !strings.Contains(plain, "no changes") {
+				t.Fatalf("outcome lost at width %d: %q", tt.width, plain)
+			}
+			if strings.Contains(plain, "12p") != tt.wantProject || strings.Contains(plain, "6m") != tt.wantAge {
+				t.Errorf("wrong omission priority: %q", plain)
+			}
+			if ansi.StringWidth(row) > tt.width {
+				t.Errorf("row exceeds width %d: %q", tt.width, plain)
+			}
+		})
+	}
+}
+
+func TestAtlantisRowNarrowWidthsKeepVerdict(t *testing.T) {
+	for _, noColor := range []bool{false, true} {
+		for _, shape := range []string{"rounded", "square"} {
+			for _, state := range []string{"SUCCESS", "PENDING", "FAILURE"} {
+				pr := model.PullRequest{Checks: atlantisChecks(state, time.Now().Add(-time.Minute))}
+				m := modelWithPRs([]model.PullRequest{pr}, 0)
+				m.cfg.Pills = shape
+				m.theme = uitheme.New(uitheme.DarkDefault(), colorprofile.TrueColor, noColor)
+				label, _, _ := atlantisVerdict(model.DeriveAtlantis(pr.Checks), time.Now())
+				for width := 20; width <= 80; width++ {
+					row := m.atlantisRow(pr, width)
+					if ansi.StringWidth(row) > width || strings.Contains(row, "\n") || !strings.Contains(stripANSI(row), label) {
+						t.Errorf("noColor=%v shape=%s state=%s width=%d: %q", noColor, shape, state, width, row)
+					}
+				}
+			}
+		}
 	}
 }
 

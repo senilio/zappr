@@ -138,17 +138,19 @@ aligned to the right:
   and `blocked`. `blocked` appears only when CI passed and the PR is approved
   but GitHub still blocks the merge. On narrow panes these drop first.
 
-The selected PR adds a `reviews` row listing reviewers colored by state:
-approvals green, requested changes red, pending requests yellow, comments
-muted. Bots are muted, listed last, and never shown as an approval; a login is
-treated as a bot when it ends in `[bot]`, `-bot`, or `-reviewer`. In Atlantis
-repositories an `atlantis` row with a verdict pill follows.
+The selected PR adds a `reviews` row grouped by state, for example
+`approved alice · waiting carol, platform · bots 1`. Human names are green for
+approval, red for requested changes, yellow for pending requests, and muted for
+comments or dismissed reviews. Group labels remain readable without color;
+unknown review states use `reviewed`. Bots appear only as a count at the end,
+never in human approval groups; a login is treated as a bot when it ends in
+`[bot]`, `-bot`, or `-reviewer`. In Atlantis repositories an `atlantis` row with
+a verdict pill follows.
 
 Pills use Nerd Font rounded ends by default. Set `pills: square` to avoid Nerd
 Font glyphs. Terminals without color show symbols instead: `CI✓`, `CI…`,
-`CI✗`, `CI–`. Reviewer names use `✓` for approval, `✗` for changes requested,
-and `●` for pending requests; comments, dismissed reviews, and bots have
-explicit labels.
+`CI✗`, `CI–`. Reviewer groups use the same explicit labels with or without
+color.
 
 ### Command palette
 
@@ -200,6 +202,7 @@ refresh:
 cache:
   path: /Users/you/.cache/zappr/zappr.db
 pills: rounded
+pill_opacity: 0.7
 wrap:
   inbox: false
   summary: false
@@ -209,7 +212,10 @@ atlantis:
 ```
 
 `pills: rounded` (the default) needs a Nerd Font; `pills: square` avoids Nerd
-Font glyphs.
+Font glyphs. `pill_opacity` controls background intensity from `0` (panel
+background) to `1` (original intensity), defaulting to `0.7`. Labels keep their
+brightness. This blends colors rather than using terminal transparency and has
+no effect in no-color mode or the `ansi` palette.
 
 ### TUI actions
 
@@ -294,14 +300,15 @@ row with a verdict read from those statuses. zappr does not parse comments for
 this. The row is a single line and is never wrapped. Example:
 
 ```text
-atlantis  PLAN OK  ready to apply · 12 projects · 6m ago
+atlantis  PLAN OK  ready · 12p · 6m
 ```
 
 The verdict is the first that applies: `APPLY FAILED`, `PLAN FAILED` (naming
 the failed project, or noting a failed policy check), `APPLYING`, `PLANNING`,
-`PLAN OK`, or `NO PLAN`. For `PLAN OK` the note says `ready to apply`,
-`applied`, or `nothing to apply`, followed by the project (or project count) and how long ago the
-plan reported.
+`PLAN OK`, or `NO PLAN`. For `PLAN OK` the note says `ready`, `applied`, or
+`no changes`, followed by the project (or a count such as `12p`) and plan age.
+Narrow panes drop successful-plan project detail before the age, keeping the
+verdict and outcome first. Below 32 columns the row label shortens to `tf`.
 
 Comments whose first two words are `atlantis plan` or `atlantis apply` (case
 insensitive) are guarded, whether they come from an action or from free text.

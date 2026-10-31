@@ -2,6 +2,7 @@ package theme
 
 import (
 	"image/color"
+	"math"
 	"strings"
 
 	"charm.land/lipgloss/v2"
@@ -56,7 +57,7 @@ func (t Theme) isANSIPalette() bool { return t.Palette.Name == "ansi" }
 
 // Pill renders label as a status pill. Its width is always len(label)+2
 // cells so pills line up in columns regardless of shape or color mode.
-func (t Theme) Pill(label string, state PillState, shape PillShape) string {
+func (t Theme) Pill(label string, state PillState, shape PillShape, opacity float64) string {
 	if t.NoColor {
 		return " " + label + pillSymbol(state)
 	}
@@ -79,12 +80,49 @@ func (t Theme) Pill(label string, state PillState, shape PillShape) string {
 	default:
 		bg = lipgloss.Darken(fg, 0.7)
 	}
+	bg = t.Fade(bg, opacity)
+	if state == PillFailed && contrast(bg, t.Palette.Text) > contrast(bg, fg) {
+		fg = t.Palette.Text
+	}
 	body := lipgloss.NewStyle().Background(bg).Foreground(fg).Bold(state == PillFailed)
 	if shape == PillSquare {
 		return body.Render(" " + label + " ")
 	}
 	end := lipgloss.NewStyle().Foreground(bg)
 	return end.Render(pillLeftEnd) + body.Render(label) + end.Render(pillRightEnd)
+}
+
+// Fade blends a color toward the panel background, without terminal alpha.
+func (t Theme) Fade(c color.Color, opacity float64) color.Color {
+	if c == nil || t.Palette.Panel == nil {
+		return c
+	}
+	opacity = max(0, min(1, opacity))
+	r, g, b, _ := c.RGBA()
+	pr, pg, pb, _ := t.Palette.Panel.RGBA()
+	blend := func(c, panel uint32) uint8 {
+		return uint8(float64(panel>>8)*(1-opacity) + float64(c>>8)*opacity)
+	}
+	return color.RGBA{R: blend(r, pr), G: blend(g, pg), B: blend(b, pb), A: 255}
+}
+
+func contrast(a, b color.Color) float64 {
+	if a == nil || b == nil {
+		return 0
+	}
+	luminance := func(c color.Color) float64 {
+		r, g, b, _ := c.RGBA()
+		linear := func(v uint32) float64 {
+			x := float64(v) / 65535
+			if x <= 0.04045 {
+				return x / 12.92
+			}
+			return math.Pow((x+0.055)/1.055, 2.4)
+		}
+		return 0.2126*linear(r) + 0.7152*linear(g) + 0.0722*linear(b)
+	}
+	x, y := luminance(a), luminance(b)
+	return (max(x, y) + 0.05) / (min(x, y) + 0.05)
 }
 
 func pillSymbol(state PillState) string {

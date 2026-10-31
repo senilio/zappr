@@ -58,6 +58,7 @@ type inboxLayoutKey struct {
 	atlantisRepo    bool
 	minute          int64
 	pills           uitheme.PillShape
+	pillOpacity     float64
 }
 
 type inboxLayoutCache struct {
@@ -67,7 +68,7 @@ type inboxLayoutCache struct {
 }
 
 func (m *Model) inboxPane(width int) *paneLayout {
-	key := inboxLayoutKey{width: width, selected: m.selected, wrap: m.cfg.Wrap.Inbox, theme: m.layoutTheme(), pills: m.pillShape()}
+	key := inboxLayoutKey{width: width, selected: m.selected, wrap: m.cfg.Wrap.Inbox, theme: m.layoutTheme(), pills: m.pillShape(), pillOpacity: m.cfg.EffectivePillOpacity()}
 	if key.atlantisRepo = m.isAtlantisRepo(); key.atlantisRepo {
 		key.minute = timeNow().Unix() / 60
 	}
