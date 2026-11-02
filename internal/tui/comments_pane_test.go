@@ -30,7 +30,7 @@ func TestNewModelEnablesDiffByDefault(t *testing.T) {
 	}
 }
 
-func TestCommentsListShowsAuthorAndTimestampOnly(t *testing.T) {
+func TestCommentsListShowsIdentityAndTimestamp(t *testing.T) {
 	m := commentPaneModel(t)
 	view := stripANSI(m.summaryPanel(60, 12))
 	if !strings.Contains(view, "newest-author") || !strings.Contains(view, "Today") {
@@ -40,10 +40,10 @@ func TestCommentsListShowsAuthorAndTimestampOnly(t *testing.T) {
 		t.Fatalf("comment list not newest first: %q", view)
 	}
 	if lines := strings.Split(view, "\n"); !strings.HasPrefix(lines[0], "Today ") || !strings.Contains(lines[0], " · newest-author") || !strings.Contains(lines[1], " · older-author") {
-		t.Fatalf("comment rows not formatted as timestamp · author: %q", lines[:2])
+		t.Fatalf("comment rows missing identity: %q", lines[:2])
 	}
-	if strings.Contains(view, "body") || strings.Contains(view, "main.go") {
-		t.Fatalf("comment list shows comment content: %q", view)
+	if strings.Contains(view, "newest body") || strings.Contains(view, "older body") || !strings.Contains(view, "inline") {
+		t.Fatalf("comment list includes preview or is missing kind: %q", view)
 	}
 }
 
@@ -58,6 +58,7 @@ func TestCommentPaneShowsSelectedComment(t *testing.T) {
 	}
 	for _, key := range []tea.KeyPressMsg{{Code: tea.KeyDown}, {Code: tea.KeyDown, Mod: tea.ModShift}} {
 		m.commentIndex = 0
+		m.commentState.selectedKey = newestComments(m.prs[0].Comments)[0].Key()
 		next, _ := m.Update(key)
 		m = next.(Model)
 		view = stripANSI(m.diffPanel(80, 20))
@@ -79,12 +80,12 @@ func TestCommentPaneFocusableWithoutDiff(t *testing.T) {
 	}
 }
 
-func TestCommentSelectionResetsOnModeSwitch(t *testing.T) {
+func TestCommentSelectionSurvivesModeSwitch(t *testing.T) {
 	m := commentPaneModel(t)
 	m = pressSpecial(m, tea.KeyDown)
 	m = pressKey(m, "1")
 	m = pressKey(m, "3")
-	if m.commentIndex != 0 {
-		t.Fatalf("comment selection = %d after switching back, want 0", m.commentIndex)
+	if m.commentIndex != 1 {
+		t.Fatalf("comment selection = %d after switching back, want 1", m.commentIndex)
 	}
 }

@@ -103,6 +103,9 @@ type Model struct {
 	sideDiffFailed     string
 	diffEnabled        bool
 	summaryMode        SummaryMode
+	planState          planReaderState
+	readerIntentToken  uint64
+	commentState       commentViewState
 
 	commandInput  string // typed input after ":"
 	helpInput     string
@@ -148,6 +151,7 @@ const (
 	SummaryModeFiles SummaryMode = iota
 	SummaryModeCommits
 	SummaryModeComments
+	SummaryModePlan
 )
 
 func (m SummaryMode) String() string {
@@ -156,6 +160,8 @@ func (m SummaryMode) String() string {
 		return "commits"
 	case SummaryModeComments:
 		return "comments"
+	case SummaryModePlan:
+		return "plan"
 	default:
 		return "files"
 	}
@@ -196,10 +202,11 @@ type refreshMsg struct {
 }
 
 type refreshPRMsg struct {
-	repo   string
-	number int
-	pr     model.PullRequest
-	err    error
+	repo        string
+	number      int
+	pr          model.PullRequest
+	err         error
+	requestHead string
 }
 
 type atlantisCheckMsg struct {
@@ -299,7 +306,7 @@ func refreshPRCmd(app *app.App, pr model.PullRequest) tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		fresh, err := app.RefreshPR(ctx, pr.Repo, pr.Number)
-		return refreshPRMsg{repo: pr.Repo, number: pr.Number, pr: fresh, err: err}
+		return refreshPRMsg{repo: pr.Repo, number: pr.Number, pr: fresh, err: err, requestHead: pr.HeadRefOID}
 	}
 }
 

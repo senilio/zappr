@@ -1,0 +1,16 @@
+Ran Plan for project: `example-app` dir: `infra/example-app` workspace: `default`
+
+<details><summary>Show Output</summary>
+
+```diff
+OpenTofu will perform the following actions:
+  # example_resource.item["alpha"] will be created
+  + resource "example_resource" "item" {
+      + content = <<-EOT
+          First line of a new value.
+```
+</details>
+
+<br>
+
+**Warning**: Output length greater than max comment size. Continued in next comment.

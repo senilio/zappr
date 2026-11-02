@@ -46,7 +46,7 @@ func (p *GHProvider) ListPRs(ctx context.Context, repo string) ([]model.PullRequ
 }
 
 func (p *GHProvider) GetPR(ctx context.Context, repo string, number int) (model.PullRequest, error) {
-	out, err := p.run(ctx, "pr", "view", strconv.Itoa(number), "--repo", repo, "--json", "number,title,author,url,labels,additions,deletions,changedFiles,isDraft,autoMergeRequest,state,headRefOid,statusCheckRollup,reviewDecision,files,commits,comments,reviews,latestReviews,reviewRequests,mergeStateStatus,updatedAt")
+	out, err := p.run(ctx, "pr", "view", strconv.Itoa(number), "--repo", repo, "--json", "number,title,author,url,labels,additions,deletions,changedFiles,isDraft,autoMergeRequest,state,headRefOid,statusCheckRollup,reviewDecision,files,commits,reviews,latestReviews,reviewRequests,mergeStateStatus,updatedAt")
 	if err != nil {
 		return model.PullRequest{}, err
 	}
@@ -55,11 +55,16 @@ func (p *GHProvider) GetPR(ctx context.Context, repo string, number int) (model.
 		return model.PullRequest{}, fmt.Errorf("parse gh pr view: %w", err)
 	}
 	pr := raw.toModel(repo)
+	pr.Comments, err = p.conversationComments(ctx, repo, number)
+	if err != nil {
+		return model.PullRequest{}, err
+	}
 	for _, review := range raw.Reviews {
 		if strings.TrimSpace(review.Body) == "" || review.State == "PENDING" {
 			continue
 		}
 		pr.Comments = append(pr.Comments, model.PRComment{
+			ID: review.ID, URL: review.URL,
 			Author: review.Author.Login, Body: review.Body,
 			CreatedAt: parseTime(review.SubmittedAt), Kind: "review",
 		})
@@ -75,6 +80,7 @@ func (p *GHProvider) GetPR(ctx context.Context, repo string, number int) (model.
 	for _, page := range pages {
 		for _, comment := range page {
 			pr.Comments = append(pr.Comments, model.PRComment{
+				ID: nativeCommentID(comment.ID), URL: comment.URL, UpdatedAt: parseTime(comment.UpdatedAt),
 				Author: comment.User.Login, Body: comment.Body,
 				CreatedAt: parseTime(comment.CreatedAt), Kind: "inline",
 				Path: comment.Path, Line: comment.Line,
@@ -86,7 +92,53 @@ func (p *GHProvider) GetPR(ctx context.Context, repo string, number int) (model.
 	pr.ReviewersLoaded = true
 	pr.DetailsLoaded = true
 	pr.ReviewCommentsLoaded = true
+	pr.ConversationCommentsLoaded = true
 	return pr, nil
+}
+
+type ghConversationComment struct {
+	ID        int64    `json:"id"`
+	URL       string   `json:"html_url"`
+	User      ghAuthor `json:"user"`
+	Body      string   `json:"body"`
+	CreatedAt string   `json:"created_at"`
+	UpdatedAt string   `json:"updated_at"`
+}
+
+func nativeCommentID(id int64) string {
+	if id <= 0 {
+		return ""
+	}
+	return strconv.FormatInt(id, 10)
+}
+
+func (p *GHProvider) conversationComments(ctx context.Context, repo string, number int) ([]model.PRComment, error) {
+	out, err := p.run(ctx, "api", "repos/"+repo+"/issues/"+strconv.Itoa(number)+"/comments?per_page=100", "--paginate", "--slurp")
+	if err != nil {
+		return nil, fmt.Errorf("fetch conversation comments: %w", err)
+	}
+	var pages [][]ghConversationComment
+	if err := json.Unmarshal(out, &pages); err != nil {
+		return nil, fmt.Errorf("parse gh conversation comments: %w", err)
+	}
+	if len(pages) == 0 {
+		return nil, fmt.Errorf("parse gh conversation comments: missing pages")
+	}
+	var comments []model.PRComment
+	for _, page := range pages {
+		if page == nil {
+			return nil, fmt.Errorf("parse gh conversation comments: missing page")
+		}
+		for _, c := range page {
+			created, updated := parseTime(c.CreatedAt), parseTime(c.UpdatedAt)
+			u, err := url.Parse(c.URL)
+			if c.ID <= 0 || created.IsZero() || updated.IsZero() || err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
+				return nil, fmt.Errorf("parse gh conversation comments: missing or invalid native provenance")
+			}
+			comments = append(comments, model.PRComment{ID: nativeCommentID(c.ID), URL: c.URL, Author: c.User.Login, Body: c.Body, CreatedAt: created, UpdatedAt: updated})
+		}
+	}
+	return comments, nil
 }
 
 func (p *GHProvider) GetDiff(ctx context.Context, repo string, number int) (string, error) {
@@ -270,6 +322,8 @@ type ghComment struct {
 }
 
 type ghReview struct {
+	ID          string   `json:"id"`
+	URL         string   `json:"url"`
 	Author      ghAuthor `json:"author"`
 	Body        string   `json:"body"`
 	SubmittedAt string   `json:"submittedAt"`
@@ -283,8 +337,8 @@ type ghReviewRequest struct {
 	Slug     string `json:"slug"`
 }
 
-// reviewersFrom merges latest reviews with pending review requests. A
-// re-requested reviewer shows as REQUESTED. Humans come first, then teams,
+// reviewersFrom merges latest reviews with pending review requests without
+// replacing submitted review states. Humans come first, then teams,
 // then bots, each group keeping its order.
 func reviewersFrom(reviews []ghReview, requests []ghReviewRequest) []model.Reviewer {
 	var users, teams []model.Reviewer
@@ -314,8 +368,7 @@ func reviewersFrom(reviews []ghReview, requests []ghReviewRequest) []model.Revie
 		if login == "" {
 			continue
 		}
-		if i, ok := index[login]; ok {
-			users[i].State = "REQUESTED"
+		if _, ok := index[login]; ok {
 			continue
 		}
 		index[login] = len(users)
@@ -336,6 +389,9 @@ func reviewersFrom(reviews []ghReview, requests []ghReviewRequest) []model.Revie
 }
 
 type ghReviewComment struct {
+	ID           int64    `json:"id"`
+	URL          string   `json:"html_url"`
+	UpdatedAt    string   `json:"updated_at"`
 	User         ghAuthor `json:"user"`
 	Body         string   `json:"body"`
 	CreatedAt    string   `json:"created_at"`

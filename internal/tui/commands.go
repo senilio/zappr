@@ -54,6 +54,7 @@ var actionDescriptors = []tuiAction{
 	{"summary-files", "show files", actionContextNormal, nil, nil, true, confirmationNone, "summary-files", ""},
 	{"summary-commits", "show commits", actionContextNormal, nil, nil, true, confirmationNone, "summary-commits", ""},
 	{"summary-comments", "show comments", actionContextNormal, nil, nil, true, confirmationNone, "summary-comments", ""},
+	{"summary-plan", "show plan report", actionContextNormal, nil, nil, true, confirmationNone, "summary-plan", ""},
 	{"focus-next", "focus next pane", actionContextNormal, nil, nil, false, confirmationNone, "focus-next", ""},
 	{"focus-prev", "focus previous pane", actionContextNormal, nil, nil, false, confirmationNone, "focus-prev", ""},
 	{"go-top", "go to top", actionContextNormal, nil, nil, false, confirmationNone, "go-top", ""},

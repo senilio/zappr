@@ -228,7 +228,7 @@ func TestGetPRParsesReviewers(t *testing.T) {
 	want := []model.Reviewer{
 		{Login: "alice", State: "APPROVED"},
 		{Login: "bob", State: "CHANGES_REQUESTED"},
-		{Login: "carol", State: "REQUESTED"},
+		{Login: "carol", State: "APPROVED"},
 		{Login: "dan", State: "REQUESTED"},
 		{Login: "platform", State: "REQUESTED"},
 		{Login: "copilot-pull-request-reviewer", State: "COMMENTED", Bot: true},
@@ -255,8 +255,8 @@ func TestGetPRNoReviewersIsLoadedEmpty(t *testing.T) {
 
 func TestGetPRPreservesBotConversationComments(t *testing.T) {
 	bin := filepath.Join(t.TempDir(), "gh")
-	response := `{"number":7,"comments":[{"author":{"login":"bot"},"body":"Plan: 1 to add, 2 to change, 0 to destroy.","createdAt":"2026-01-02T03:04:05Z"}]}`
-	script := "#!/bin/sh\nif [ \"$1\" = api ]; then printf '[[]]'; exit; fi\nprintf '%s' " + testShellQuote(response) + "\n"
+	item := strings.Replace(conversationItem, `"body":"plan"`, `"body":"Plan: 1 to add, 2 to change, 0 to destroy."`, 1)
+	script := "#!/bin/sh\ncase \"$*\" in\n*issues/7/comments*) printf '%s' " + testShellQuote("[["+item+"]]") + ";;\n*pulls/7/comments*) printf '[[]]';;\n*) printf '{\"number\":7}';;\nesac\n"
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatalf("write fake gh: %v", err)
 	}
@@ -264,7 +264,7 @@ func TestGetPRPreservesBotConversationComments(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetPR: %v", err)
 	}
-	want := []model.PRComment{{Author: "bot", Body: "Plan: 1 to add, 2 to change, 0 to destroy.", CreatedAt: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)}}
+	want := []model.PRComment{{ID: "101", URL: "https://github.com/example/infra/issues/7#issuecomment-101", Author: "deploy-bot[bot]", Body: "Plan: 1 to add, 2 to change, 0 to destroy.", CreatedAt: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC), UpdatedAt: time.Date(2026, 1, 2, 3, 4, 6, 0, time.UTC)}}
 	if !pr.DetailsLoaded || !reflect.DeepEqual(pr.Comments, want) {
 		t.Fatalf("conversation comments not preserved: %#v", pr)
 	}
@@ -276,7 +276,7 @@ func TestGetPRIncludesReviewBodiesAndPaginatedInlineComments(t *testing.T) {
 	callsPath := filepath.Join(dir, "calls")
 	response := `{"number":7,"comments":[{"author":{"login":"bot"},"body":"Review started","createdAt":"2026-10-14T12:40:07Z"}],"reviews":[{"author":{"login":"bot"},"body":"Code Review summary","submittedAt":"2026-10-14T12:40:53Z","state":"COMMENTED"},{"body":"  ","state":"APPROVED"},{"body":"Draft review","state":"PENDING"}]}`
 	pages := `[[{"user":{"login":"bot[bot]"},"body":"Inline finding","path":"roles.tf","line":291,"original_line":290,"side":"RIGHT","created_at":"2026-10-14T12:40:53Z"}],[{"user":{"login":"alice"},"body":"Outdated reply","path":"old.tf","line":null,"original_line":10,"side":"LEFT","in_reply_to_id":123,"created_at":"2026-10-14T12:41:00Z"},{"user":{"login":"bob"},"body":"File comment","path":"file.tf","line":null,"original_line":null,"subject_type":"file","created_at":"2026-10-14T12:42:00Z"}]]`
-	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + testShellQuote(callsPath) + "\ncase \"$1\" in\npr) printf '%s' " + testShellQuote(response) + ";;\napi) printf '%s' " + testShellQuote(pages) + ";;\n*) exit 1;;\nesac\n"
+	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + testShellQuote(callsPath) + "\ncase \"$*\" in\n*issues/7/comments*) printf '%s' " + testShellQuote("[["+conversationItem+"]]") + ";;\n*pulls/7/comments*) printf '%s' " + testShellQuote(pages) + ";;\npr*) printf '%s' " + testShellQuote(response) + ";;\n*) exit 1;;\nesac\n"
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -307,7 +307,7 @@ func TestGetPRIncludesReviewBodiesAndPaginatedInlineComments(t *testing.T) {
 		t.Fatal(err)
 	}
 	lines := strings.Split(strings.TrimSpace(string(calls)), "\n")
-	if len(lines) != 2 || !strings.Contains(lines[0], ",reviews,") || lines[1] != "api repos/owner/repo/pulls/7/comments?per_page=100 --paginate --slurp" {
+	if len(lines) != 3 || !strings.Contains(lines[0], ",reviews,") || strings.Contains(lines[0], ",comments,") || lines[1] != "api repos/owner/repo/issues/7/comments?per_page=100 --paginate --slurp" || lines[2] != "api repos/owner/repo/pulls/7/comments?per_page=100 --paginate --slurp" {
 		t.Fatalf("gh calls = %q, want reviews field and paginated inline endpoint", calls)
 	}
 }
@@ -319,7 +319,7 @@ func TestGetPRSurfacesInlineCommentErrors(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			bin := filepath.Join(t.TempDir(), "gh")
-			script := "#!/bin/sh\nif [ \"$1\" = pr ]; then printf '{\"number\":7}'; else " + tc.command + "; fi\n"
+			script := "#!/bin/sh\ncase \"$*\" in\npr*) printf '{\"number\":7}';;\n*issues/7/comments*) printf '[[]]';;\n*) " + tc.command + ";;\nesac\n"
 			if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
 				t.Fatal(err)
 			}

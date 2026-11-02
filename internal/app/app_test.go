@@ -127,13 +127,14 @@ func TestRefreshKeepsCachedDetailsWhenPRUnchanged(t *testing.T) {
 	store := cache.NewMemoryStore()
 	updated := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 	if err := store.Put(model.PullRequest{
-		Repo:                 "owner/repo",
-		Number:               1,
-		UpdatedAt:            updated,
-		Commits:              []model.PRCommit{{OID: "abc"}},
-		Comments:             []model.PRComment{{Body: "hi"}},
-		DetailsLoaded:        true,
-		ReviewCommentsLoaded: true,
+		Repo:                       "owner/repo",
+		Number:                     1,
+		UpdatedAt:                  updated,
+		Commits:                    []model.PRCommit{{OID: "abc"}},
+		Comments:                   []model.PRComment{{Body: "hi"}},
+		DetailsLoaded:              true,
+		ReviewCommentsLoaded:       true,
+		ConversationCommentsLoaded: true,
 	}); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
@@ -149,7 +150,7 @@ func TestRefreshKeepsCachedDetailsWhenPRUnchanged(t *testing.T) {
 	}
 }
 
-func TestRefreshDropsCachedDetailsWhenPRUpdated(t *testing.T) {
+func TestRefreshRetainsPayloadButInvalidatesDetailsWhenPRUpdated(t *testing.T) {
 	store := cache.NewMemoryStore()
 	updated := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 	if err := store.Put(model.PullRequest{
@@ -169,8 +170,8 @@ func TestRefreshDropsCachedDetailsWhenPRUpdated(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Refresh: %v", err)
 	}
-	if len(prs) != 1 || prs[0].DetailsLoaded || len(prs[0].Commits) != 0 {
-		t.Fatalf("stale details kept: %#v", prs)
+	if len(prs) != 1 || prs[0].DetailsLoaded || prs[0].ReviewCommentsLoaded || prs[0].ConversationCommentsLoaded || len(prs[0].Commits) != 1 {
+		t.Fatalf("evidence or invalidation lost: %#v", prs)
 	}
 }
 

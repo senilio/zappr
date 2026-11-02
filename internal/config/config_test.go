@@ -332,7 +332,7 @@ func TestLoadRejectsInvalidGenericActions(t *testing.T) {
 	}
 }
 
-func TestLoadAllowsCustomWorkflowActionOnFourthKey(t *testing.T) {
+func TestLoadPreservesWorkflowBindingForRegistryValidation(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "config")
 	t.Setenv("XDG_CONFIG_HOME", dir)
 
@@ -470,8 +470,10 @@ func TestSaveGenericActions(t *testing.T) {
 		t.Fatalf("read config: %v", err)
 	}
 
-	if strings.Contains(string(data), "{") {
-		t.Fatalf("generated config contains flow mappings: %q", data)
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "{") || strings.Contains(line, ": {") {
+			t.Fatalf("generated config contains flow mappings: %q", line)
+		}
 	}
 	if strings.Contains(string(data), "next-file:") || strings.Contains(string(data), "prev-file:") {
 		t.Fatalf("generated config contains file navigation actions: %q", data)

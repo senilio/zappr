@@ -189,6 +189,7 @@ func FixedActions() map[string]ActionConfig {
 		"summary-files":               {Keys: []string{"1"}},
 		"summary-commits":             {Keys: []string{"2"}},
 		"summary-comments":            {Keys: []string{"3"}},
+		"summary-plan":                {Keys: []string{"4"}, Commands: []string{"summary-plan"}},
 		"focus-next":                  {Keys: []string{"tab"}},
 		"focus-prev":                  {Keys: []string{"shift+tab"}},
 		"go-top":                      {Keys: []string{"g"}},
@@ -287,6 +288,11 @@ func Load() (Config, error) {
 	cfg.Wrap = file.Wrap
 	cfg.Atlantis = file.Atlantis
 	for id, override := range file.Actions {
+		// Older generated configs included these reader bindings. Do not let
+		// them occupy keys or prevent startup after removing the functions.
+		if isRemovedReaderAction(id) && override.Operation == nil {
+			continue
+		}
 		if !actionIDPattern.MatchString(id) {
 			return cfg, fmt.Errorf("actions.%s: invalid action ID", id)
 		}
@@ -420,6 +426,17 @@ func validateActions(actions map[string]ActionConfig) error {
 func isRemovedAction(id string) bool {
 	switch id {
 	case "approve-with-confirmation", "approve-immediately", "write-comment":
+		return true
+	}
+	return false
+}
+
+func isRemovedReaderAction(id string) bool {
+	switch id {
+	case "reader-search", "reader-next-match", "reader-previous-match", "reader-source", "reader-return", "show-full-title",
+		"comments-filter-author", "comments-clear-filters", "plan-next-resource", "plan-previous-resource",
+		"plan-next-project", "plan-previous-project", "plan-toggle-project", "plan-toggle-value", "plan-expand-values",
+		"plan-summary", "plan-next-report", "plan-previous-report":
 		return true
 	}
 	return false

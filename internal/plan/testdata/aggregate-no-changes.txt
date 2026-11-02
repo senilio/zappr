@@ -1,0 +1,16 @@
+Ran Plan for 3 projects:
+
+1. project: `example-app` dir: `infra/example-app` workspace: `default`
+1. project: `example-data` dir: `infra/example-data` workspace: `default`
+1. project: `example-network` dir: `infra/example-network` workspace: `default`
+
+---
+
+### Plan Summary
+
+3 projects, 0 with changes, 3 with no changes, 0 failed
+
+* :fast_forward: To **apply** all unapplied plans from this Pull Request, comment:
+  ```shell
+  atlantis apply
+  ```

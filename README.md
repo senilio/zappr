@@ -94,6 +94,7 @@ tab          cycle focus
 g/G          top / bottom of list
 shift-up/down previous / next file, commit, or comment
 1/2/3        summary pane: files / commits / comments
+4            summary pane: plan (only when a supported report is found)
 f            filters / settings
 ?            help
 :            command palette (vim-style colon commands)
@@ -107,22 +108,30 @@ comment editor, `r` refreshes the selected PR, `R` refreshes the inbox, `v`
 toggles the diff pane (shown by default), `V` opens the full diff pager, `s` toggles side-by-side
 diff, `w` toggles wrapping in the focused pane, `x` expands file content,
 `n`/`p` and `[`/`]` move between files or
-commits, `o` opens the PR, and `C` copies its URL. Command palette operations
-below are also configurable where listed.
+commits, `o` opens the PR, and `C` copies its URL. The [Plan reader](#plan-reader)
+uses the basic navigation keys. Command palette
+operations below are also configurable where listed.
 
-The summary pane starts on changed files and can switch to commits or PR
-comments with `1`, `2`, and `3`. Files show the selected file diff in the
-large pane, commits show the selected commit diff, and comments list each
-comment on one row as timestamp · author, newest first, with the selected comment shown
-in the large Comment pane. Comments include conversation comments, review
-bodies, and inline review comments; the Comment pane shows their type and file
-and line context. The Comment pane is available even when the diff is off.
+The summary pane starts on changed files and can switch to commits, PR
+comments, or an Atlantis plan with `1`, `2`, `3`, and `4`. Every available
+destination is named in the Summary title. Files show the selected file diff in
+the large pane; ordinary modified labels and zero counts are omitted so added,
+removed, and renamed files stand out. Commits show the selected commit diff.
+Comments are listed newest first, one row per comment with timestamp, author,
+and kind. The selected row is bold; other rows are muted. There is no marker,
+indentation, or body preview. Comments include conversation comments, review
+bodies, and inline review comments. The selected comment appears in the large
+Comment pane, with author, kind, time, and file location in its content.
+The Comment pane is available even when the diff is off.
 Wrapping is off by default. Press `w` to toggle it independently in Inbox,
 Summary, or Diff; each preference is saved across restarts. Inbox wrapping
 expands every PR title while keeping metadata on one row. Diff wrapping keeps
 line-number gutters and side-by-side columns intact. With wrapping off, long
 lines are hard-truncated and diffs support horizontal scrolling. Horizontal
-panning is disabled while wrapping is on. Keyboard shortcuts are available via `?`.
+panning is disabled while wrapping is on. A focused Inbox takes about two
+thirds of the left column. When Summary or Diff has focus, the Inbox shrinks to
+fit its content, keeping at least eight rows and at most a third of the column.
+Keyboard shortcuts are available via `?`.
 
 ### Inbox status
 
@@ -133,19 +142,17 @@ aligned to the right:
   when unknown.
 - Review icon: green approved, red changes requested, yellow review required,
   grey for no review decision or a draft.
-- `TF`, in Atlantis repositories: the plan and policy state.
 - Occasional pills: `draft`, `auto` (auto-merge enabled), `behind`, `conflict`,
   and `blocked`. `blocked` appears only when CI passed and the PR is approved
   but GitHub still blocks the merge. On narrow panes these drop first.
 
 The selected PR adds a `reviews` row grouped by state, for example
-`approved alice · waiting carol, platform · bots 1`. Human names are green for
-approval, red for requested changes, yellow for pending requests, and muted for
-comments or dismissed reviews. Group labels remain readable without color;
-unknown review states use `reviewed`. Bots appear only as a count at the end,
-never in human approval groups; a login is treated as a bot when it ends in
-`[bot]`, `-bot`, or `-reviewer`. In Atlantis repositories an `atlantis` row with
-a verdict pill follows.
+`✓ alice · waiting carol, platform`. Approvals use `✓`; requested changes,
+pending requests, comments, and dismissed reviews keep explicit labels, so the
+row reads the same without color. Unknown review states use `reviewed`. Bot
+reviewers are omitted; a login is treated as a bot when it ends in `[bot]`,
+`-bot`, or `-reviewer`. Their reports remain available in Comments. In Atlantis
+repositories an `atlantis` row follows; see [Plan reader](#plan-reader).
 
 Pills use Nerd Font rounded ends by default. Set `pills: square` to avoid Nerd
 Font glyphs. Terminals without color show symbols instead: `CI✓`, `CI…`,
@@ -292,23 +299,55 @@ actions:
 
 For repositories that already use Atlantis, generic comment actions can post
 its commands. The action IDs and aliases below are user-defined. Bot replies
-remain available in the Comments summary (`3`).
+remain available in the Comments summary (`3`). Key `4` is reserved for the
+Plan tab; binding a custom action to it is reported as a key collision.
 
-When any open PR in the current inbox has `atlantis/*` commit statuses, the
-inbox shows a `TF` pill on every item and the selected item adds an `atlantis`
-row with a verdict read from those statuses. zappr does not parse comments for
-this. The row is a single line and is never wrapped. Example:
+### Plan reader
+
+When the selected PR has a supported Atlantis plan report in its conversation
+comments, the Summary title adds `[4]` (`[4 plan]` when active). Press `4` to open it; zappr never
+switches to it on its own. The Plan tab starts at the overall summary, then
+lists projects with changes, failures, unknown results, and no changes. The
+large pane shows the original plan text for the selected project or resource,
+not the PR's source diff, and works with the diff off.
+
+Supported reports use the standard Atlantis comment layout: a `Ran Plan for
+project:` or `Ran Plan for N projects:` header, output in a collapsible
+`diff` block, and `Continued plan output from previous comment.` for reports
+split across several comments. Split comments are joined only when they are
+adjacent and explicitly marked as continuations; otherwise the report is shown
+as incomplete. Unrecognized comments stay available in Comments.
+
+Each report states whether its source is complete. Counts come from the report
+itself, not checks. Multi-project reports support numbered or unnumbered
+`### project:` sections. When the output sections account for all changed and
+failed projects and the complete summary counts reconcile, projects without
+output are marked as having no changes. Otherwise their outcomes remain unknown.
+Successful checks or missing apply statuses are never treated as "no changes".
+
+Use the basic navigation keys: arrows to select an item, `g`/`gg` and `G`
+for the first/last Plan item, and Page Up/Page Down to move by a page.
+Projects list their resources directly, and changed values are shown in full.
+Source rows show the original comment; select a report row and press Enter
+to switch reports. The right-pane header is simply `Plan`; evidence quality
+and source warnings appear in the content.
+
+The former reader shortcuts and `:plan-*` commands have been removed.
+Their entries in older generated configs are ignored without rewriting the
+file, so their keys can be reused for other actions. Comments use ordinary
+navigation without reader search or author filters.
+
+The selected Inbox item's `atlantis` row shows the plan result or check progress,
+with changes/no changes when the report establishes it, for example:
 
 ```text
-atlantis  PLAN OK  ready · 12p · 6m
+atlantis  plan ok · changes
 ```
 
-The verdict is the first that applies: `APPLY FAILED`, `PLAN FAILED` (naming
-the failed project, or noting a failed policy check), `APPLYING`, `PLANNING`,
-`PLAN OK`, or `NO PLAN`. For `PLAN OK` the note says `ready`, `applied`, or
-`no changes`, followed by the project (or a count such as `12p`) and plan age.
-Narrow panes drop successful-plan project detail before the age, keeping the
-verdict and outcome first. Below 32 columns the row label shortens to `tf`.
+Without a loaded report, checks can still establish `plan ok`, `plan failed`,
+or `planning`, but not whether there are changes. Incomplete reports are marked
+`incomplete`. The row omits commit verification, project counts, and timestamps.
+PRs with neither Atlantis checks nor a report do not show this row.
 
 Comments whose first two words are `atlantis plan` or `atlantis apply` (case
 insensitive) are guarded, whether they come from an action or from free text.
@@ -328,7 +367,7 @@ or cancel. When the guard passes, the action's normal confirmation (if any)
 still applies; a blocked dialog replaces that confirmation, so you are asked
 once.
 
-Set `atlantis.enabled: false` to disable the `TF` pill, the `atlantis` row, and
+Set `atlantis.enabled: false` to disable the Plan tab, the `atlantis` row, and
 the guards.
 It defaults to `true`.
 
@@ -358,6 +397,21 @@ In this example, `P` or `:ap` posts the plan command immediately because
 `confirm: false` is explicit. Omit that field to require confirmation. Apply,
 cancel, and unlock confirm by default; posting those comments may trigger
 infrastructure changes or affect Atlantis state.
+
+## Deferred work
+
+### JSON plan input
+
+JSON plan parsing is deferred because producing and publishing JSON artifacts
+would require changes to the live Atlantis server. The existing artifact
+workflow produces plain-text `tofu show -no-color` output. Further plan-reader
+work should use existing output without requiring changes to Atlantis.
+
+If revisited, JSON input should be optional and storage-provider-neutral, with
+comments and text still usable without AWS access or organization-specific
+conventions. Artifacts need reliable association with the PR commit, project,
+workspace, and plan run. Raw plan JSON can expose sensitive values; storage
+access, retention, logging, and display masking need review before adoption.
 
 ## Release
 

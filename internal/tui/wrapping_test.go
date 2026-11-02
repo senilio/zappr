@@ -44,16 +44,16 @@ func TestWrappedSummaryRetainsContentAndSelectionRows(t *testing.T) {
 	}
 }
 
-func TestWrappedSummaryKeepsCommentsOnOneRow(t *testing.T) {
+func TestWrappedSummaryUsesCommentMetadataSpans(t *testing.T) {
 	m := wrappedModel(t, "summary")
 	m.summaryMode = SummaryModeComments
-	m.prs[0].Comments = []model.PRComment{{Author: "a-very-long-commenter-name-FINISH", CreatedAt: time.Now()}, {Author: "second"}}
+	m.prs[0].Comments = []model.PRComment{{Author: "a-very-long-commenter-name-FINISH", Body: strings.Repeat("preview ", 10) + "BODYEND", CreatedAt: time.Now()}, {Author: "second", Body: "second body"}}
 	content, spans := m.summaryLayout(m.prs[0], 20)
 	lines := strings.Split(strings.TrimSuffix(stripANSI(content), "\n"), "\n")
-	if len(lines) != 2 || strings.Contains(content, "FINISH") || !strings.HasPrefix(lines[0], "Today ") {
-		t.Fatalf("comment list wrapped or not cut off: %q", lines)
+	if len(lines) <= 2 || !strings.Contains(content, "FINISH") || strings.Contains(content, "BODYEND") || !strings.HasPrefix(lines[0], "Today ") {
+		t.Fatalf("metadata should wrap without a preview: %q", lines)
 	}
-	if len(spans) != 2 || spans[1] != (rowSpan{1, 2}) {
+	if len(spans) != 2 || spans[0].end <= 2 || spans[1].start != spans[0].end || spans[1].end != len(lines) {
 		t.Fatalf("unexpected spans: %#v", spans)
 	}
 	for _, line := range lines {
@@ -69,7 +69,7 @@ func TestWrappedSummaryKeepsFilesOnOneRow(t *testing.T) {
 	m.prs[0].Files = []model.ChangedFile{{Path: "dir/a.go", Status: "modified", Additions: 1, Deletions: 1}, {Path: "dir/b.go", Status: "added", Additions: 2}}
 	content, spans := m.summaryLayout(m.prs[0], 80)
 	lines := strings.Split(strings.TrimSuffix(stripANSI(content), "\n"), "\n")
-	if len(lines) != 3 || !strings.Contains(lines[1], "a.go") || !strings.Contains(lines[1], "modified") {
+	if len(lines) != 3 || !strings.Contains(lines[1], "a.go") || strings.Contains(lines[1], "modified") || !strings.Contains(lines[2], "added") {
 		t.Fatalf("file summary wrapped: %q", lines)
 	}
 	if len(spans) != 2 || spans[1] != (rowSpan{2, 3}) {
@@ -520,7 +520,7 @@ func TestInboxShowsAtlantisRowOnSelectedOnly(t *testing.T) {
 	if got := spans[1].end - spans[1].start; got != 2 {
 		t.Errorf("unselected span = %d rows, want 2", got)
 	}
-	if got := strings.Count(stripANSI(content), "PLAN OK"); got != 1 {
+	if got := strings.Count(stripANSI(content), "plan ok"); got != 1 {
 		t.Errorf("atlantis row appears %d times, want 1", got)
 	}
 
@@ -528,11 +528,11 @@ func TestInboxShowsAtlantisRowOnSelectedOnly(t *testing.T) {
 	m.allPRs = m.prs
 	m.selected = 2
 	content, spans = m.inboxContent(80)
-	if got := spans[2].end - spans[2].start; got != 4 {
-		t.Errorf("unplanned selected span = %d rows, want 4", got)
+	if got := spans[2].end - spans[2].start; got != 3 {
+		t.Errorf("unplanned selected span = %d rows, want 3", got)
 	}
-	if !strings.Contains(stripANSI(content), "NO PLAN") {
-		t.Errorf("unplanned selected PR missing no plan row: %q", stripANSI(content))
+	if strings.Contains(stripANSI(content), "atlantis") {
+		t.Errorf("unplanned selected PR must not show Atlantis: %q", stripANSI(content))
 	}
 
 	plain := modelWithPRs([]model.PullRequest{{Number: 1, Title: "a"}, {Number: 2, Title: "b"}}, 0)
@@ -551,7 +551,7 @@ func TestInboxAtlantisRowStaysOneLineWhenWrapped(t *testing.T) {
 		t.Errorf("selected span = %d rows, want %d (title %d + meta + reviews + atlantis)", got, want, titleRows)
 	}
 	lines := strings.Split(content, "\n")
-	if got := strings.TrimSpace(stripANSI(lines[spans[0].end-1])); !strings.HasPrefix(got, "tf ") {
+	if got := strings.TrimSpace(stripANSI(lines[spans[0].end-1])); !strings.Contains(got, "plan ok") {
 		t.Errorf("last selected row = %q, want compact Atlantis row", got)
 	}
 }

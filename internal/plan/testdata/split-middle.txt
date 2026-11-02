@@ -1,0 +1,14 @@
+Continued plan output from previous comment.
+<details><summary>Show Output</summary>
+
+```diff
+          PART
+          ```sh
+          echo 'Plan: 99 to add, 0 to change, 0 to destroy.'
+          ```
+```
+</details>
+
+<br>
+
+**Warning**: Output length greater than max comment size. Continued in next comment.

@@ -42,13 +42,13 @@ func (m Model) layoutTheme() layoutTheme {
 type inboxItem struct {
 	number                                int
 	title, author, ci, review, mergeState string
-	draft, autoMerge                      bool
+	draft, autoMerge, conversationLoaded  bool
 	atlantis                              model.AtlantisSummary
 	reviewers                             string
 }
 
 func inboxRenderItem(pr model.PullRequest) inboxItem {
-	return inboxItem{pr.Number, pr.Title, pr.Author, pr.CIStatus, pr.ReviewDecision, pr.MergeState, pr.Draft, pr.AutoMerge, model.DeriveAtlantis(pr.Checks), fmt.Sprint(pr.ReviewersLoaded, pr.Reviewers)}
+	return inboxItem{pr.Number, pr.Title, pr.Author, pr.CIStatus, pr.ReviewDecision, pr.MergeState, pr.Draft, pr.AutoMerge, pr.ConversationCommentsLoaded, model.DeriveAtlantis(pr.Checks), fmt.Sprint(pr.ReviewersLoaded, pr.Reviewers)}
 }
 
 type inboxLayoutKey struct {
@@ -59,6 +59,7 @@ type inboxLayoutKey struct {
 	minute          int64
 	pills           uitheme.PillShape
 	pillOpacity     float64
+	planRevision    string
 }
 
 type inboxLayoutCache struct {
@@ -69,6 +70,7 @@ type inboxLayoutCache struct {
 
 func (m *Model) inboxPane(width int) *paneLayout {
 	key := inboxLayoutKey{width: width, selected: m.selected, wrap: m.cfg.Wrap.Inbox, theme: m.layoutTheme(), pills: m.pillShape(), pillOpacity: m.cfg.EffectivePillOpacity()}
+	key.planRevision = m.planState.prKey + m.planState.fingerprint + m.planState.reportID
 	if key.atlantisRepo = m.isAtlantisRepo(); key.atlantisRepo {
 		key.minute = timeNow().Unix() / 60
 	}
@@ -106,6 +108,8 @@ type summaryLayoutKey struct {
 	wrap                                                 bool
 	theme                                                layoutTheme
 	second                                               int64
+	planRevision                                         string
+	commentKey                                           string
 }
 
 type summaryLayoutCache struct {
@@ -130,6 +134,9 @@ func (m *Model) summaryPane(pr model.PullRequest, width int) *paneLayout {
 	case SummaryModeComments:
 		comments = pr.Comments
 		key.second = time.Now().Unix()
+		key.commentKey = m.commentState.selectedKey
+	case SummaryModePlan:
+		key.planRevision = fmt.Sprint(m.planState.fingerprint, m.planState.reportID, m.planState.nodeID)
 	}
 	if cached := m.summaryLayoutCache; cached != nil && cached.key == key && slices.Equal(cached.files, files) && slices.Equal(cached.commits, commits) && slices.Equal(cached.comments, comments) {
 		return cached.layout

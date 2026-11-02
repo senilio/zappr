@@ -1,0 +1,45 @@
+Ran Plan for 4 projects:
+
+1. project: `example-app` dir: `infra/example-app` workspace: `default`
+1. project: `example-data` dir: `infra/example-data` workspace: `default`
+1. project: `example-network` dir: `infra/example-network` workspace: `default`
+1. project: `example-tools` dir: `infra/example-tools` workspace: `default`
+---
+
+### 1. project: `example-app` dir: `infra/example-app` workspace: `default`
+<details><summary>Show Output</summary>
+
+```diff
+OpenTofu will perform the following actions:
+
+  # example.one will be created
++ resource "example" "one" {
++   name = "example"
+  }
+
+Plan: 1 to add, 0 to change, 0 to destroy.
+```
+</details>
+
+Plan: 1 to add, 0 to change, 0 to destroy.
+
+---
+### 4. project: `example-tools` dir: `infra/example-tools` workspace: `default`
+<details><summary>Show Output</summary>
+
+```diff
+  # example.two will be updated in-place
+~ resource "example" "two" {
+~   name = "before" -> "after"
+  }
+
+Plan: 0 to add, 1 to change, 0 to destroy.
+```
+</details>
+
+Plan: 0 to add, 1 to change, 0 to destroy.
+
+---
+### Plan Summary
+
+4 projects, 2 with changes, 2 with no changes, 0 failed

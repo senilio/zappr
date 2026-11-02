@@ -66,13 +66,14 @@ func (a *App) Refresh(ctx context.Context, repo string, includeDrafts bool) ([]m
 	}
 	for i := range prs {
 		if cached, err := a.Cache.Get(prs[i].Repo, prs[i].Number); err == nil {
-			// List refreshes omit commits and comments; keep the cached ones
-			// until the PR changes, after which GetPR must refetch them.
-			if cached.DetailsLoaded && cached.ReviewCommentsLoaded && cached.UpdatedAt.Equal(prs[i].UpdatedAt) {
-				prs[i].Commits = cached.Commits
-				prs[i].Comments = cached.Comments
+			// Preserve evidence while refreshing, but never preserve its loaded
+			// markers across a source-version change or a provenance upgrade.
+			prs[i].Commits = cached.Commits
+			prs[i].Comments = cached.Comments
+			if cached.DetailsLoaded && cached.ReviewCommentsLoaded && cached.ConversationCommentsLoaded && cached.UpdatedAt.Equal(prs[i].UpdatedAt) && cached.HeadRefOID == prs[i].HeadRefOID {
 				prs[i].DetailsLoaded = true
 				prs[i].ReviewCommentsLoaded = true
+				prs[i].ConversationCommentsLoaded = true
 			}
 			if cached.ReviewersLoaded && cached.UpdatedAt.Equal(prs[i].UpdatedAt) {
 				prs[i].Reviewers = cached.Reviewers

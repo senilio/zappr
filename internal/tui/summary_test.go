@@ -306,7 +306,7 @@ func TestSelectedCommentRowUsesStrongStyle(t *testing.T) {
 	var b strings.Builder
 	m.writeCommentSummary(&b, pr, 80)
 	rows := strings.Split(strings.TrimSuffix(b.String(), "\n"), "\n")
-	if rows[0] != truncateANSIWidth(m.theme.Styles.Muted.Render("first"), 80) || rows[1] != truncateANSIWidth(m.theme.Styles.TitleStrong.Render("second"), 80) {
+	if len(rows) != 2 || rows[0] != truncateANSIWidth(m.theme.Styles.Muted.Render("first · comment"), 80) || rows[1] != truncateANSIWidth(m.theme.Styles.TitleStrong.Render("second · comment"), 80) {
 		t.Fatalf("unexpected comment row styles: %q", rows)
 	}
 }

@@ -204,8 +204,8 @@ func (m Model) helpPanel() string {
 		shortcut{m.actionAlias("quit"), "quit"},
 	)
 	section("Review",
-		shortcut{"1/2/3", "files/commits/comments"},
-		shortcut{"shift+↑/↓", "next/previous file/commit/comment"},
+		shortcut{"1/2/3/4", "files/commits/comments/plan (when available)"},
+		shortcut{"shift+↑/↓", "next/previous file/commit/comment/plan item"},
 		shortcut{m.actionAlias("toggle-diff"), "toggle diff"},
 		shortcut{m.actionAlias("toggle-wrap"), "wrap focused pane"},
 		shortcut{"←/→", "pan diff/commits"},
@@ -236,7 +236,7 @@ func (m Model) helpPanel() string {
 		}
 	}
 	section("Actions", actions...)
-	section("PR status", shortcut{"CI", "checks: green pass, yellow running, red failed"}, shortcut{"TF", "Atlantis plan (Atlantis repos)"}, shortcut{"draft/auto", "draft PR / auto-merge enabled"}, shortcut{"behind/conflict/blocked", "branch behind, merge conflict, merge blocked"})
+	section("PR status", shortcut{"CI", "checks: green pass, yellow running, red failed"}, shortcut{"draft/auto", "draft PR / auto-merge enabled"}, shortcut{"behind/conflict/blocked", "branch behind, merge conflict, merge blocked"})
 	content := strings.TrimSuffix(b.String(), "\n")
 	if m.helpInput == "" {
 		return content
@@ -609,18 +609,20 @@ func fitScreen(content string, width int, height int) string {
 // active (statusActive), the spinner and message are appended here so the
 // indicator is always visible and never overlaps pane borders.
 func (m Model) headerView() string {
-	parts := []string{m.theme.Styles.Title.Render("zappr ⚡"), m.repo}
+	parts := []string{m.theme.Styles.Title.Render("zappr ⚡"), readerInput(m.repo)}
 	// Status indicator: shown inline in header so it never overlaps pane borders.
 	if m.statusActive {
 		if m.statusErr {
-			parts = append(parts, m.theme.Styles.Error.Render("✗ "+m.statusText))
+			parts = append(parts, m.theme.Styles.Error.Render("✗ "+readerInput(m.statusText)))
 		} else {
-			parts = append(parts, strings.TrimRight(m.statusSpinner.View(), " ")+" "+m.theme.Styles.Pending.Render(m.statusText))
+			parts = append(parts, strings.TrimRight(m.statusSpinner.View(), " ")+" "+m.theme.Styles.Pending.Render(readerInput(m.statusText)))
 		}
 	} else if m.loading {
 		parts = append(parts, m.theme.Styles.Pending.Render("loading"))
 	} else if m.error != "" {
-		parts = append(parts, m.theme.Styles.Error.Render(m.error))
+		parts = append(parts, m.theme.Styles.Error.Render(readerInput(m.error)))
+	} else if m.message != "" {
+		parts = append(parts, m.theme.Styles.Muted.Render(readerInput(m.message)))
 	}
 	left := strings.Join(parts, " ")
 	right := m.footerShortcuts([]shortcut{{m.actionAlias("help"), "help"}, {m.actionAlias("quit"), "quit"}})
@@ -718,17 +720,33 @@ func (m Model) diffPaneOuterWidth() int {
 	return m.width
 }
 
-// leftColumnHeights returns stable pane heights for left column.
+// inboxMinContentRows keeps about three PRs visible while Summary or Diff has focus.
+const inboxMinContentRows = 8
+
+// leftColumnHeights gives a focused Inbox a fixed large share. Otherwise the
+// Inbox fits its measured rows, never below inboxMinContentRows or above a third.
 func (m Model) leftColumnHeights(height int) (inboxH, summaryH int) {
-	if m.focus == FocusInbox || m.mode == ModeInbox {
-		inboxH = max(8, height*64/100)
-	} else {
-		summaryH = max(8, height*80/100)
-		inboxH = max(4, height-summaryH)
-		return
+	if height < 2*(paneFrame+1) {
+		inboxH = max(0, height/2)
+		return inboxH, max(0, height-inboxH)
 	}
-	summaryH = max(4, height-inboxH)
-	return
+	if m.focus == FocusInbox || m.mode == ModeInbox {
+		inboxH = min(height-paneFrame-1, max(paneFrame+1, height*64/100))
+		return inboxH, height - inboxH
+	}
+	leftW := m.width
+	if m.width >= minWideWidth {
+		leftW, _, _ = m.widePaneOuterWidths()
+	}
+	_, spans := m.inboxContent(m.paneInnerWidth(leftW, FocusInbox))
+	rows := 1
+	if len(spans) > 0 {
+		rows = max(1, spans[len(spans)-1].end)
+	}
+	available := height - 2*paneFrame
+	content := max(inboxMinContentRows, min(rows, available/3))
+	inboxH = min(height-paneFrame-1, paneFrame+content)
+	return inboxH, height - inboxH
 }
 
 func (m Model) mediumLayout(height int) string {
@@ -761,27 +779,67 @@ func (m Model) inboxTitle() string {
 }
 
 func (m Model) summaryTitle() string {
-	parts := []string{
-		m.summaryModeTitle("summary-files", SummaryModeFiles),
-		m.summaryModeTitle("summary-commits", SummaryModeCommits),
-		m.summaryModeTitle("summary-comments", SummaryModeComments),
+	type tab struct {
+		id   string
+		mode SummaryMode
 	}
-	return "Summary " + strings.Join(parts, " ")
+	modes := []tab{{"summary-files", SummaryModeFiles}, {"summary-commits", SummaryModeCommits}, {"summary-comments", SummaryModeComments}}
+	if m.planAvailable() {
+		modes = append(modes, tab{"summary-plan", SummaryModePlan})
+	}
+	tabs := func() string {
+		parts := make([]string, 0, len(modes))
+		for _, t := range modes {
+			parts = append(parts, m.summaryModeTitle(t.id, t.mode, m.summaryMode != t.mode))
+		}
+		return strings.Join(parts, " ")
+	}
+	_, budget, _ := m.paneInnerWidths()
+	if m.width <= 0 {
+		budget = 1 << 30
+	}
+	context := ""
+	if pr, ok := m.current(); ok && m.summaryMode == SummaryModeComments {
+		context = m.commentsContext(pr)
+	}
+	join := func(parts ...string) string {
+		var kept []string
+		for _, part := range parts {
+			if part != "" {
+				kept = append(kept, part)
+			}
+		}
+		return strings.Join(kept, " ")
+	}
+	full := tabs()
+	if title := join("Summary", context, full); ansi.StringWidth(title) <= budget {
+		return title
+	}
+	if title := join(context, full); ansi.StringWidth(title) <= budget {
+		return title
+	}
+	tabText := full
+	if context != "" {
+		context = truncateANSIWidth(context, max(0, budget-ansi.StringWidth(tabText)-1))
+	}
+	return join(context, tabText)
 }
 
-func (m Model) summaryModeTitle(actionID string, mode SummaryMode) string {
+func (m Model) summaryModeTitle(actionID string, mode SummaryMode, short bool) string {
 	alias := m.actionAlias(actionID)
-	label := fmt.Sprintf("[%s]", alias)
+	label := fmt.Sprintf("[%s %s]", alias, mode.String())
+	if short {
+		label = fmt.Sprintf("[%s]", alias)
+	}
 	if m.summaryMode == mode {
-		label = fmt.Sprintf("[%s %s]", alias, mode.String())
 		return m.theme.Styles.TitleStrong.Render(label)
 	}
 	return m.theme.Styles.Muted.Render(label)
 }
 
 func (m Model) diffTitle() string {
-	if m.summaryMode == SummaryModeComments {
-		return "Comment"
+	if m.readerContentActive() {
+		return m.readerTitle()
 	}
 	if m.summaryMode == SummaryModeCommits {
 		return "Commit diff"
@@ -905,6 +963,12 @@ func embedTitle(box string, title string, style lipgloss.Style, noColor bool) st
 	// Measure visible width of the top border line.
 	lineWidth := lipgloss.Width(topLine)
 	// We need at least: 2 corner chars + 2 spaces + 1 title char.
+	if lineWidth < 5 {
+		return box
+	}
+	if lipgloss.Width(title)+4 > lineWidth {
+		title = ansi.Truncate(title, lineWidth-4, "…")
+	}
 	needed := lipgloss.Width(title) + 2 // " title "
 	if lineWidth < needed+2 {
 		return box
@@ -1064,7 +1128,7 @@ func fileSummaryLines(files []model.ChangedFile) []int {
 	lines := make([]int, len(files))
 	line, prevDir := 0, ""
 	for i, file := range files {
-		dir, _ := splitFileDir(file.Path)
+		dir, _ := splitFileDir(readerInput(file.Path))
 		if i == 0 || dir != prevDir {
 			line++
 			prevDir = dir
@@ -1083,18 +1147,26 @@ func (m Model) writeFileSummary(b *strings.Builder, pr model.PullRequest, innerW
 	}
 	var nameW, statusW, addW, delW int
 	for _, file := range pr.Files {
-		_, name := splitFileDir(file.Path)
+		_, name := splitFileDir(readerInput(file.Path))
 		nameW = max(nameW, ansi.StringWidth(name))
-		statusW = max(statusW, min(10, ansi.StringWidth(file.Status)))
-		addW = max(addW, len(fmt.Sprintf("+%d", file.Additions)))
-		delW = max(delW, len(fmt.Sprintf("-%d", file.Deletions)))
+		statusW = max(statusW, min(10, ansi.StringWidth(quietFileStatus(file.Status))))
+		if file.Additions != 0 {
+			addW = max(addW, len(fmt.Sprintf("+%d", file.Additions)))
+		}
+		if file.Deletions != 0 {
+			delW = max(delW, len(fmt.Sprintf("-%d", file.Deletions)))
+		}
 	}
-	// Layout: indent name [space] status [space] add [space] del [right margin]
-	rightW := 1 + statusW + 1 + addW + 1 + delW
+	rightW := 0
+	for _, width := range []int{statusW, addW, delW} {
+		if width > 0 {
+			rightW += 1 + width
+		}
+	}
 	nameW = max(1, min(nameW, innerW-len(fileSummaryIndent)-rightW-1))
 	prevDir := ""
 	for i, file := range pr.Files {
-		dir, name := splitFileDir(file.Path)
+		dir, name := splitFileDir(readerInput(file.Path))
 		if i == 0 || dir != prevDir {
 			// Left-truncate directories so the deepest segments stay visible.
 			header := s.Muted.Render(leftTruncatePath(dir, max(1, innerW-1)))
@@ -1106,13 +1178,35 @@ func (m Model) writeFileSummary(b *strings.Builder, pr model.PullRequest, innerW
 		if i == m.fileIndex {
 			name = s.File.Render(name)
 		}
-		status := truncateANSIWidth(file.Status, statusW)
-		status += strings.Repeat(" ", max(0, statusW-ansi.StringWidth(status)))
-		add := fmt.Sprintf("%*s", addW, fmt.Sprintf("+%d", file.Additions))
-		del := fmt.Sprintf("%*s", delW, fmt.Sprintf("-%d", file.Deletions))
-		row := fileSummaryIndent + name + namePad + " " + s.Muted.Render(status) + " " + s.Add.Render(add) + " " + s.Delete.Render(del)
+		row := fileSummaryIndent + name + namePad
+		if statusW > 0 {
+			status := truncateANSIWidth(quietFileStatus(file.Status), statusW)
+			row += " " + s.Muted.Render(status+strings.Repeat(" ", max(0, statusW-ansi.StringWidth(status))))
+		}
+		if addW > 0 {
+			add := ""
+			if file.Additions != 0 {
+				add = fmt.Sprintf("+%d", file.Additions)
+			}
+			row += " " + s.Add.Render(fmt.Sprintf("%*s", addW, add))
+		}
+		if delW > 0 {
+			del := ""
+			if file.Deletions != 0 {
+				del = fmt.Sprintf("-%d", file.Deletions)
+			}
+			row += " " + s.Delete.Render(fmt.Sprintf("%*s", delW, del))
+		}
 		fmt.Fprintf(b, "%s\n", truncateANSIWidth(row, innerW))
 	}
+}
+
+func quietFileStatus(status string) string {
+	status = readerInput(status)
+	if strings.EqualFold(status, "modified") {
+		return ""
+	}
+	return status
 }
 
 func (m Model) writeCommitSummary(b *strings.Builder, pr model.PullRequest, innerW int) {
@@ -1127,7 +1221,7 @@ func (m Model) writeCommitSummary(b *strings.Builder, pr model.PullRequest, inne
 		if len(sha) > 7 {
 			sha = sha[:7]
 		}
-		meta := commit.Author
+		meta := readerInput(commit.Author)
 		if stamp := summaryTimestamp(commit.Date, now); stamp != "" {
 			meta = stamp + " · " + meta
 		}
@@ -1137,36 +1231,33 @@ func (m Model) writeCommitSummary(b *strings.Builder, pr model.PullRequest, inne
 			style = s.TitleStrong
 		}
 		b.WriteString(style.Render(meta) + "\n")
-		b.WriteString(s.File.Render(sha) + " " + style.Render(commit.Headline) + "\n")
+		b.WriteString(s.File.Render(sha) + " " + style.Render(readerInput(commit.Headline)) + "\n")
 	}
 }
 
 func (m Model) writeCommentSummary(b *strings.Builder, pr model.PullRequest, innerW int) {
-	s := m.theme.Styles
-	if len(pr.Comments) == 0 {
-		b.WriteString(s.Muted.Render("no comments") + "\n")
-		return
-	}
-	now := time.Now()
-	for i, comment := range newestComments(pr.Comments) {
-		style := s.Muted
-		if i == m.commentIndex {
-			style = s.TitleStrong
-		}
-		row := comment.Author
-		if stamp := summaryTimestamp(comment.CreatedAt, now); stamp != "" {
-			row = stamp + " · " + row
-		}
-		b.WriteString(truncateANSIWidth(style.Render(row), innerW) + "\n")
-	}
+	content, _ := m.commentSummaryLayout(pr, innerW)
+	b.WriteString(content)
 }
 
 func (m Model) selectedComment() (model.PRComment, bool) {
 	pr, ok := m.current()
-	if !ok || m.commentIndex < 0 || m.commentIndex >= len(pr.Comments) {
+	if !ok {
 		return model.PRComment{}, false
 	}
-	return newestComments(pr.Comments)[m.commentIndex], true
+	comments := m.visibleComments(pr)
+	if m.commentState.selectedKey != "" {
+		for _, comment := range comments {
+			if comment.Key() == m.commentState.selectedKey {
+				return comment, true
+			}
+		}
+		return model.PRComment{}, false
+	}
+	if m.commentIndex < 0 || m.commentIndex >= len(comments) {
+		return model.PRComment{}, false
+	}
+	return comments[m.commentIndex], true
 }
 
 // commentDetail renders the selected comment for the large pane, including
@@ -1182,7 +1273,7 @@ func (m Model) commentDetail(comment model.PRComment) string {
 		meta += " · " + summaryTimestamp(comment.CreatedAt, time.Now())
 	}
 	var b strings.Builder
-	b.WriteString(s.File.Render(meta) + "\n")
+	b.WriteString(s.File.Render(readerInput(meta)) + "\n")
 	if comment.Path != "" {
 		location := comment.Path
 		if comment.Line > 0 {
@@ -1193,7 +1284,7 @@ func (m Model) commentDetail(comment model.PRComment) string {
 		if comment.Side == "LEFT" {
 			location += " (left)"
 		}
-		b.WriteString(s.Muted.Render(location) + "\n")
+		b.WriteString(s.Muted.Render(readerInput(location)) + "\n")
 	}
 	b.WriteByte('\n')
 	b.WriteString(m.renderCommentMarkdown(comment.Body))
@@ -1201,12 +1292,19 @@ func (m Model) commentDetail(comment model.PRComment) string {
 }
 
 func (m Model) diffPanel(width int, height int) string {
+	if m.summaryMode == SummaryModePlan {
+		vpW := m.paneInnerWidth(width, FocusDiff)
+		return m.renderDiffViewport(m.diffContentWidth(vpW), m.paneInnerHeight(height, FocusDiff))
+	}
 	if m.summaryMode == SummaryModeComments {
 		pr, ok := m.current()
 		if !ok {
 			return m.theme.Styles.Muted.Render("select PR")
 		}
-		if len(pr.Comments) == 0 {
+		if len(m.visibleComments(pr)) == 0 {
+			if len(pr.Comments) != 0 {
+				return m.theme.Styles.Muted.Render("no matching comments")
+			}
 			return m.theme.Styles.Muted.Render("no comments")
 		}
 		vpW := m.paneInnerWidth(width, FocusDiff)
@@ -1292,7 +1390,8 @@ func (m Model) renderFullFileContent(content string, marks diffMarks) string {
 	return b.String()
 }
 
-var emojiShortcodePattern = regexp.MustCompile(`:[A-Za-z0-9_+\-]+:`)
+// Shortcodes need a letter, so clock times such as 00:01:12 stay intact.
+var emojiShortcodePattern = regexp.MustCompile(`:[A-Za-z0-9_+\-]*[A-Za-z][A-Za-z0-9_+\-]*:`)
 
 func stripEmojiShortcodes(s string) string {
 	s = emojiShortcodePattern.ReplaceAllString(s, "")
@@ -1462,7 +1561,14 @@ func (m Model) commandPanel() string {
 	if len(matches) == 0 {
 		b.WriteString(s.Muted.Render("no matching commands"))
 	} else {
-		for i, match := range matches {
+		// Keep the selected command visible as optional reader actions increase
+		// the palette, rather than allowing the modal to grow off-screen.
+		limit := min(10, max(1, m.height-chromeLines-8))
+		cursor := min(max(0, m.commandCursor), len(matches)-1)
+		start := max(0, min(cursor-limit/2, len(matches)-limit))
+		end := min(len(matches), start+limit)
+		for relative, match := range matches[start:end] {
+			i := start + relative
 			match.action = m.selectedPRAction(match.action)
 			name := truncateANSIWidth(match.alias, 18)
 			nameStyled := s.TitleStrong.Render(":" + name)

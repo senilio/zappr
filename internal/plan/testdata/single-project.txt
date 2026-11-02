@@ -1,0 +1,17 @@
+Ran Plan for project: `example-app` dir: `infra/example-app` workspace: `default`
+
+<details><summary>Show Output</summary>
+
+```diff
+OpenTofu will perform the following actions:
+
+  # example_resource.item["alpha"] will be created
+  + resource "example_resource" "item" {
+      + name = "alpha"
+    }
+
+Plan: 1 to add, 0 to change, 0 to destroy.
+```
+</details>
+
+Plan: 1 to add, 0 to change, 0 to destroy.

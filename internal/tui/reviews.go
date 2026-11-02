@@ -28,36 +28,32 @@ func (m Model) reviewsRow(pr model.PullRequest, innerW int) string {
 		return m.expandedRow("reviews", s.Muted.Render("none"), innerW)
 	}
 	groups := make(map[string][]string)
-	bots := 0
 	for _, r := range pr.Reviewers {
-		if r.Bot {
-			bots++
+		if r.Bot || r.State == "REQUESTED" || r.State == "PENDING" {
 			continue
 		}
 		style := s.Muted
 		group := "reviewed"
 		switch r.State {
 		case "APPROVED":
-			group, style = "approved", s.SuccessCI
+			group, style = "✓", s.SuccessCI
 		case "CHANGES_REQUESTED":
 			group, style = "changes", s.Error
-		case "REQUESTED":
-			group, style = "waiting", s.Wait
 		case "COMMENTED":
 			group = "commented"
 		case "DISMISSED":
 			group = "dismissed"
 		}
-		groups[group] = append(groups[group], style.Render(r.Login))
+		groups[group] = append(groups[group], style.Render(readerInput(r.Login)))
 	}
-	parts := make([]string, 0, len(groups)+1)
-	for _, group := range []string{"approved", "changes", "waiting", "commented", "dismissed", "reviewed"} {
+	parts := make([]string, 0, len(groups))
+	for _, group := range []string{"✓", "changes", "commented", "dismissed", "reviewed"} {
 		if names := groups[group]; len(names) > 0 {
 			parts = append(parts, s.Muted.Render(group+" ")+strings.Join(names, s.Muted.Render(", ")))
 		}
 	}
-	if bots > 0 {
-		parts = append(parts, s.Muted.Render(fmt.Sprintf("bots %d", bots)))
+	if len(parts) == 0 {
+		parts = append(parts, s.Muted.Render("none"))
 	}
 	return m.expandedRow("reviews", strings.Join(parts, s.Muted.Render(" · ")), innerW)
 }

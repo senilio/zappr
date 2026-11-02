@@ -7,9 +7,9 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/charmbracelet/x/ansi"
 	"github.com/senilio/zappr/internal/app"
 	"github.com/senilio/zappr/internal/model"
+	"github.com/senilio/zappr/internal/plan"
 	uitheme "github.com/senilio/zappr/internal/tui/theme"
 )
 
@@ -18,6 +18,9 @@ func (m Model) atlantisEnabled() bool { return m.cfg.AtlantisEnabled() }
 func (m Model) isAtlantisRepo() bool {
 	if !m.atlantisEnabled() {
 		return false
+	}
+	if pr, ok := m.current(); ok && m.planState.prKey == readerPRKey(pr) && m.planAvailable() {
+		return true
 	}
 	for _, pr := range m.prs {
 		for _, c := range pr.Checks {
@@ -29,17 +32,23 @@ func (m Model) isAtlantisRepo() bool {
 	return false
 }
 
-// atlantisVerdict picks the one headline for the selected PR's atlantis
-// row; the first matching state wins.
-func atlantisVerdict(a model.AtlantisSummary, now time.Time) (string, uitheme.PillState, string) {
-	age := ""
-	if !a.PlanAt.IsZero() {
-		d := now.Sub(a.PlanAt)
-		if d < 0 {
-			d = 0
-		}
-		age = shortDuration(d)
+func (m Model) hasAtlantisActivity(pr model.PullRequest) bool {
+	if !m.atlantisEnabled() {
+		return false
 	}
+	if m.planState.prKey == readerPRKey(pr) && m.planAvailable() {
+		return true
+	}
+	for _, c := range pr.Checks {
+		if strings.HasPrefix(c.Context, "atlantis/") {
+			return true
+		}
+	}
+	return false
+}
+
+// Check phases are execution facts, never evidence about plan contents.
+func atlantisProgress(a model.AtlantisSummary) (string, uitheme.PillState, string) {
 	switch {
 	case a.Apply == model.ApplyFailed:
 		return "APPLY FAILED", uitheme.PillFailed, ""
@@ -50,57 +59,50 @@ func atlantisVerdict(a model.AtlantisSummary, now time.Time) (string, uitheme.Pi
 		}
 		return "PLAN FAILED", uitheme.PillFailed, note
 	case a.Policy == model.PolicyFailed:
-		return "PLAN FAILED", uitheme.PillFailed, "policy failed"
+		return "POLICY FAILED", uitheme.PillFailed, ""
 	case a.Apply == model.ApplyRunning:
 		return "APPLYING", uitheme.PillWait, ""
 	case a.Plan == model.PlanRunning || a.Policy == model.PolicyRunning:
-		return "PLANNING", uitheme.PillWait, age
+		return "PLANNING", uitheme.PillWait, ""
+	case a.Apply == model.ApplyDone:
+		return "APPLIED", uitheme.PillPassed, ""
 	case a.Plan == model.PlanPassed:
-		parts := []string{"ready"}
-		switch a.Apply {
-		case model.ApplyDone:
-			parts[0] = "applied"
-		case model.ApplyNothing:
-			parts[0] = "no changes"
-		}
-		if a.PlanProjectCount > 1 {
-			parts = append(parts, fmt.Sprintf("%dp", a.PlanProjectCount))
-		} else if a.PlanProject != "" {
-			parts = append(parts, a.PlanProject)
-		}
-		if age != "" {
-			parts = append(parts, age)
-		}
-		return "PLAN OK", uitheme.PillPassed, strings.Join(parts, " · ")
+		return "PLAN OK", uitheme.PillPassed, ""
 	}
-	return "NO PLAN", uitheme.PillNone, ""
+	return "", uitheme.PillNone, ""
 }
 
 func (m Model) atlantisRow(pr model.PullRequest, innerW int) string {
 	a := model.DeriveAtlantis(pr.Checks)
-	now := timeNow()
-	label, state, _ := atlantisVerdict(a, now)
-	pill := m.theme.Pill(label, state, m.pillShape(), m.cfg.EffectivePillOpacity())
+	label, state, _ := atlantisProgress(a)
+	var details []string
+	report, found := m.selectedPlanReport()
+	if found && m.planState.prKey == readerPRKey(pr) {
+		if label == "" {
+			switch {
+			case report.Outcome == plan.OutcomeFailed:
+				label, state = "PLAN FAILED", uitheme.PillFailed
+			case report.SourceComplete && (report.Outcome == plan.OutcomeChanges || report.Outcome == plan.OutcomeNoChanges):
+				label, state = "PLAN OK", uitheme.PillPassed
+			}
+		}
+		if report.Outcome == plan.OutcomeChanges || report.Outcome == plan.OutcomeNoChanges {
+			details = append(details, planOutcome(report.Outcome))
+		}
+		if !report.SourceComplete {
+			details = append(details, "incomplete")
+		}
+	}
+	if label == "" {
+		label = "plan unknown"
+	}
 	head := m.expandedRow("atlantis", "", innerW)
-	if innerW < 32 {
-		head = strings.Repeat(" ", expandedIndent) + m.theme.Styles.Muted.Render("tf ")
+	if innerW < 48 {
+		head = strings.Repeat(" ", expandedIndent)
 	}
-	render := func(summary model.AtlantisSummary) string {
-		_, _, note := atlantisVerdict(summary, now)
-		row := head + pill
-		if note != "" {
-			row += "  " + m.theme.Styles.Muted.Render(note)
-		}
-		return row
-	}
-	row := render(a)
-	if label == "PLAN OK" && ansi.StringWidth(row) > innerW {
-		a.PlanProject, a.PlanProjectCount = "", 0
-		row = render(a)
-		if ansi.StringWidth(row) > innerW {
-			a.PlanAt = time.Time{}
-			row = render(a)
-		}
+	row := head + m.theme.Pill(strings.ToLower(label), state, m.pillShape(), m.cfg.EffectivePillOpacity())
+	if len(details) > 0 {
+		row += m.theme.Styles.Muted.Render(" · " + strings.Join(details, " · "))
 	}
 	return truncatePaneLineWidth(row, innerW)
 }

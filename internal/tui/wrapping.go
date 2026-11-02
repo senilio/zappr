@@ -62,9 +62,14 @@ func wrapStructured(content string, width int) string {
 }
 
 func (m Model) buildSummaryLayout(pr model.PullRequest, width int) (string, []rowSpan) {
-	// File and comment lists stay one row per entry even when summary
-	// wrapping is on; overlong rows are hard-truncated.
-	if !m.cfg.Wrap.Summary || m.summaryMode == SummaryModeFiles || m.summaryMode == SummaryModeComments {
+	if m.summaryMode == SummaryModePlan {
+		return m.planSummaryLayout(width)
+	}
+	if m.summaryMode == SummaryModeComments {
+		return m.commentSummaryLayout(pr, width)
+	}
+	// File lists stay one row per entry even when summary wrapping is on.
+	if !m.cfg.Wrap.Summary || m.summaryMode == SummaryModeFiles {
 		content := m.unwrappedSummaryContent(pr, width)
 		var spans []rowSpan
 		switch m.summaryMode {
@@ -79,10 +84,6 @@ func (m Model) buildSummaryLayout(pr model.PullRequest, width int) (string, []ro
 		case SummaryModeCommits:
 			for i := range pr.Commits {
 				spans = append(spans, rowSpan{i * 2, i*2 + 2})
-			}
-		case SummaryModeComments:
-			for i := range pr.Comments {
-				spans = append(spans, rowSpan{i, i + 1})
 			}
 		}
 		return content, spans
@@ -130,11 +131,22 @@ func spanAt(spans []rowSpan, row int) int {
 var diffGutter = regexp.MustCompile(`^(?:[ +\-]?[ 0-9]+⋮[ 0-9]+│ ?|[ +\-]?[ 0-9]+│ ?|[+\-])`)
 
 func wrapDiffLine(line string, width int) []string {
+	return wrapGutterLine(line, width, false)
+}
+
+// wrapGutterLine keeps any line-number gutter in place. Reader text (comments
+// and plan output) word-wraps; source diffs hard-wrap to keep exact columns.
+func wrapGutterLine(line string, width int, words bool) []string {
 	line = truncateANSIWidth(line, max(1, len(line)*tabStopWidth))
 	prefix := diffGutter.FindString(stripANSI(line))
 	prefixW := min(ansi.StringWidth(prefix), max(0, width-1))
 	body := ansi.Cut(line, prefixW, ansi.StringWidth(line))
-	wrapped := ansi.Hardwrap(body, max(1, width-prefixW), true)
+	var wrapped string
+	if words {
+		wrapped = ansi.Wrap(body, max(1, width-prefixW), "")
+	} else {
+		wrapped = ansi.Hardwrap(body, max(1, width-prefixW), true)
+	}
 	rows := strings.Split(isolateStyledRows(wrapped), "\n")
 	for i := range rows {
 		gutter := ansi.Cut(line, 0, prefixW)
@@ -171,14 +183,15 @@ func (m Model) buildDiffLayout(content string, width int) (string, []int) {
 	var rows []string
 	var sources []int
 	source := -1
+	reader := m.readerContentActive()
 	for _, line := range strings.Split(content, "\n") {
-		nativeSide := m.sideBySide && strings.HasPrefix(stripANSI(line), "│") && strings.Count(stripANSI(line), "│") >= 4
+		nativeSide := !reader && m.sideBySide && strings.HasPrefix(stripANSI(line), "│") && strings.Count(stripANSI(line), "│") >= 4
 		if !nativeSide || sideLineNumber.MatchString(stripANSI(line)) {
 			source++
 		}
 		visual := []string{line}
 		if m.cfg.Wrap.Diff && !nativeSide {
-			visual = wrapDiffLine(line, width)
+			visual = wrapGutterLine(line, width, reader)
 		}
 		for _, row := range visual {
 			rows = append(rows, row)
@@ -198,7 +211,7 @@ type sideLayoutMsg struct {
 }
 
 func (m Model) sideLayoutRaw() string {
-	if !m.diffEnabled || !m.sideBySide || m.diffMode == DiffModeFile || m.summaryMode == SummaryModeComments {
+	if !m.diffEnabled || !m.sideBySide || m.diffMode == DiffModeFile || m.readerContentActive() {
 		return ""
 	}
 	if m.summaryMode == SummaryModeCommits && m.rawCommitDiff != "" {
@@ -331,13 +344,12 @@ func (m Model) buildInboxContent(innerW int) (string, []rowSpan) {
 	var b strings.Builder
 	spans := make([]rowSpan, len(m.prs))
 	row := 0
-	atlantisRepo := m.isAtlantisRepo()
 	for i, pr := range m.prs {
 		spans[i].start = row
 		selected := i == m.selected
-		title := truncateANSIWidth(pr.Title, innerW)
+		title := truncateANSIWidth(readerInput(pr.Title), innerW)
 		if m.cfg.Wrap.Inbox {
-			title = wrapLines(pr.Title, max(1, innerW))
+			title = wrapLines(readerInput(pr.Title), max(1, innerW))
 		}
 		titleStyle := s.Muted
 		if selected {
@@ -347,12 +359,12 @@ func (m Model) buildInboxContent(innerW int) (string, []rowSpan) {
 			b.WriteString(truncatePaneLineWidth(titleStyle.Render(line), innerW) + "\n")
 			row++
 		}
-		b.WriteString(m.inboxMetaRow(pr, selected, atlantisRepo, innerW) + "\n")
+		b.WriteString(m.inboxMetaRow(pr, selected, innerW) + "\n")
 		row++
 		if selected {
 			b.WriteString(m.reviewsRow(pr, innerW) + "\n")
 			row++
-			if atlantisRepo {
+			if m.hasAtlantisActivity(pr) {
 				b.WriteString(m.atlantisRow(pr, innerW) + "\n")
 				row++
 			}

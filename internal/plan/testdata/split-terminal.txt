@@ -1,0 +1,17 @@
+Continued plan output from previous comment.
+<details><summary>Show Output</summary>
+
+```diff
+          Last line of the new value.
+        EOT
+    }
+
+Plan: 1 to add, 0 to change, 0 to destroy.
+```
+</details>
+
+* :arrow_forward: To **apply** this plan, comment:
+  ```shell
+  atlantis apply -p example-app
+  ```
+Plan: 1 to add, 0 to change, 0 to destroy.

@@ -245,3 +245,17 @@ func TestModalHelpAndCommandRetainUnselectedPills(t *testing.T) {
 		})
 	}
 }
+
+func TestCommandPaletteKeepsSelectedActionVisible(t *testing.T) {
+	m := minimalModel()
+	m.width, m.height, m.mode = 100, 18, ModeCommand
+	matches := m.actions.matchingCommands("")
+	m.commandCursor = len(matches) - 1
+	panel := m.renderCommandModal()
+	if len(strings.Split(panel, "\n")) > m.height-chromeLines {
+		t.Fatal("command palette grew beyond the screen")
+	}
+	if !strings.Contains(stripANSI(panel), ":"+matches[len(matches)-1].alias) {
+		t.Fatal("selected command is outside the visible palette")
+	}
+}

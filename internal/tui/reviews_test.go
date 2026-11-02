@@ -32,17 +32,17 @@ func TestReviewsRowMergeAndOrder(t *testing.T) {
 	m := modelWithPRs([]model.PullRequest{pr}, 0)
 	m.theme = uitheme.New(uitheme.DarkDefault(), colorprofile.TrueColor, false)
 	row := m.reviewsRow(pr, 120)
-	if got, want := stripANSI(row), "  reviews  approved alice · waiting carol, platform · bots 1"; got != want {
+	if got, want := stripANSI(row), "  reviews  ✓ alice"; got != want {
 		t.Fatalf("row = %q, want %q", got, want)
 	}
 	s := m.theme.Styles
-	for _, want := range []string{s.SuccessCI.Render("alice"), s.Wait.Render("carol"), s.Muted.Render("bots 1")} {
+	for _, want := range []string{s.SuccessCI.Render("alice")} {
 		if !strings.Contains(row, want) {
 			t.Errorf("row %q lacks styled segment %q", row, want)
 		}
 	}
 	if strings.Contains(row, "copilot-pull-request-reviewer") {
-		t.Error("bot name should be summarized separately")
+		t.Error("bot name should not occupy the human review row")
 	}
 }
 
@@ -59,7 +59,7 @@ func TestReviewsRowGroupsStableOrder(t *testing.T) {
 		{Login: "review-bot", State: "CHANGES_REQUESTED", Bot: true},
 	}}
 	m := modelWithPRs([]model.PullRequest{pr}, 0)
-	want := "  reviews  approved alice, frank · changes bob · waiting carol · commented erin · dismissed dana · reviewed unknown · bots 2"
+	want := "  reviews  ✓ alice, frank · changes bob · commented erin · dismissed dana · reviewed unknown"
 	if got := stripANSI(m.reviewsRow(pr, 180)); got != want {
 		t.Fatalf("grouped row = %q, want %q", got, want)
 	}
@@ -82,14 +82,14 @@ func TestReviewsRowNoColorPreservesStates(t *testing.T) {
 		bot   bool
 		want  string
 	}{
-		{name: "approved", state: "APPROVED", want: "approved alice"},
+		{name: "approved", state: "APPROVED", want: "✓ alice"},
 		{name: "changes requested", state: "CHANGES_REQUESTED", want: "changes alice"},
-		{name: "requested again", state: "REQUESTED", want: "waiting alice"},
+		{name: "requested again", state: "REQUESTED", want: "none"},
 		{name: "commented", state: "COMMENTED", want: "commented alice"},
 		{name: "dismissed", state: "DISMISSED", want: "dismissed alice"},
 		{name: "unknown", state: "FUTURE_STATE", want: "reviewed alice"},
-		{name: "bot approval is advisory", state: "APPROVED", bot: true, want: "bots 1"},
-		{name: "bot changes are advisory", state: "CHANGES_REQUESTED", bot: true, want: "bots 1"},
+		{name: "bot approval stays outside human summary", state: "APPROVED", bot: true, want: "none"},
+		{name: "bot changes stay outside human summary", state: "CHANGES_REQUESTED", bot: true, want: "none"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			pr := model.PullRequest{ReviewersLoaded: true, Reviewers: []model.Reviewer{{Login: "alice", State: tt.state, Bot: tt.bot}}}

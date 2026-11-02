@@ -30,28 +30,6 @@ func TestCIPillState(t *testing.T) {
 	}
 }
 
-func TestTFPillState(t *testing.T) {
-	cases := []struct {
-		name string
-		a    model.AtlantisSummary
-		want uitheme.PillState
-	}{
-		{"plan failed", model.AtlantisSummary{Plan: model.PlanFailed}, uitheme.PillFailed},
-		{"policy failed", model.AtlantisSummary{Plan: model.PlanPassed, Policy: model.PolicyFailed}, uitheme.PillFailed},
-		{"plan running", model.AtlantisSummary{Plan: model.PlanRunning}, uitheme.PillWait},
-		{"policy running", model.AtlantisSummary{Plan: model.PlanPassed, Policy: model.PolicyRunning}, uitheme.PillWait},
-		{"plan and policy passed", model.AtlantisSummary{Plan: model.PlanPassed, Policy: model.PolicyPassed}, uitheme.PillPassed},
-		{"plan passed no policy", model.AtlantisSummary{Plan: model.PlanPassed}, uitheme.PillPassed},
-		{"no plan", model.AtlantisSummary{}, uitheme.PillNone},
-		{"apply failed ignored", model.AtlantisSummary{Plan: model.PlanPassed, Apply: model.ApplyFailed}, uitheme.PillPassed},
-	}
-	for _, tc := range cases {
-		if got := tfPillState(tc.a); got != tc.want {
-			t.Errorf("%s: %v, want %v", tc.name, got, tc.want)
-		}
-	}
-}
-
 func TestOccasionalPills(t *testing.T) {
 	labels := func(pr model.PullRequest) string {
 		var out []string
@@ -110,12 +88,12 @@ func TestInboxRow2RightAligned(t *testing.T) {
 	}
 }
 
-func TestInboxRow2ShowsTFOnlyInAtlantisRepo(t *testing.T) {
+func TestInboxRow2NeverShowsTF(t *testing.T) {
 	pr := model.PullRequest{Number: 1, Title: "t", Author: "a", Checks: []model.Check{{Context: "atlantis/plan", State: "SUCCESS", StartedAt: time.Now()}}}
 	m := modelWithPRs([]model.PullRequest{pr}, 0)
 	m.cfg.Pills = "square"
-	if row := stripANSI(inboxLines(m, 60)[1]); !strings.HasSuffix(row, " TF ") {
-		t.Fatalf("row 2 lacks TF: %q", row)
+	if row := stripANSI(inboxLines(m, 60)[1]); strings.Contains(row, "TF") || !strings.Contains(row, " CI ") {
+		t.Fatalf("row 2 should retain CI without TF: %q", row)
 	}
 	disabled := false
 	m.cfg.Atlantis.Enabled = &disabled

@@ -222,7 +222,7 @@ func TestInboxLayoutCacheInvalidatesOnAtlantisChange(t *testing.T) {
 	before, _ := m.inboxContent(80)
 	m.prs[0].Checks = atlantisChecks("SUCCESS", time.Now().Add(-4*time.Minute))
 	after, _ := m.inboxContent(80)
-	if after == before || !strings.Contains(stripANSI(after), "PLAN OK") {
+	if after == before || !strings.Contains(stripANSI(after), "plan ok") || strings.Contains(stripANSI(after), "planning") {
 		t.Fatalf("stale Inbox after Atlantis change: %q", stripANSI(after))
 	}
 }

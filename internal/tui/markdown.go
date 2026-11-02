@@ -50,7 +50,7 @@ func (m Model) renderCommentMarkdown(body string) string {
 	}
 	var links []link
 	pre, diff := false, false
-	hidden := 0
+	hidden, cell := 0, 0
 	newline := func(count int) {
 		text := out.String()
 		if text == "" {
@@ -182,8 +182,12 @@ func (m Model) renderCommentMarkdown(body string) string {
 				}
 			case "tr":
 				newline(1)
+				cell = 0
 			case "td", "th":
-				out.WriteString(" | ")
+				if cell > 0 {
+					out.WriteString(" | ")
+				}
+				cell++
 			}
 			if tag == "pre" {
 				pre = true

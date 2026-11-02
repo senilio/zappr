@@ -17,6 +17,9 @@ type PRCommit struct {
 }
 
 type PRComment struct {
+	ID        string    `json:"id,omitempty"`
+	URL       string    `json:"url,omitempty"`
+	UpdatedAt time.Time `json:"updated_at,omitempty"`
 	Author    string
 	Body      string
 	CreatedAt time.Time
@@ -82,5 +85,8 @@ type PullRequest struct {
 	// ReviewCommentsLoaded distinguishes complete details from older cached
 	// entries that fetched only conversation comments.
 	ReviewCommentsLoaded bool `json:"review_comments_loaded,omitempty"`
-	Skipped              bool
+	// ConversationCommentsLoaded means all conversation pages and native
+	// provenance were fetched, including after an older cache is upgraded.
+	ConversationCommentsLoaded bool `json:"conversation_comments_loaded,omitempty"`
+	Skipped                    bool
 }

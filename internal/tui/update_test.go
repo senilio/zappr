@@ -322,6 +322,7 @@ func TestCommandPaletteUsesConciseRequestChangesLabel(t *testing.T) {
 	m.width = 60
 	m.height = 40
 	m.mode = ModeCommand
+	m.commandInput = "block"
 
 	panel := stripANSI(m.commandPanel())
 	if !strings.Contains(panel, ":block  block PR merge [?]") {
@@ -2032,12 +2033,12 @@ func TestFileSummaryGroupsFilesByDirectoryInAlignedColumns(t *testing.T) {
 	}
 	want := []string{
 		"terraform/accounts/emea-staging/db/",
-		"  _provider.tf   modified +0  -6",
-		"  main.tf        modified +0 -13",
+		"  _provider.tf             -6",
+		"  main.tf                 -13",
 		"terraform/accounts/emea-staging/storage/",
-		"  databases.yaml modified +0 -18",
+		"  databases.yaml          -18",
 		"./",
-		"  README.md      added    +5  -0",
+		"  README.md      added +5",
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("grouped file summary =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
@@ -2055,7 +2056,7 @@ func TestFileSummaryTruncatesHeadersAndNamesWithinPane(t *testing.T) {
 	if got, want := strings.TrimRight(lines[0], " "), "…ccounts/emea-staging/db/"; got != want {
 		t.Fatalf("directory header = %q, want %q", got, want)
 	}
-	if got, want := strings.TrimRight(lines[1], " "), "  very_lo… modified +5 -0"; got != want {
+	if got, want := strings.TrimRight(lines[1], " "), "  very_long_filename.… +5"; got != want {
 		t.Fatalf("file row = %q, want %q", got, want)
 	}
 	for _, line := range lines {
@@ -2107,17 +2108,14 @@ func TestFileSummaryScrollAccountsForDirectoryHeaders(t *testing.T) {
 	}
 }
 
-func TestLeftColumnHeightsShiftByFocus(t *testing.T) {
+func TestLeftColumnHeightsShrinkInboxWhenUnfocused(t *testing.T) {
 	m := minimalModel()
-	inboxH, summaryH := m.leftColumnHeights(20)
-	if inboxH != 12 || summaryH != 8 {
-		t.Fatalf("inbox focus heights = %d/%d, want 12/8", inboxH, summaryH)
-	}
+	inboxH, summaryH := m.leftColumnHeights(40)
 	m.focus = FocusSummary
 	m.mode = ModeDetail
-	inboxH, summaryH = m.leftColumnHeights(20)
-	if inboxH != 4 || summaryH != 16 {
-		t.Fatalf("summary focus heights = %d/%d, want 4/16", inboxH, summaryH)
+	gotI, gotS := m.leftColumnHeights(40)
+	if gotI >= inboxH || gotS <= summaryH || gotI+gotS != 40 || gotI < inboxMinContentRows+paneFrame {
+		t.Fatalf("heights focused %d/%d, unfocused %d/%d", inboxH, summaryH, gotI, gotS)
 	}
 }
 
@@ -2573,7 +2571,7 @@ func contains(s, sub string) bool {
 
 func TestAutoDetailsCmdFetchesMissingDetailsOnce(t *testing.T) {
 	m := modelWithPRs([]model.PullRequest{
-		{Number: 1, Repo: "org/repo", DetailsLoaded: true, ReviewCommentsLoaded: true, ReviewersLoaded: true},
+		{Number: 1, Repo: "org/repo", DetailsLoaded: true, ReviewCommentsLoaded: true, ReviewersLoaded: true, ConversationCommentsLoaded: true},
 		{Number: 2, Repo: "org/repo"},
 	}, 0)
 
@@ -2993,12 +2991,12 @@ func TestAtlantisGuardDialogShowsChoices(t *testing.T) {
 }
 
 func TestSelectionFetchesWhenReviewersNotLoaded(t *testing.T) {
-	m := modelWithPRs([]model.PullRequest{{Repo: "org/repo", Number: 1, DetailsLoaded: true, ReviewCommentsLoaded: true}}, 0)
+	m := modelWithPRs([]model.PullRequest{{Repo: "org/repo", Number: 1, DetailsLoaded: true, ReviewCommentsLoaded: true, ConversationCommentsLoaded: true}}, 0)
 	m.app = app.New(&commentRecordingGitHub{}, cache.NewMemoryStore())
 	if cmd := m.autoDetailsCmd(); cmd == nil {
 		t.Fatal("autoDetailsCmd = nil for PR without loaded reviewers")
 	}
-	m = modelWithPRs([]model.PullRequest{{Repo: "org/repo", Number: 1, DetailsLoaded: true, ReviewCommentsLoaded: true, ReviewersLoaded: true}}, 0)
+	m = modelWithPRs([]model.PullRequest{{Repo: "org/repo", Number: 1, DetailsLoaded: true, ReviewCommentsLoaded: true, ReviewersLoaded: true, ConversationCommentsLoaded: true}}, 0)
 	if cmd := m.autoDetailsCmd(); cmd != nil {
 		t.Fatal("autoDetailsCmd fetched a fully loaded PR")
 	}

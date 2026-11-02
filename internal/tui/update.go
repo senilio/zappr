@@ -15,6 +15,7 @@ import (
 	"github.com/charmbracelet/colorprofile"
 	"github.com/senilio/zappr/internal/app"
 	"github.com/senilio/zappr/internal/model"
+	"github.com/senilio/zappr/internal/plan"
 	uitheme "github.com/senilio/zappr/internal/tui/theme"
 )
 
@@ -141,6 +142,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 
 	case refreshPRMsg:
+		if pr, ok := m.current(); ok && pr.Repo == msg.repo && pr.Number == msg.number && msg.requestHead != "" && msg.requestHead != pr.HeadRefOID {
+			return m, nil // A newer inbox head superseded this request.
+		}
 		m.loading = false
 		if msg.err != nil {
 			if errors.Is(msg.err, app.ErrPRNotOpen) {
@@ -397,6 +401,9 @@ func (m Model) inboxIndexAt(region paneRegion, _ int, y int) (int, bool) {
 }
 
 func (m Model) handleMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
+	if m.planState.pendingOpen != nil {
+		m.cancelPlanOpen()
+	}
 	region, ok := m.paneRegionAt(msg.X, msg.Y)
 	if !ok {
 		return m, nil
@@ -497,6 +504,16 @@ func (m Model) triggerAction(action tuiAction) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) executeAction(action tuiAction) (tea.Model, tea.Cmd) {
+	switch action.ID {
+	case "focus-next", "focus-prev", "move-down", "move-up", "next-item", "prev-item", "go-top", "go-bottom", "page-down", "page-up", "inspect-pr", "help", "settings", "command-palette", "toggle-diff":
+		if m.planState.pendingOpen != nil {
+			m.cancelPlanOpen()
+		}
+	}
+	if action.ID == "summary-plan" {
+		cmd := m.openPlan()
+		return m, cmd
+	}
 	if action.ID == "quit" {
 		if m.settingsSaver != nil {
 			return m, tea.Sequence(m.saveSettings(), tea.Quit)
@@ -590,7 +607,7 @@ func (m Model) executeAction(action tuiAction) (tea.Model, tea.Cmd) {
 	if m.setSummaryMode(action.ID) {
 		m.summaryVP.GotoTop()
 		m.commitIndex = 0
-		m.commentIndex = 0
+		m.reconcileComments()
 		m.summaryXOffset = 0
 		m.commitDiffKey = ""
 		m.renderedCommitDiff = ""
@@ -633,7 +650,11 @@ func (m Model) executeAction(action tuiAction) (tea.Model, tea.Cmd) {
 	case "go-top":
 		switch m.focus {
 		case FocusSummary:
-			m.summaryVP.GotoTop()
+			if m.summaryMode == SummaryModePlan {
+				m.movePlan(-m.planNodeIndex())
+			} else {
+				m.summaryVP.GotoTop()
+			}
 		case FocusDiff:
 			m.diffVP.GotoTop()
 		default: // FocusInbox
@@ -646,7 +667,11 @@ func (m Model) executeAction(action tuiAction) (tea.Model, tea.Cmd) {
 	case "go-bottom":
 		switch m.focus {
 		case FocusSummary:
-			m.summaryVP.GotoBottom()
+			if m.summaryMode == SummaryModePlan {
+				m.movePlan(len(m.planNodes()) - 1 - m.planNodeIndex())
+			} else {
+				m.summaryVP.GotoBottom()
+			}
 		case FocusDiff:
 			m.diffVP.GotoBottom()
 		default: // FocusInbox
@@ -674,7 +699,9 @@ func (m Model) executeAction(action tuiAction) (tea.Model, tea.Cmd) {
 	case "move-down":
 		switch m.focus {
 		case FocusSummary:
-			if m.summaryMode == SummaryModeCommits {
+			if m.summaryMode == SummaryModePlan {
+				m.movePlan(1)
+			} else if m.summaryMode == SummaryModeCommits {
 				if pr, ok := m.current(); ok && m.commitIndex < len(pr.Commits)-1 {
 					m.commitIndex++
 					m.syncSummaryVP()
@@ -704,7 +731,9 @@ func (m Model) executeAction(action tuiAction) (tea.Model, tea.Cmd) {
 	case "move-up":
 		switch m.focus {
 		case FocusSummary:
-			if m.summaryMode == SummaryModeCommits {
+			if m.summaryMode == SummaryModePlan {
+				m.movePlan(-1)
+			} else if m.summaryMode == SummaryModeCommits {
 				if m.commitIndex > 0 {
 					m.commitIndex--
 					m.syncSummaryVP()
@@ -746,7 +775,11 @@ func (m Model) executeAction(action tuiAction) (tea.Model, tea.Cmd) {
 	case "page-down":
 		switch m.focus {
 		case FocusSummary:
-			m.summaryVP.PageDown()
+			if m.summaryMode == SummaryModePlan {
+				m.pagePlan(1)
+			} else {
+				m.summaryVP.PageDown()
+			}
 		case FocusDiff:
 			m.diffVP.PageDown()
 		case FocusInbox:
@@ -757,7 +790,11 @@ func (m Model) executeAction(action tuiAction) (tea.Model, tea.Cmd) {
 	case "page-up":
 		switch m.focus {
 		case FocusSummary:
-			m.summaryVP.PageUp()
+			if m.summaryMode == SummaryModePlan {
+				m.pagePlan(-1)
+			} else {
+				m.summaryVP.PageUp()
+			}
 		case FocusDiff:
 			m.diffVP.PageUp()
 		case FocusInbox:
@@ -766,7 +803,9 @@ func (m Model) executeAction(action tuiAction) (tea.Model, tea.Cmd) {
 			m.inboxVP.PageUp()
 		}
 	case "next-item":
-		if m.summaryMode == SummaryModeComments {
+		if m.summaryMode == SummaryModePlan {
+			m.movePlan(1)
+		} else if m.summaryMode == SummaryModeComments {
 			m.moveComment(1)
 		} else if m.summaryMode == SummaryModeCommits {
 			if pr, ok := m.current(); ok && m.commitIndex < len(pr.Commits)-1 {
@@ -789,7 +828,9 @@ func (m Model) executeAction(action tuiAction) (tea.Model, tea.Cmd) {
 			m.syncSummaryVPScroll()
 		}
 	case "prev-item":
-		if m.summaryMode == SummaryModeComments {
+		if m.summaryMode == SummaryModePlan {
+			m.movePlan(-1)
+		} else if m.summaryMode == SummaryModeComments {
 			m.moveComment(-1)
 		} else if m.summaryMode == SummaryModeCommits {
 			if m.commitIndex > 0 {
@@ -806,6 +847,19 @@ func (m Model) executeAction(action tuiAction) (tea.Model, tea.Cmd) {
 			m.syncSummaryVPScroll()
 		}
 	case "inspect-pr":
+		if m.summaryMode == SummaryModePlan {
+			if node, ok := m.selectedPlanNode(); ok && node.Kind == plan.NodeReport {
+				m.adoptPlanReport(node.ReportID)
+			} else {
+				m.focus = FocusDiff
+				m.mode = ModeDetail
+				if m.width > 0 && m.width < minMediumWidth {
+					m.mode = ModeDiff
+				}
+			}
+			m.resizeViewports()
+			return m, nil
+		}
 		if _, ok := m.current(); ok {
 			m.mode = ModeDetail
 			m.focus = FocusSummary
@@ -813,6 +867,7 @@ func (m Model) executeAction(action tuiAction) (tea.Model, tea.Cmd) {
 			return m, m.selectionCmd()
 		}
 	case "back-to-inbox":
+		m.cancelPlanOpen()
 		m.mode = ModeInbox
 		m.focus = FocusInbox
 		m.resizeViewports()
@@ -842,7 +897,7 @@ func (m Model) executeAction(action tuiAction) (tea.Model, tea.Cmd) {
 			// "enabled" alone no longer means the full-screen view is open.
 			m.diffEnabled = true
 			m.syncDiffVP()
-			if m.diff != "" || m.summaryMode == SummaryModeComments {
+			if m.diff != "" || m.summaryMode == SummaryModeComments || m.summaryMode == SummaryModePlan {
 				m.mode = ModeDiff
 				m.focus = FocusDiff
 				return m, nil
@@ -872,16 +927,26 @@ func (m Model) executeAction(action tuiAction) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case "open-diff-pager":
+		if m.readerContentActive() {
+			m.message = "the diff pager is only available for source-code diffs"
+			return m, nil
+		}
 		if pr, ok := m.current(); ok {
 			return m, openDiffPagerCmd(pr.Repo, pr.Number)
 		}
 	case "toggle-side-by-side":
+		if m.readerContentActive() {
+			return m, nil
+		}
 		if m.rawDiff != "" && (m.mode == ModeDiff || m.focus == FocusDiff) {
 			m.sideBySide = !m.sideBySide
 			m.diffXOffset = 0
 			m.syncDiffVP()
 		}
 	case "toggle-file-content":
+		if m.readerContentActive() {
+			return m, nil
+		}
 		if !m.diffEnabled {
 			return m, nil
 		}
@@ -1005,6 +1070,7 @@ func prRefreshKey(pr model.PullRequest) string {
 
 // selectionCmd loads whatever the currently selected PR still needs.
 func (m *Model) selectionCmd() tea.Cmd {
+	m.reconcilePlan()
 	if m.summaryMode == SummaryModeCommits {
 		return tea.Batch(m.autoDiffCmd(), m.autoDetailsCmd(), m.autoCommitDiffCmd())
 	}
@@ -1016,10 +1082,10 @@ func (m *Model) selectionCmd() tea.Cmd {
 // version once.
 func (m *Model) autoDetailsCmd() tea.Cmd {
 	pr, ok := m.current()
-	if !ok || (pr.DetailsLoaded && pr.ReviewCommentsLoaded && pr.ReviewersLoaded) {
+	if !ok || (pr.DetailsLoaded && pr.ReviewCommentsLoaded && pr.ReviewersLoaded && pr.ConversationCommentsLoaded) {
 		return nil
 	}
-	key := fmt.Sprintf("%s#%d@%s", pr.Repo, pr.Number, pr.UpdatedAt.Format(time.RFC3339Nano))
+	key := fmt.Sprintf("%s@%s", prRefreshKey(pr), pr.UpdatedAt.Format(time.RFC3339Nano))
 	if m.detailsLoadKey == key {
 		return nil
 	}
@@ -1230,7 +1296,12 @@ func shellQuote(s string) string {
 }
 
 func (m *Model) resetPRViewState() {
+	// Feedback such as "no supported plan report found" belongs to the PR it
+	// described; a different selection must not inherit it.
+	m.message = ""
+	m.cancelPlanOpen()
 	m.clearLoadedDiffState()
+	m.reconcilePlan()
 	m.inboxManualScroll = false
 	m.syncInboxVP()
 	m.syncSummaryVP()
@@ -1255,6 +1326,8 @@ func (m *Model) syncSummaryVPScroll() {
 		index = m.commitIndex
 	case SummaryModeComments:
 		index = m.commentIndex
+	case SummaryModePlan:
+		index = m.planNodeIndex()
 	}
 	if index >= 0 && index < len(spans) {
 		m.summaryVP.SetYOffset(keepSelectionVisible(m.summaryVP.YOffset(), vpH, spans, index))
@@ -1283,7 +1356,7 @@ func (m *Model) syncSummaryVP() {
 // Lines are stored at full width — the viewport's ansi.Cut windows horizontally.
 // Width is set to the real diff-pane inner width so scroll % and cut are correct.
 func (m *Model) syncDiffVP() {
-	if !m.largePaneActive() || (m.summaryMode != SummaryModeComments && m.diff == "") {
+	if !m.largePaneActive() || (!m.readerContentActive() && m.diff == "") {
 		return
 	}
 	// Use the real visible diff content width so horizontal cut matches render.
@@ -1301,11 +1374,17 @@ func (m *Model) syncDiffVP() {
 }
 
 func (m *Model) currentDiffContent() string {
+	if m.summaryMode == SummaryModePlan {
+		return m.planDetail()
+	}
 	if m.summaryMode == SummaryModeComments {
 		if comment, ok := m.selectedComment(); ok {
 			return m.commentDetail(comment)
 		}
-		return ""
+		if pr, ok := m.current(); ok && len(pr.Comments) != 0 && len(m.visibleComments(pr)) == 0 {
+			return "no matching comments"
+		}
+		return "no comments available"
 	}
 	if m.diffMode == DiffModeFile {
 		return m.currentFileContent()
@@ -1391,7 +1470,7 @@ func (m *Model) maxDiffXOffset() int {
 // largePaneActive reports whether the large pane has content to focus. Comments
 // are already loaded, so the Comment pane does not depend on the diff toggle.
 func (m Model) largePaneActive() bool {
-	return m.diffEnabled || m.summaryMode == SummaryModeComments
+	return m.diffEnabled || m.readerContentActive()
 }
 
 // moveComment changes the selected comment and shows it from the top.
@@ -1401,10 +1480,12 @@ func (m *Model) moveComment(delta int) {
 		return
 	}
 	next := m.commentIndex + delta
-	if next < 0 || next >= len(pr.Comments) {
+	comments := m.visibleComments(pr)
+	if next < 0 || next >= len(comments) {
 		return
 	}
 	m.commentIndex = next
+	m.commentState.selectedKey = comments[next].Key()
 	m.diffVP.GotoTop()
 	m.diffXOffset = 0
 	m.syncDiffVP()
@@ -1413,6 +1494,9 @@ func (m *Model) moveComment(delta int) {
 }
 
 func (m *Model) setSummaryMode(actionID string) bool {
+	if strings.HasPrefix(actionID, "summary-") {
+		m.cancelPlanOpen()
+	}
 	switch actionID {
 	case "summary-files":
 		m.summaryMode = SummaryModeFiles
@@ -1478,6 +1562,9 @@ func (m *Model) applyPRSettings() {
 	}
 	if m.selected < 0 {
 		m.selected = 0
+	}
+	if pr, ok := m.current(); ok && pr.Number != current {
+		m.resetPRViewState()
 	}
 }
 
@@ -1709,9 +1796,9 @@ func (m Model) handleConfirmAtlantisKey(key string) (tea.Model, tea.Cmd) {
 // handlePRClosed drops a PR that GitHub reports as no longer open.
 func (m *Model) handlePRClosed(repo string, number int) tea.Cmd {
 	m.error = ""
-	m.message = "PR closed"
 	m.removeCachedPR(repo, number)
 	m.applyPRSettings()
+	m.message = "PR closed"
 	m.lastFetch = timeNow()
 	if len(m.prs) == 0 {
 		m.mode = ModeInbox

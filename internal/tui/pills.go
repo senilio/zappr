@@ -24,21 +24,6 @@ func ciPillState(status string) uitheme.PillState {
 	}
 }
 
-// tfPillState summarizes plan and policy; apply state is shown only on the
-// selected PR's atlantis row.
-func tfPillState(a model.AtlantisSummary) uitheme.PillState {
-	switch {
-	case a.Plan == model.PlanFailed || a.Policy == model.PolicyFailed:
-		return uitheme.PillFailed
-	case a.Plan == model.PlanRunning || a.Policy == model.PolicyRunning:
-		return uitheme.PillWait
-	case a.Plan == model.PlanPassed:
-		return uitheme.PillPassed
-	default:
-		return uitheme.PillNone
-	}
-}
-
 type rowPill struct {
 	label string
 	state uitheme.PillState
@@ -69,13 +54,10 @@ func occasionalPills(pr model.PullRequest) []rowPill {
 
 // inboxMetaRow renders row 2: "#number · author" on the left and the
 // status pills right-aligned to innerW.
-func (m Model) inboxMetaRow(pr model.PullRequest, selected, atlantisRepo bool, innerW int) string {
+func (m Model) inboxMetaRow(pr model.PullRequest, selected bool, innerW int) string {
 	shape := m.pillShape()
 	opacity := m.cfg.EffectivePillOpacity()
 	fixed := []string{m.theme.Pill("CI", ciPillState(pr.CIStatus), shape, opacity), m.theme.ReviewIcon(pr.ReviewDecision, pr.Draft, shape)}
-	if atlantisRepo {
-		fixed = append(fixed, m.theme.Pill("TF", tfPillState(model.DeriveAtlantis(pr.Checks)), shape, opacity))
-	}
 	var occasional []string
 	for _, p := range occasionalPills(pr) {
 		occasional = append(occasional, m.theme.Pill(p.label, p.state, shape, opacity))
@@ -97,7 +79,7 @@ func (m Model) inboxMetaRow(pr model.PullRequest, selected, atlantisRepo bool, i
 	}
 	left := ""
 	if leftW := innerW - rightW - 1; leftW >= minLeftW {
-		left = leftStyle.Render(truncateANSIWidth(number+" · "+pr.Author, leftW))
+		left = leftStyle.Render(truncateANSIWidth(number+" · "+readerInput(pr.Author), leftW))
 	}
 	pad := strings.Repeat(" ", max(0, innerW-ansi.StringWidth(left)-rightW))
 	return truncatePaneLineWidth(left+pad+right, innerW)
