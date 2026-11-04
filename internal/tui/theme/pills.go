@@ -2,7 +2,6 @@ package theme
 
 import (
 	"image/color"
-	"math"
 	"strings"
 
 	"charm.land/lipgloss/v2"
@@ -63,16 +62,10 @@ func (t Theme) Pill(label string, state PillState, shape PillShape, opacity floa
 	}
 	fg := t.stateColor(state)
 	if t.isANSIPalette() {
-		style := lipgloss.NewStyle().Foreground(fg)
-		if state == PillFailed {
-			style = lipgloss.NewStyle().Background(lipgloss.Color("1")).Foreground(lipgloss.Color("0")).Bold(true)
-		}
-		return style.Render(" " + label + " ")
+		return lipgloss.NewStyle().Foreground(fg).Render(" " + label + " ")
 	}
 	var bg color.Color
 	switch {
-	case state == PillFailed:
-		bg, fg = t.Palette.Error, t.Palette.Panel
 	case !t.IsDark:
 		bg = lipgloss.Lighten(fg, 0.75)
 	case state == PillNone:
@@ -81,10 +74,7 @@ func (t Theme) Pill(label string, state PillState, shape PillShape, opacity floa
 		bg = lipgloss.Darken(fg, 0.7)
 	}
 	bg = t.Fade(bg, opacity)
-	if state == PillFailed && contrast(bg, t.Palette.Text) > contrast(bg, fg) {
-		fg = t.Palette.Text
-	}
-	body := lipgloss.NewStyle().Background(bg).Foreground(fg).Bold(state == PillFailed)
+	body := lipgloss.NewStyle().Background(bg).Foreground(fg)
 	if shape == PillSquare {
 		return body.Render(" " + label + " ")
 	}
@@ -106,25 +96,6 @@ func (t Theme) Fade(c color.Color, opacity float64) color.Color {
 	return color.RGBA{R: blend(r, pr), G: blend(g, pg), B: blend(b, pb), A: 255}
 }
 
-func contrast(a, b color.Color) float64 {
-	if a == nil || b == nil {
-		return 0
-	}
-	luminance := func(c color.Color) float64 {
-		r, g, b, _ := c.RGBA()
-		linear := func(v uint32) float64 {
-			x := float64(v) / 65535
-			if x <= 0.04045 {
-				return x / 12.92
-			}
-			return math.Pow((x+0.055)/1.055, 2.4)
-		}
-		return 0.2126*linear(r) + 0.7152*linear(g) + 0.0722*linear(b)
-	}
-	x, y := luminance(a), luminance(b)
-	return (max(x, y) + 0.05) / (min(x, y) + 0.05)
-}
-
 func pillSymbol(state PillState) string {
 	switch state {
 	case PillPassed:
@@ -138,8 +109,8 @@ func pillSymbol(state PillState) string {
 	}
 }
 
-// ReviewIcon renders a one-cell review decision icon.
-func (t Theme) ReviewIcon(decision string, draft bool, shape PillShape) string {
+// ReviewPill renders a review decision symbol in a three-cell status pill.
+func (t Theme) ReviewPill(decision string, draft bool, shape PillShape, opacity float64) string {
 	state := PillNone
 	if !draft {
 		switch strings.ToUpper(decision) {
@@ -151,14 +122,9 @@ func (t Theme) ReviewIcon(decision string, draft bool, shape PillShape) string {
 			state = PillWait
 		}
 	}
-	nerd := map[PillState]string{PillPassed: "\uf4a4", PillFailed: "\uf530", PillWait: "\uf4ab", PillNone: "\uf4aa"}
-	plain := map[PillState]string{PillPassed: "✓", PillFailed: "✗", PillWait: "●", PillNone: "○"}
+	icon := pillSymbol(state)
 	if t.NoColor {
-		return plain[state]
+		return " " + icon + " "
 	}
-	icon := nerd[state]
-	if shape == PillSquare || t.isANSIPalette() {
-		icon = plain[state]
-	}
-	return lipgloss.NewStyle().Foreground(t.stateColor(state)).Render(icon)
+	return t.Pill(icon, state, shape, opacity)
 }

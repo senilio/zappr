@@ -94,6 +94,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.restoreDiffAnchor(anchor)
 		return m, nil
 	case refreshMsg:
+		if msg.generation != m.refreshGeneration {
+			return m, nil
+		}
 		m.loading = false
 		if msg.err != nil {
 			m.error = msg.err.Error()
@@ -241,13 +244,23 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.error = ""
 		m.message = msg.message
 		m.mode = ModeInbox
-		refresh := refreshCmd(m.app, m.repo, !m.hideDrafts)
+		refresh := m.refreshCmd(!m.hideDrafts)
 		if msg.refreshPR != nil {
 			// Refresh details last so an older list snapshot cannot overwrite
 			// the reviewers returned after the review action.
 			refresh = tea.Sequence(refresh, refreshPRCmd(m.app, *msg.refreshPR))
 		}
 		return m, tea.Batch(m.finishStatus(msg.message, false), refresh)
+	case configReloadedMsg:
+		if m.settingsSaver == nil || msg.revision != m.settingsSaver.revision.Load() {
+			return m, nil
+		}
+		if msg.err != nil {
+			m.error = "failed to reload configuration: " + msg.err.Error()
+			return m, m.finishStatus(m.error, true)
+		}
+		cmd := m.applyReloadedConfig(msg.cfg, msg.actions)
+		return m, cmd
 	case settingsSavedMsg:
 		if msg.err != nil {
 			m.error = "failed to save settings: " + msg.err.Error()
@@ -282,15 +295,18 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tickMsg:
+		if msg.generation != m.pollGeneration {
+			return m, nil
+		}
 		if m.loading {
-			return m, tickCmd(m.pollEvery)
+			return m, tickCmd(m.pollEvery, m.pollGeneration)
 		}
 		m.loading = true
 		m.message = "polling inbox"
 		if pr, ok := m.current(); ok {
-			return m, tea.Sequence(refreshCmd(m.app, m.repo, !m.hideDrafts), refreshPRCmd(m.app, pr), tickCmd(m.pollEvery))
+			return m, tea.Sequence(m.refreshCmd(!m.hideDrafts), refreshPRCmd(m.app, pr), tickCmd(m.pollEvery, m.pollGeneration))
 		}
-		return m, tea.Sequence(refreshCmd(m.app, m.repo, !m.hideDrafts), tickCmd(m.pollEvery))
+		return m, tea.Sequence(m.refreshCmd(!m.hideDrafts), tickCmd(m.pollEvery, m.pollGeneration))
 
 	case uiTickMsg:
 		// Re-render every second so the "refreshed Xs ago" counter stays live.
@@ -565,6 +581,10 @@ func (m Model) executeAction(action tuiAction) (tea.Model, tea.Cmd) {
 		}
 		m.mode = ModeColorscheme
 		return m, nil
+	}
+	if action.ID == "reload" {
+		cmd := m.reloadConfig()
+		return m, cmd
 	}
 	switch action.Operation {
 	case "approve":
@@ -879,11 +899,11 @@ func (m Model) executeAction(action tuiAction) (tea.Model, tea.Cmd) {
 		}
 		m.loading = true
 		m.message = "refreshing"
-		return m, tea.Batch(m.startStatus("refreshing…"), refreshCmd(m.app, m.repo, !m.hideDrafts))
+		return m, tea.Batch(m.startStatus("refreshing…"), m.refreshCmd(!m.hideDrafts))
 	case "refresh-inbox":
 		m.loading = true
 		m.message = "refreshing"
-		return m, tea.Batch(m.startStatus("refreshing…"), refreshCmd(m.app, m.repo, !m.hideDrafts))
+		return m, tea.Batch(m.startStatus("refreshing…"), m.refreshCmd(!m.hideDrafts))
 	case "toggle-diff":
 		if m.width > 0 && m.width < minMediumWidth {
 			if m.diffEnabled && m.mode == ModeDiff {
@@ -1615,7 +1635,7 @@ func (m Model) handleSettingsKey(key string) (tea.Model, tea.Cmd) {
 			m.applyPRSettings()
 			m.message = draftFilterMessage(m.hideDrafts)
 			if !m.hideDrafts {
-				return m, tea.Batch(m.saveSettings(), refreshCmd(m.app, m.repo, true))
+				return m, tea.Batch(m.saveSettings(), m.refreshCmd(true))
 			}
 			return m, m.saveSettings()
 		} else {

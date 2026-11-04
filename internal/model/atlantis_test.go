@@ -218,3 +218,37 @@ func TestDeriveAtlantis(t *testing.T) {
 		})
 	}
 }
+
+func TestDeriveAtlantisRequiresEveryPlannedProjectApplied(t *testing.T) {
+	at := time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)
+	checks := []Check{
+		{Context: "atlantis/plan", State: "SUCCESS", StartedAt: at},
+		{Context: "atlantis/plan: a", State: "SUCCESS", StartedAt: at},
+		{Context: "atlantis/plan: b", State: "SUCCESS", StartedAt: at},
+		{Context: "atlantis/apply", State: "SUCCESS", StartedAt: at.Add(time.Minute)},
+		{Context: "atlantis/apply: a", State: "SUCCESS", StartedAt: at.Add(time.Minute)},
+	}
+	for _, tc := range []struct {
+		name  string
+		extra Check
+		done  bool
+	}{
+		{name: "subset"},
+		{name: "unrelated project does not complete the plan", extra: Check{Context: "atlantis/apply: c", State: "SUCCESS", StartedAt: at.Add(time.Minute)}},
+		{name: "unknown project result", extra: Check{Context: "atlantis/apply: b", State: ""}},
+		{name: "apply before replan", extra: Check{Context: "atlantis/apply: b", State: "SUCCESS", StartedAt: at.Add(-time.Minute)}},
+		{name: "all projects", extra: Check{Context: "atlantis/apply: b", State: "SUCCESS", StartedAt: at.Add(time.Minute)}, done: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			input := append(append([]Check(nil), checks...), tc.extra)
+			got := DeriveAtlantis(input)
+			want := ApplyPartial
+			if tc.done {
+				want = ApplyDone
+			}
+			if got.Apply != want {
+				t.Fatalf("Apply = %v, want %v", got.Apply, want)
+			}
+		})
+	}
+}

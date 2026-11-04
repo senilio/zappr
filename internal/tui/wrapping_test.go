@@ -511,48 +511,49 @@ func atlantisInboxModel(t *testing.T, wrapInbox bool) Model {
 	return m
 }
 
-func TestInboxShowsAtlantisRowOnSelectedOnly(t *testing.T) {
+func TestInboxShowsAtlantisPillsWithoutExtraRows(t *testing.T) {
 	m := atlantisInboxModel(t, false)
 	content, spans := m.inboxContent(80)
-	if got := spans[0].end - spans[0].start; got != 4 {
-		t.Errorf("selected span = %d rows, want 4", got)
+	if got := spans[0].end - spans[0].start; got != 2 {
+		t.Errorf("selected span = %d rows, want 2", got)
 	}
 	if got := spans[1].end - spans[1].start; got != 2 {
 		t.Errorf("unselected span = %d rows, want 2", got)
 	}
-	if got := strings.Count(stripANSI(content), "plan ok"); got != 1 {
-		t.Errorf("atlantis row appears %d times, want 1", got)
+	if got := strings.Count(stripANSI(content), "plan ok"); got != 2 {
+		t.Errorf("Atlantis pill appears %d times, want 2", got)
 	}
 
 	m.prs = append(m.prs, model.PullRequest{Number: 3, Title: "unplanned", Author: "c"})
 	m.allPRs = m.prs
 	m.selected = 2
 	content, spans = m.inboxContent(80)
-	if got := spans[2].end - spans[2].start; got != 3 {
-		t.Errorf("unplanned selected span = %d rows, want 3", got)
+	if got := spans[2].end - spans[2].start; got != 2 {
+		t.Errorf("unplanned selected span = %d rows, want 2", got)
 	}
-	if strings.Contains(stripANSI(content), "atlantis") {
+	if strings.Contains(stripANSI(strings.Split(content, "\n")[spans[2].end-1]), "plan ok") {
 		t.Errorf("unplanned selected PR must not show Atlantis: %q", stripANSI(content))
 	}
 
 	plain := modelWithPRs([]model.PullRequest{{Number: 1, Title: "a"}, {Number: 2, Title: "b"}}, 0)
 	_, spans = plain.inboxContent(80)
-	if got := spans[0].end - spans[0].start; got != 3 {
-		t.Errorf("non-atlantis selected span = %d rows, want 3", got)
+	if got := spans[0].end - spans[0].start; got != 2 {
+		t.Errorf("non-atlantis selected span = %d rows, want 2", got)
 	}
 }
 
-func TestInboxAtlantisRowStaysOneLineWhenWrapped(t *testing.T) {
+func TestInboxAtlantisMetadataStaysOneLineWhenWrapped(t *testing.T) {
 	m := atlantisInboxModel(t, true)
 	m.prs[0].Title = "alpha bravo charlie delta echo foxtrot golf hotel"
-	content, spans := m.inboxContent(14)
-	titleRows := len(strings.Split(strings.TrimSpace(stripANSI(wrapLines(m.prs[0].Title, 14))), "\n"))
-	if got, want := spans[0].end-spans[0].start, titleRows+1+1+1; got != want {
-		t.Errorf("selected span = %d rows, want %d (title %d + meta + reviews + atlantis)", got, want, titleRows)
+	// Allow the full author alongside CI and the three-cell review pill.
+	content, spans := m.inboxContent(16)
+	titleRows := len(strings.Split(strings.TrimSpace(stripANSI(wrapLines(m.prs[0].Title, 16))), "\n"))
+	if got, want := spans[0].end-spans[0].start, titleRows+1; got != want {
+		t.Errorf("selected span = %d rows, want %d (title %d + metadata)", got, want, titleRows)
 	}
 	lines := strings.Split(content, "\n")
-	if got := strings.TrimSpace(stripANSI(lines[spans[0].end-1])); !strings.Contains(got, "plan ok") {
-		t.Errorf("last selected row = %q, want compact Atlantis row", got)
+	if got := strings.TrimSpace(stripANSI(lines[spans[0].end-1])); !strings.Contains(got, "#1 by a") || !strings.Contains(got, "ci") {
+		t.Errorf("last selected row = %q, want metadata with CI; optional pills may be dropped", got)
 	}
 }
 
@@ -563,8 +564,8 @@ func TestInboxSelectedSpanHeights(t *testing.T) {
 		m    Model
 		want int
 	}{
-		{"plain", modelWithPRs([]model.PullRequest{{Number: 1, Title: "a"}, {Number: 2, Title: "b"}}, 0), 3},
-		{"atlantis", atlantisInboxModel(t, false), 4},
+		{"plain", modelWithPRs([]model.PullRequest{{Number: 1, Title: "a"}, {Number: 2, Title: "b"}}, 0), 2},
+		{"atlantis", atlantisInboxModel(t, false), 2},
 	} {
 		_, spans := tc.m.inboxContent(80)
 		if got := spans[0].end - spans[0].start; got != tc.want {

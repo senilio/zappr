@@ -65,6 +65,8 @@ type Model struct {
 	summaryXOffset    int
 	lastFetch         time.Time
 	pollEvery         time.Duration
+	pollGeneration    uint64
+	refreshGeneration uint64
 	width             int
 	height            int
 	theme             uitheme.Theme
@@ -193,12 +195,13 @@ func New(zappr *app.App, repo string, pollEvery time.Duration, themeName string,
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(refreshCmd(m.app, m.repo, !m.hideDrafts), tickCmd(m.pollEvery), uiTickCmd(), tea.RequestBackgroundColor)
+	return tea.Batch(m.refreshCmd(!m.hideDrafts), tickCmd(m.pollEvery, m.pollGeneration), uiTickCmd(), tea.RequestBackgroundColor)
 }
 
 type refreshMsg struct {
-	prs []model.PullRequest
-	err error
+	prs        []model.PullRequest
+	err        error
+	generation uint64
 }
 
 type refreshPRMsg struct {
@@ -253,7 +256,7 @@ type fileContentMsg struct {
 	err     error
 }
 
-type tickMsg struct{}
+type tickMsg struct{ generation uint64 }
 
 type uiTickMsg struct{}
 
@@ -292,12 +295,12 @@ func (m *Model) finishStatus(text string, isErr bool) tea.Cmd {
 	return dismissStatusCmd(m.statusToken, 1200*time.Millisecond)
 }
 
-func refreshCmd(app *app.App, repo string, includeDrafts bool) tea.Cmd {
+func (m Model) refreshCmd(includeDrafts bool) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 		defer cancel()
-		prs, err := app.Refresh(ctx, repo, includeDrafts)
-		return refreshMsg{prs: prs, err: err}
+		prs, err := m.app.Refresh(ctx, m.repo, includeDrafts)
+		return refreshMsg{prs: prs, err: err, generation: m.refreshGeneration}
 	}
 }
 
@@ -319,9 +322,9 @@ func atlantisCheckCmd(app *app.App, pr model.PullRequest) tea.Cmd {
 	}
 }
 
-func tickCmd(interval time.Duration) tea.Cmd {
+func tickCmd(interval time.Duration, generation uint64) tea.Cmd {
 	return tea.Tick(interval, func(time.Time) tea.Msg {
-		return tickMsg{}
+		return tickMsg{generation: generation}
 	})
 }
 

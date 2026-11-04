@@ -229,17 +229,27 @@ func FixedActions() map[string]ActionConfig {
 		"command-confirm":             {Keys: []string{"y", "enter"}},
 		"command-cancel-confirmation": {Keys: []string{"esc", "n"}},
 		"colorscheme":                 {Commands: []string{"colorscheme"}},
+		"reload":                      {Commands: []string{"reload"}},
 	}
 }
 
 func Load() (Config, error) {
+	return load(true)
+}
+
+// Reload reads an existing config without creating a file if it is missing.
+func Reload() (Config, error) {
+	return load(false)
+}
+
+func load(create bool) (Config, error) {
 	cfg := Default()
 	path, err := DefaultConfigPath()
 	if err != nil {
 		return cfg, err
 	}
 	data, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
+	if create && errors.Is(err, os.ErrNotExist) {
 		return cfg, Save(cfg)
 	}
 	if err != nil {
@@ -391,6 +401,11 @@ func validateActions(actions map[string]ActionConfig) error {
 	}
 	sort.Strings(ids)
 	commands := make(map[string]string)
+	for id, action := range FixedActions() {
+		for _, command := range action.Commands {
+			commands[strings.ToLower(command)] = id
+		}
+	}
 	for _, id := range ids {
 		action := actions[id]
 		if !actionIDPattern.MatchString(id) {

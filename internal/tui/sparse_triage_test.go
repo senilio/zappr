@@ -43,32 +43,16 @@ func TestInboxAtlantisActivityIsPerPR(t *testing.T) {
 		m.prs = append(m.prs, model.PullRequest{Repo: m.prs[0].Repo, Number: 2, Title: "Ordinary PR", ReviewersLoaded: true, ConversationCommentsLoaded: true})
 		m.selected = 1
 		content, spans := m.inboxContent(140)
-		if strings.Contains(stripANSI(content), "atlantis") {
+		if strings.Contains(stripANSI(strings.Split(content, "\n")[spans[1].end-1]), "plan ok") {
 			t.Fatalf("wrap=%v: unrelated Atlantis row: %s", wrap, content)
 		}
-		if rows := spans[1].end - spans[1].start; rows != 3 {
-			t.Fatalf("selected item has %d rows, want title, metadata, reviews", rows)
+		if rows := spans[1].end - spans[1].start; rows != 2 {
+			t.Fatalf("selected item has %d rows, want title and metadata", rows)
 		}
 		m.prs[1].Checks = []model.Check{{Context: "atlantis/plan", State: "FAILURE"}}
 		content, spans = m.inboxContent(140)
-		if !strings.Contains(stripANSI(content), "plan failed") || spans[1].end-spans[1].start != 4 {
+		if !strings.Contains(stripANSI(content), "plan failed") || spans[1].end-spans[1].start != 2 {
 			t.Fatal("selected PR's Atlantis failure missing", content)
 		}
-	}
-}
-
-func TestReviewsRowOmitsUnsubmittedReviews(t *testing.T) {
-	m := minimalModel()
-	pr := model.PullRequest{ReviewersLoaded: true, Reviewers: []model.Reviewer{
-		{Login: "trustlyplatform/infra-aws", State: "REQUESTED"},
-		{Login: "alice", State: "REQUESTED"},
-		{Login: "bob", State: "PENDING"},
-	}}
-	if got := stripANSI(m.reviewsRow(pr, 160)); got != "  reviews  none" {
-		t.Fatalf("unsubmitted review row = %q", got)
-	}
-	pr.Reviewers = append(pr.Reviewers, model.Reviewer{Login: "carol", State: "COMMENTED"})
-	if got := stripANSI(m.reviewsRow(pr, 160)); got != "  reviews  commented carol" {
-		t.Fatalf("submitted review row = %q", got)
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/cellbuf"
@@ -66,7 +67,7 @@ func TestPillNoColorAddsSymbols(t *testing.T) {
 	}
 }
 
-func TestPillFailedUsesSolidBackground(t *testing.T) {
+func TestPillStatesUseBackgroundInTrueColor(t *testing.T) {
 	th := colorTheme()
 	for _, st := range []PillState{PillFailed, PillPassed} {
 		if got := th.Pill("CI", st, PillSquare, 1); !strings.Contains(got, "48;2;") {
@@ -107,7 +108,7 @@ func TestPillOpacityPreservesForegroundAndShape(t *testing.T) {
 				if body.Fg == nil || body.Bg == nil || left.Fg == nil || right.Fg == nil {
 					t.Fatalf("pill lost colors: %q", pill)
 				}
-				if state != PillFailed && !equal(body.Fg, full.Fg) {
+				if !equal(body.Fg, full.Fg) {
 					t.Error("opacity changed label foreground")
 				}
 				if !equal(left.Fg, body.Bg) || !equal(right.Fg, body.Bg) {
@@ -123,6 +124,36 @@ func TestPillOpacityPreservesForegroundAndShape(t *testing.T) {
 					t.Errorf("opacity changed width: %q", pill)
 				}
 			}
+		}
+	}
+}
+
+func TestFailurePillMatchesSemanticPillStyling(t *testing.T) {
+	equal := func(a, b color.Color) bool { return color.RGBAModel.Convert(a) == color.RGBAModel.Convert(b) }
+	for _, dark := range []bool{true, false} {
+		for _, palette := range AllPalettes(dark) {
+			if palette.Name == "ansi" {
+				continue
+			}
+			th := New(palette, colorprofile.TrueColor, false, dark)
+			for _, shape := range []PillShape{PillSquare, PillRounded} {
+				for _, opacity := range []float64{0, 0.25, 0.7, 1} {
+					body := pillStyleAt(th.Pill("failed", PillFailed, shape, opacity), 1)
+					bg := lipgloss.Darken(palette.Error, 0.7)
+					if !dark {
+						bg = lipgloss.Lighten(palette.Error, 0.75)
+					}
+					if !equal(body.Fg, palette.Error) || !equal(body.Bg, th.Fade(bg, opacity)) || body.Attrs&cellbuf.BoldAttr != 0 {
+						t.Errorf("%s dark=%v shape=%v opacity=%v: failure does not use normal-weight semantic tint: %+v", palette.Name, dark, shape, opacity, body)
+					}
+				}
+			}
+		}
+	}
+	for _, state := range pillStates {
+		body := pillStyleAt(ansiTheme().Pill("ci", state, PillSquare, 0.25), 1)
+		if body.Bg != nil || body.Attrs&cellbuf.BoldAttr != 0 {
+			t.Errorf("ANSI state %v should be foreground-only and normal weight: %+v", state, body)
 		}
 	}
 }
@@ -145,31 +176,36 @@ func TestPillWithoutPalette(t *testing.T) {
 	}
 }
 
-func TestReviewIcon(t *testing.T) {
-	decisions := []string{"APPROVED", "CHANGES_REQUESTED", "REVIEW_REQUIRED", ""}
+func TestReviewPill(t *testing.T) {
 	cases := []struct {
-		th    Theme
-		shape PillShape
-		want  []string
+		decision string
+		draft    bool
+		state    PillState
 	}{
-		{colorTheme(), PillRounded, []string{"\uf4a4", "\uf530", "\uf4ab", "\uf4aa"}},
-		{colorTheme(), PillSquare, []string{"✓", "✗", "●", "○"}},
-		{ansiTheme(), PillRounded, []string{"✓", "✗", "●", "○"}},
-		{noColorTheme(), PillRounded, []string{"✓", "✗", "●", "○"}},
+		{"APPROVED", false, PillPassed},
+		{"CHANGES_REQUESTED", false, PillFailed},
+		{"REVIEW_REQUIRED", false, PillWait},
+		{"", false, PillNone},
+		{"unknown", false, PillNone},
+		{"approved", false, PillPassed},
+		{"APPROVED", true, PillNone},
 	}
-	for _, tc := range cases {
-		for i, d := range decisions {
-			got := tc.th.ReviewIcon(d, false, tc.shape)
-			if ansi.Strip(got) != tc.want[i] || ansi.StringWidth(got) != 1 {
-				t.Errorf("%s shape %v decision %q: %q", tc.th.Palette.Name, tc.shape, d, got)
+	for _, th := range []Theme{colorTheme(), New(DarkDefault(false), colorprofile.TrueColor, false, false), ansiTheme(), noColorTheme()} {
+		for _, shape := range []PillShape{PillRounded, PillSquare} {
+			for _, opacity := range []float64{0, 0.25, 1} {
+				for _, tc := range cases {
+					symbol := pillSymbol(tc.state)
+					want := th.Pill(symbol, tc.state, shape, opacity)
+					if th.NoColor {
+						want = " " + symbol + " "
+					}
+					got := th.ReviewPill(tc.decision, tc.draft, shape, opacity)
+					if got != want || ansi.StringWidth(got) != 3 {
+						t.Errorf("%s decision=%q draft=%v shape=%v opacity=%v: got %q, want %q", th.Palette.Name, tc.decision, tc.draft, shape, opacity, got, want)
+					}
+				}
 			}
 		}
-	}
-	if got := ansi.Strip(colorTheme().ReviewIcon("APPROVED", true, PillRounded)); got != "\uf4aa" {
-		t.Errorf("draft icon = %q", got)
-	}
-	if got := noColorTheme().ReviewIcon("APPROVED", false, PillRounded); got != "✓" {
-		t.Errorf("no-color icon is styled: %q", got)
 	}
 }
 

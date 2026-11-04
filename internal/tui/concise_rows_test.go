@@ -43,10 +43,10 @@ func TestAtlantisRowFocusesOnPlanResult(t *testing.T) {
 		m := planModel(t)
 		m.prs[0].Checks = atlantisChecks(tc.check, time.Now())
 		row := stripANSI(m.atlantisRow(m.prs[0], 160))
-		if !strings.Contains(row, tc.want) || !strings.Contains(row, "changes") {
+		if !strings.Contains(row, tc.want) {
 			t.Fatalf("%s: row = %q", tc.check, row)
 		}
-		for _, unwanted := range []string{"commit unverified", "updated", "project", "aggregate", "limited evidence"} {
+		for _, unwanted := range []string{"changes", "incomplete", "commit unverified", "updated", "project", "aggregate", "limited evidence"} {
 			if strings.Contains(row, unwanted) {
 				t.Fatalf("unwanted %q in row %q", unwanted, row)
 			}
@@ -60,7 +60,7 @@ func TestAtlantisRowFocusesOnPlanResult(t *testing.T) {
 	m.planState.doc.Reports[0].SourceComplete = false
 	m.planState.doc.Reports[0].Outcome = plan.OutcomeUnknown
 	row := stripANSI(m.atlantisRow(m.prs[0], 80))
-	if !strings.Contains(row, "incomplete") || strings.Contains(row, "plan ok") {
+	if !strings.Contains(row, "plan unknown") || strings.Contains(row, "incomplete") || strings.Contains(row, "plan ok") {
 		t.Fatalf("incomplete report must not claim success: %q", row)
 	}
 }

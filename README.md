@@ -135,29 +135,29 @@ Keyboard shortcuts are available via `?`.
 
 ### Inbox status
 
-Each inbox item shows its title, then `#number · author` with status pills
-aligned to the right:
+Each inbox item has two rows: its title, then `#number by author` with status
+pills aligned to the right. On the selected PR, the title is bold and the
+number and author use plain text:
 
-- `CI`: green when checks passed, yellow while running, red when failed, grey
+- `ci`: green when checks passed, yellow while running, red when failed, grey
   when unknown.
-- Review icon: green approved, red changes requested, yellow review required,
-  grey for no review decision or a draft.
+- Review pill: green `✓` approved, red `✗` changes requested, yellow `…` review
+  required, grey `–` for no review decision or a draft. Each symbol sits in a
+  compact three-cell pill using the same shape and opacity as CI. The symbols
+  themselves do not require a Nerd Font; rounded pill ends do.
 - Occasional pills: `draft`, `auto` (auto-merge enabled), `behind`, `conflict`,
   and `blocked`. `blocked` appears only when CI passed and the PR is approved
   but GitHub still blocks the merge. On narrow panes these drop first.
 
-The selected PR adds a `reviews` row grouped by state, for example
-`✓ alice · waiting carol, platform`. Approvals use `✓`; requested changes,
-pending requests, comments, and dismissed reviews keep explicit labels, so the
-row reads the same without color. Unknown review states use `reviewed`. Bot
-reviewers are omitted; a login is treated as a bot when it ends in `[bot]`,
-`-bot`, or `-reviewer`. Their reports remain available in Comments. In Atlantis
-repositories an `atlantis` row follows; see [Plan reader](#plan-reader).
+Atlantis status appears as an additional metadata pill; see
+[Plan reader](#plan-reader). Reviewer names are not shown in the Inbox; review
+details and bot reports remain available in Comments.
 
 Pills use Nerd Font rounded ends by default. Set `pills: square` to avoid Nerd
-Font glyphs. Terminals without color show symbols instead: `CI✓`, `CI…`,
-`CI✗`, `CI–`. Reviewer groups use the same explicit labels with or without
-color.
+Font glyphs. Terminals without color show symbols instead: `ci✓`, `ci…`,
+`ci✗`, `ci–`. Colored pills use normal-weight status-colored text over a tinted
+background; `pill_opacity` changes the background without fading the text.
+The ANSI theme uses foreground colors only.
 
 ### Command palette
 
@@ -174,6 +174,7 @@ Press `:` to open the command palette. Type a command prefix to filter; press
 | `:merge` | Merge active PR via squash and delete branch (prompts for confirmation) |
 | `:refresh-all` | Refresh full inbox |
 | `:colorscheme` | Change color scheme |
+| `:reload` | Reload configuration from disk |
 
 ### Mouse
 
@@ -223,6 +224,11 @@ Font glyphs. `pill_opacity` controls background intensity from `0` (panel
 background) to `1` (original intensity), defaulting to `0.7`. Labels keep their
 brightness. This blends colors rather than using terminal transparency and has
 no effect in no-color mode or the `ansi` palette.
+
+Use `:reload` after editing the config file to apply settings without restarting.
+Invalid or unreadable configuration leaves the current settings unchanged and
+shows an error. Changes to `cache.path` are saved but require a restart; the
+current database stays open. Reload is manual, not a file watcher.
 
 ### TUI actions
 
@@ -337,17 +343,20 @@ Their entries in older generated configs are ignored without rewriting the
 file, so their keys can be reused for other actions. Comments use ordinary
 navigation without reader search or author filters.
 
-The selected Inbox item's `atlantis` row shows the plan result or check progress,
-with changes/no changes when the report establishes it, for example:
+The Inbox Atlantis pill shows the plan result or check progress, for example:
 
 ```text
-atlantis  plan ok · changes
+[plan ok]
 ```
 
 Without a loaded report, checks can still establish `plan ok`, `plan failed`,
-or `planning`, but not whether there are changes. Incomplete reports are marked
-`incomplete`. The row omits commit verification, project counts, and timestamps.
-PRs with neither Atlantis checks nor a report do not show this row.
+or `planning`, but not whether there are changes. The Inbox omits `changes`,
+`no changes`, and `incomplete` pills; full report details remain in the Plan pane.
+Partial applies show `partly applied`; `applied` requires a successful apply at
+least as recent as each known project's plan. The pills
+omit commit verification, project counts, and timestamps. PRs with neither
+Atlantis checks nor a loaded report do not show these pills. Optional pills
+drop when the metadata row is too narrow.
 
 Comments whose first two words are `atlantis plan` or `atlantis apply` (case
 insensitive) are guarded, whether they come from an action or from free text.
@@ -367,7 +376,7 @@ or cancel. When the guard passes, the action's normal confirmation (if any)
 still applies; a blocked dialog replaces that confirmation, so you are asked
 once.
 
-Set `atlantis.enabled: false` to disable the Plan tab, the `atlantis` row, and
+Set `atlantis.enabled: false` to disable the Plan tab, Atlantis pills, and
 the guards.
 It defaults to `true`.
 

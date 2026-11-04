@@ -361,14 +361,6 @@ func (m Model) buildInboxContent(innerW int) (string, []rowSpan) {
 		}
 		b.WriteString(m.inboxMetaRow(pr, selected, innerW) + "\n")
 		row++
-		if selected {
-			b.WriteString(m.reviewsRow(pr, innerW) + "\n")
-			row++
-			if m.hasAtlantisActivity(pr) {
-				b.WriteString(m.atlantisRow(pr, innerW) + "\n")
-				row++
-			}
-		}
 		spans[i].end = row
 		if i < len(m.prs)-1 {
 			b.WriteString(s.Muted.Render(strings.Repeat("─", innerW)) + "\n")

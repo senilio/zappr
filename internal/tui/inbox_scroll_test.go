@@ -18,13 +18,13 @@ func TestInboxSelectionScrollsWithContextAndStopsAtEnds(t *testing.T) {
 	}{
 		{
 			name: "truncated", height: 18,
-			want:   []int{0, 0, 0, 3, 6, 9, 12, 15, 15, 15},
-			wantUp: []int{15, 15, 12, 9, 6, 3, 0, 0, 0},
+			want:   []int{0, 0, 0, 2, 5, 8, 11, 14, 14, 14},
+			wantUp: []int{14, 14, 12, 9, 6, 3, 0, 0, 0},
 		},
 		{
 			name: "wrapped", wrap: true, height: 26,
-			want:   []int{0, 0, 0, 1, 4, 8, 13, 16, 16, 16},
-			wantUp: []int{16, 16, 15, 12, 7, 3, 0, 0, 0},
+			want:   []int{0, 0, 0, 0, 3, 7, 12, 15, 15, 15},
+			wantUp: []int{15, 15, 15, 12, 7, 3, 0, 0, 0},
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {

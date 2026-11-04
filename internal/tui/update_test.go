@@ -1889,7 +1889,7 @@ func TestInboxScrollKeepsSelectedPRVisible(t *testing.T) {
 	if !strings.Contains(view, prs[len(prs)-1].Title) {
 		t.Fatalf("inbox view missing selected PR title %q: %q", prs[len(prs)-1].Title, view)
 	}
-	if !strings.Contains(stripANSI(view), "CI") || !strings.Contains(view, "#8 · author") {
+	if !strings.Contains(stripANSI(view), "ci") || !strings.Contains(view, "#8 by author") {
 		t.Fatalf("inbox view missing full selected PR details: %q", view)
 	}
 }

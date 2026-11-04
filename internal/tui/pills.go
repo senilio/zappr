@@ -52,15 +52,18 @@ func occasionalPills(pr model.PullRequest) []rowPill {
 	return pills
 }
 
-// inboxMetaRow renders row 2: "#number · author" on the left and the
+// inboxMetaRow renders row 2: "#number by author" on the left and the
 // status pills right-aligned to innerW.
 func (m Model) inboxMetaRow(pr model.PullRequest, selected bool, innerW int) string {
 	shape := m.pillShape()
 	opacity := m.cfg.EffectivePillOpacity()
-	fixed := []string{m.theme.Pill("CI", ciPillState(pr.CIStatus), shape, opacity), m.theme.ReviewIcon(pr.ReviewDecision, pr.Draft, shape)}
+	fixed := []string{m.theme.Pill("ci", ciPillState(pr.CIStatus), shape, opacity), m.theme.ReviewPill(pr.ReviewDecision, pr.Draft, shape, opacity)}
 	var occasional []string
 	for _, p := range occasionalPills(pr) {
 		occasional = append(occasional, m.theme.Pill(p.label, p.state, shape, opacity))
+	}
+	if m.hasAtlantisActivity(pr) {
+		occasional = append(occasional, m.atlantisRow(pr, innerW))
 	}
 	number := fmt.Sprintf("#%d", pr.Number)
 	minLeftW := ansi.StringWidth(number)
@@ -75,11 +78,11 @@ func (m Model) inboxMetaRow(pr model.PullRequest, selected bool, innerW int) str
 	}
 	leftStyle := m.theme.Styles.Muted
 	if selected {
-		leftStyle = m.theme.Styles.TitleStrong
+		leftStyle = m.theme.Styles.App
 	}
 	left := ""
 	if leftW := innerW - rightW - 1; leftW >= minLeftW {
-		left = leftStyle.Render(truncateANSIWidth(number+" · "+readerInput(pr.Author), leftW))
+		left = leftStyle.Render(truncateANSIWidth(number+" by "+readerInput(pr.Author), leftW))
 	}
 	pad := strings.Repeat(" ", max(0, innerW-ansi.StringWidth(left)-rightW))
 	return truncatePaneLineWidth(left+pad+right, innerW)

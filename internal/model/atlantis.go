@@ -12,6 +12,7 @@ const (
 	PlanRunning
 	PlanPassed
 	PlanFailed
+	PlanDiscarded
 )
 
 type PolicyState int
@@ -31,6 +32,7 @@ const (
 	ApplyFailed
 	ApplyDone
 	ApplyNothing
+	ApplyPartial
 )
 
 // AtlantisSummary is comparable so the inbox layout cache can compare it with ==.
@@ -62,17 +64,34 @@ type atlantisStatus struct {
 	at      time.Time
 }
 
-// DeriveAtlantis summarizes Atlantis commit statuses found in checks.
-func DeriveAtlantis(checks []Check) AtlantisSummary {
+// DeriveAtlantis summarizes Atlantis commit statuses, excluding statuses made
+// obsolete by a later unlock confirmation in the conversation.
+func DeriveAtlantis(checks []Check, comments ...PRComment) AtlantisSummary {
 	var s AtlantisSummary
 	var planAgg, policyAgg, applyAgg *atlantisStatus
 	var planProjects, applyProjects []atlantisStatus
+	var discardedAt time.Time
+	for _, c := range comments {
+		if c.Kind != "" && c.Kind != "comment" {
+			continue
+		}
+		if strings.TrimSpace(c.Body) == "All Atlantis locks for this PR have been unlocked and plans discarded" && c.CreatedAt.After(discardedAt) {
+			discardedAt = c.CreatedAt
+		}
+	}
+	if !discardedAt.IsZero() {
+		s.HasAtlantis = true
+		s.Plan = PlanDiscarded
+	}
 
 	for _, c := range checks {
 		if !strings.HasPrefix(c.Context, atlantisPrefix) {
 			continue
 		}
 		s.HasAtlantis = true
+		if !discardedAt.IsZero() && !c.StartedAt.After(discardedAt) {
+			continue
+		}
 		st := atlantisStatus{state: c.State, at: c.StartedAt}
 		switch {
 		case c.Context == atlantisPlan:
@@ -93,7 +112,7 @@ func DeriveAtlantis(checks []Check) AtlantisSummary {
 		return s
 	}
 
-	s.deriveApply(applyAgg, applyProjects)
+	s.deriveApply(applyAgg, applyProjects, planProjects)
 	s.derivePolicy(policyAgg)
 	s.derivePlan(planAgg, planProjects)
 	return s
@@ -162,7 +181,7 @@ func (s *AtlantisSummary) derivePolicy(agg *atlantisStatus) {
 	}
 }
 
-func (s *AtlantisSummary) deriveApply(agg *atlantisStatus, projects []atlantisStatus) {
+func (s *AtlantisSummary) deriveApply(agg *atlantisStatus, projects, planned []atlantisStatus) {
 	if agg == nil {
 		return
 	}
@@ -178,6 +197,19 @@ func (s *AtlantisSummary) deriveApply(agg *atlantisStatus, projects []atlantisSt
 		s.Apply = ApplyFailed
 	case agg.state == "SUCCESS" && len(projects) > 0:
 		s.Apply = ApplyDone
+		for _, plan := range planned {
+			applied := false
+			for _, apply := range projects {
+				if apply.project == plan.project && apply.state == "SUCCESS" && !apply.at.Before(plan.at) {
+					applied = true
+					break
+				}
+			}
+			if !applied {
+				s.Apply = ApplyPartial
+				break
+			}
+		}
 	case agg.state == "SUCCESS":
 		s.Apply = ApplyNothing
 	}

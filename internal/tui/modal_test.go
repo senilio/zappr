@@ -229,7 +229,7 @@ func TestModalHelpAndCommandRetainUnselectedPills(t *testing.T) {
 				if !strings.Contains(plain, "unselected") {
 					continue
 				}
-				parts := strings.SplitN(plain, "\ue0b6CI\ue0b4", 2)
+				parts := strings.SplitN(plain, "\ue0b6ci\ue0b4", 2)
 				if len(parts) != 2 {
 					t.Fatalf("pill missing from unselected row: %q", plain)
 				}

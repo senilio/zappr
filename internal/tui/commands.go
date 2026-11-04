@@ -109,6 +109,7 @@ var actionDescriptors = []tuiAction{
 	{"request-changes", "block PR merge", actionContextNormal, nil, nil, true, confirmationMandatory, "request-changes", ""},
 	{"merge-pr", "merge active PR (squash)", actionContextNormal, nil, nil, true, confirmationMandatory, "merge-pr", ""},
 	{"colorscheme", "pick color scheme", actionContextNormal, nil, nil, false, confirmationNone, "colorscheme", ""},
+	{"reload", "reload configuration", actionContextNormal, nil, nil, false, confirmationNone, "reload", ""},
 }
 
 func newActionRegistry(configured map[string]config.ActionConfig) (actionRegistry, error) {

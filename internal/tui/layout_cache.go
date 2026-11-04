@@ -44,11 +44,10 @@ type inboxItem struct {
 	title, author, ci, review, mergeState string
 	draft, autoMerge, conversationLoaded  bool
 	atlantis                              model.AtlantisSummary
-	reviewers                             string
 }
 
 func inboxRenderItem(pr model.PullRequest) inboxItem {
-	return inboxItem{pr.Number, pr.Title, pr.Author, pr.CIStatus, pr.ReviewDecision, pr.MergeState, pr.Draft, pr.AutoMerge, pr.ConversationCommentsLoaded, model.DeriveAtlantis(pr.Checks), fmt.Sprint(pr.ReviewersLoaded, pr.Reviewers)}
+	return inboxItem{pr.Number, pr.Title, pr.Author, pr.CIStatus, pr.ReviewDecision, pr.MergeState, pr.Draft, pr.AutoMerge, pr.ConversationCommentsLoaded, model.DeriveAtlantis(pr.Checks, pr.Comments...)}
 }
 
 type inboxLayoutKey struct {

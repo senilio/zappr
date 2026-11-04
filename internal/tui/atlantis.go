@@ -23,10 +23,8 @@ func (m Model) isAtlantisRepo() bool {
 		return true
 	}
 	for _, pr := range m.prs {
-		for _, c := range pr.Checks {
-			if strings.HasPrefix(c.Context, "atlantis/") {
-				return true
-			}
+		if model.DeriveAtlantis(pr.Checks, pr.Comments...).HasAtlantis {
+			return true
 		}
 	}
 	return false
@@ -39,12 +37,7 @@ func (m Model) hasAtlantisActivity(pr model.PullRequest) bool {
 	if m.planState.prKey == readerPRKey(pr) && m.planAvailable() {
 		return true
 	}
-	for _, c := range pr.Checks {
-		if strings.HasPrefix(c.Context, "atlantis/") {
-			return true
-		}
-	}
-	return false
+	return model.DeriveAtlantis(pr.Checks, pr.Comments...).HasAtlantis
 }
 
 // Check phases are execution facts, never evidence about plan contents.
@@ -66,16 +59,19 @@ func atlantisProgress(a model.AtlantisSummary) (string, uitheme.PillState, strin
 		return "PLANNING", uitheme.PillWait, ""
 	case a.Apply == model.ApplyDone:
 		return "APPLIED", uitheme.PillPassed, ""
+	case a.Apply == model.ApplyPartial:
+		return "PARTLY APPLIED", uitheme.PillWait, ""
 	case a.Plan == model.PlanPassed:
 		return "PLAN OK", uitheme.PillPassed, ""
+	case a.Plan == model.PlanDiscarded:
+		return "PLAN DISCARDED", uitheme.PillWait, ""
 	}
 	return "", uitheme.PillNone, ""
 }
 
 func (m Model) atlantisRow(pr model.PullRequest, innerW int) string {
-	a := model.DeriveAtlantis(pr.Checks)
+	a := model.DeriveAtlantis(pr.Checks, pr.Comments...)
 	label, state, _ := atlantisProgress(a)
-	var details []string
 	report, found := m.selectedPlanReport()
 	if found && m.planState.prKey == readerPRKey(pr) {
 		if label == "" {
@@ -86,24 +82,11 @@ func (m Model) atlantisRow(pr model.PullRequest, innerW int) string {
 				label, state = "PLAN OK", uitheme.PillPassed
 			}
 		}
-		if report.Outcome == plan.OutcomeChanges || report.Outcome == plan.OutcomeNoChanges {
-			details = append(details, planOutcome(report.Outcome))
-		}
-		if !report.SourceComplete {
-			details = append(details, "incomplete")
-		}
 	}
 	if label == "" {
 		label = "plan unknown"
 	}
-	head := m.expandedRow("atlantis", "", innerW)
-	if innerW < 48 {
-		head = strings.Repeat(" ", expandedIndent)
-	}
-	row := head + m.theme.Pill(strings.ToLower(label), state, m.pillShape(), m.cfg.EffectivePillOpacity())
-	if len(details) > 0 {
-		row += m.theme.Styles.Muted.Render(" · " + strings.Join(details, " · "))
-	}
+	row := m.theme.Pill(strings.ToLower(label), state, m.pillShape(), m.cfg.EffectivePillOpacity())
 	return truncatePaneLineWidth(row, innerW)
 }
 
@@ -143,7 +126,7 @@ func guardReasons(cmd atlantisCommand, pr model.PullRequest, postedAt, now time.
 	if cmd == atlantisCommandNone {
 		return nil
 	}
-	a := model.DeriveAtlantis(pr.Checks)
+	a := model.DeriveAtlantis(pr.Checks, pr.Comments...)
 	applySucceeded := a.Apply == model.ApplyDone || a.Apply == model.ApplyNothing
 
 	var reasons []string
@@ -154,6 +137,9 @@ func guardReasons(cmd atlantisCommand, pr model.PullRequest, postedAt, now time.
 		reasons = append(reasons, "a plan was just requested and has not reported yet")
 	}
 	if cmd == atlantisCommandApply {
+		if a.Plan == model.PlanDiscarded {
+			reasons = append(reasons, "the Atlantis plan was discarded by an unlock")
+		}
 		// A successful aggregate apply only waives a missing plan: Atlantis
 		// leaves it untouched after later plans on the same commit.
 		if a.Plan == model.PlanNone && !applySucceeded {

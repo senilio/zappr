@@ -44,6 +44,7 @@ func TestAtlantisProgress(t *testing.T) {
 		{"passed 12 projects", with(passed, func(a *model.AtlantisSummary) { a.PlanProjectCount = 12 }), "PLAN OK", uitheme.PillPassed, ""},
 		{"passed 1 project", with(passed, func(a *model.AtlantisSummary) { a.PlanProjectCount, a.PlanProject = 1, "sso-sso" }), "PLAN OK", uitheme.PillPassed, ""},
 		{"applied", with(passed, func(a *model.AtlantisSummary) { a.Apply = model.ApplyDone }), "APPLIED", uitheme.PillPassed, ""},
+		{"partly applied", with(passed, func(a *model.AtlantisSummary) { a.Apply = model.ApplyPartial }), "PARTLY APPLIED", uitheme.PillWait, ""},
 		{"nothing to apply is not content evidence", with(passed, func(a *model.AtlantisSummary) { a.Apply = model.ApplyNothing }), "PLAN OK", uitheme.PillPassed, ""},
 		{"plan failed beats apply done", model.AtlantisSummary{Plan: model.PlanFailed, Apply: model.ApplyDone}, "PLAN FAILED", uitheme.PillFailed, ""},
 		{"apply failure beats plan failure", model.AtlantisSummary{Plan: model.PlanFailed, Apply: model.ApplyFailed}, "APPLY FAILED", uitheme.PillFailed, ""},
@@ -72,7 +73,7 @@ func TestAtlantisRowContent(t *testing.T) {
 	pr := model.PullRequest{Number: 1, Checks: manyProjectChecks(12, time.Now().Add(-6*time.Minute))}
 	m := modelWithPRs([]model.PullRequest{pr}, 0)
 	m.cfg.Pills = "square"
-	if got, want := stripANSI(m.atlantisRow(pr, 120)), "  atlantis  plan ok "; got != want {
+	if got, want := stripANSI(m.atlantisRow(pr, 120)), " plan ok "; got != want {
 		t.Errorf("row = %q, want %q", got, want)
 	}
 }
@@ -96,15 +97,15 @@ func TestAtlantisRowPrioritizesOutcome(t *testing.T) {
 		width      int
 		wantPrefix string
 	}{
-		{160, "  atlantis"},
-		{80, "  atlantis"},
-		{40, "  "},
-		{32, "  "},
+		{160, ""},
+		{80, ""},
+		{40, ""},
+		{32, ""},
 	} {
 		t.Run(fmt.Sprint(tt.width), func(t *testing.T) {
 			row := m.atlantisRow(pr, tt.width)
 			plain := stripANSI(row)
-			if !strings.HasPrefix(plain, tt.wantPrefix) || !strings.Contains(plain, "plan ok") || !strings.Contains(plain, "no changes") {
+			if !strings.HasPrefix(plain, tt.wantPrefix) || !strings.Contains(plain, "plan ok") || strings.Contains(plain, "no changes") {
 				t.Fatalf("outcome lost at width %d: %q", tt.width, plain)
 			}
 			if strings.Contains(plain, "project") || strings.Contains(plain, "ago") || strings.Contains(plain, "unverified") {

@@ -227,14 +227,14 @@ func TestInboxLayoutCacheInvalidatesOnAtlantisChange(t *testing.T) {
 	}
 }
 
-func TestInboxLayoutCacheInvalidatesOnReviewers(t *testing.T) {
+func TestInboxLayoutCacheIgnoresReviewerNames(t *testing.T) {
 	m := scrollModel(t, 2)
-	before, _ := m.inboxContent(80)
+	before := m.inboxPane(80)
 	m.prs[0].Reviewers = []model.Reviewer{{Login: "zelda", State: "APPROVED"}}
 	m.prs[0].ReviewersLoaded = true
-	after, _ := m.inboxContent(80)
-	if after == before || !strings.Contains(stripANSI(after), "zelda") {
-		t.Fatalf("stale Inbox after reviewers change: %q", stripANSI(after))
+	after := m.inboxPane(80)
+	if after != before || strings.Contains(stripANSI(after.content), "zelda") {
+		t.Fatalf("reviewer names changed the Inbox: %q", stripANSI(after.content))
 	}
 }
 
