@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+## v0.3.0
+
+### Added
+
+- Atlantis plan reader with project navigation and folding for supported plan reports.
+- Manual configuration reload through `:reload`, with validation before applying settings.
+
+### Changed
+
+- Inbox items use two content rows, with compact Atlantis and review status pills in the metadata row.
+- Comments use a shared list and Comment pane; reviewer details remain available in Comments rather than additional Inbox rows.
+- Status pills use normal-weight text and consistent background intensity.
+
+### Fixed
+
+- Show `plan discarded` after a loaded Atlantis unlock confirmation instead of retaining obsolete plan, policy, and apply statuses.
+- Distinguish partial Atlantis applies from applies covering every known project's current plan.
+- Ignore stale polling and refresh responses after relevant configuration changes.
+
 ## v0.2.0
 
 ### Added
