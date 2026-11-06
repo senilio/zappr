@@ -252,19 +252,27 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Batch(m.finishStatus(msg.message, false), refresh)
 	case configReloadedMsg:
-		if m.settingsSaver == nil || msg.revision != m.settingsSaver.revision.Load() {
-			return m, nil
-		}
-		if msg.err != nil {
-			m.error = "failed to reload configuration: " + msg.err.Error()
-			return m, m.finishStatus(m.error, true)
-		}
-		cmd := m.applyReloadedConfig(msg.cfg, msg.actions)
+		cmd := m.acceptConfigReload(msg)
 		return m, cmd
+	case configWatchTickMsg:
+		return m, m.checkConfig()
+	case configWatchCheckedMsg:
+		var cmd tea.Cmd
+		if msg.result != nil {
+			cmd = m.acceptConfigReload(*msg.result)
+		}
+		return m, tea.Batch(cmd, configWatchTickCmd())
 	case settingsSavedMsg:
+		if m.settingsPending > 0 {
+			m.settingsPending--
+		}
 		if msg.err != nil {
+			m.quitPending = false
 			m.error = "failed to save settings: " + msg.err.Error()
 			return m, m.finishStatus(m.error, true)
+		}
+		if m.quitPending && m.settingsPending == 0 {
+			return m, tea.Quit
 		}
 		return m, nil
 
@@ -531,8 +539,9 @@ func (m Model) executeAction(action tuiAction) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 	if action.ID == "quit" {
-		if m.settingsSaver != nil {
-			return m, tea.Sequence(m.saveSettings(), tea.Quit)
+		if m.settingsPending > 0 {
+			m.quitPending = true
+			return m, nil
 		}
 		return m, tea.Quit
 	}
@@ -662,7 +671,8 @@ func (m Model) executeAction(action tuiAction) (tea.Model, tea.Cmd) {
 			m.syncInboxVP()
 			m.restoreInboxAnchor(anchor)
 		}
-		return m, m.saveSettings()
+		cmd := m.saveSettings()
+		return m, cmd
 	case "focus-next":
 		m.nextFocus()
 	case "focus-prev":
@@ -1634,12 +1644,14 @@ func (m Model) handleSettingsKey(key string) (tea.Model, tea.Cmd) {
 			m.cfg.HideDrafts = m.hideDrafts
 			m.applyPRSettings()
 			m.message = draftFilterMessage(m.hideDrafts)
+			save := m.saveSettings()
 			if !m.hideDrafts {
-				return m, tea.Batch(m.saveSettings(), m.refreshCmd(true))
+				return m, tea.Batch(save, m.refreshCmd(true))
 			}
-			return m, m.saveSettings()
+			return m, save
 		} else {
-			return m, m.cycleSortMode()
+			cmd := m.cycleSortMode()
+			return m, cmd
 		}
 	}
 	return m, nil
@@ -1680,7 +1692,8 @@ func (m Model) handleColorschemeKey(key string) (tea.Model, tea.Cmd) {
 		m.cfg.Theme = chosen.Name
 		m.theme = uitheme.New(chosen, m.theme.Profile, m.theme.NoColor, m.theme.IsDark)
 		m.mode = m.prevMode
-		return m, tea.Batch(m.finishStatus("theme: "+chosen.Name, false), m.saveSettings())
+		cmd := tea.Batch(m.finishStatus("theme: "+chosen.Name, false), m.saveSettings())
+		return m, cmd
 	}
 	return m, nil
 }

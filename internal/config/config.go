@@ -165,6 +165,7 @@ func DefaultActions() map[string]ActionConfig {
 		"copy-pr-url":         {Keys: []string{"C"}},
 		"refresh-pr":          {Keys: []string{"r"}},
 		"refresh-inbox":       {Keys: []string{"R"}},
+		"reload":              {Commands: []string{"reload"}},
 		"toggle-diff":         {Keys: []string{"v"}},
 		"toggle-wrap":         {Keys: []string{"w"}},
 		"open-diff-pager":     {Keys: []string{"V"}},
@@ -229,7 +230,6 @@ func FixedActions() map[string]ActionConfig {
 		"command-confirm":             {Keys: []string{"y", "enter"}},
 		"command-cancel-confirmation": {Keys: []string{"esc", "n"}},
 		"colorscheme":                 {Commands: []string{"colorscheme"}},
-		"reload":                      {Commands: []string{"reload"}},
 	}
 }
 
@@ -244,23 +244,39 @@ func Reload() (Config, error) {
 
 func load(create bool) (Config, error) {
 	cfg := Default()
-	path, err := DefaultConfigPath()
-	if err != nil {
-		return cfg, err
-	}
-	data, err := os.ReadFile(path)
+	data, err := ReadSnapshot()
 	if create && errors.Is(err, os.ErrNotExist) {
 		return cfg, Save(cfg)
 	}
 	if err != nil {
 		return cfg, err
 	}
+	return Parse(data)
+}
+
+// ReadSnapshot reads the existing config and enforces its private permissions.
+// It never creates a missing file.
+func ReadSnapshot() ([]byte, error) {
+	path, err := DefaultConfigPath()
+	if err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
 	if err := privateDir(filepath.Dir(path)); err != nil {
-		return cfg, err
+		return data, err
 	}
 	if err := os.Chmod(path, 0o600); err != nil {
-		return cfg, err
+		return data, err
 	}
+	return data, nil
+}
+
+// Parse validates and overlays a single config snapshot on the defaults.
+func Parse(data []byte) (Config, error) {
+	cfg := Default()
 	file := struct {
 		Refresh     RefreshConfig             `yaml:"refresh"`
 		Cache       CacheConfig               `yaml:"cache"`
@@ -283,7 +299,7 @@ func load(create bool) (Config, error) {
 		Atlantis:    cfg.Atlantis,
 	}
 	if err := yaml.Unmarshal(data, &file); err != nil {
-		return cfg, fmt.Errorf("parse config %s: %w", path, err)
+		return cfg, fmt.Errorf("parse config: %w", err)
 	}
 	cfg.Refresh = file.Refresh
 	cfg.Cache = file.Cache
@@ -498,21 +514,27 @@ func marshalConfig(cfg Config) ([]byte, error) {
 
 // Save writes cfg back to the default config path. Overwrites the whole file.
 func Save(cfg Config) error {
+	_, err := SaveSnapshot(cfg)
+	return err
+}
+
+// SaveSnapshot writes cfg and returns the exact bytes written on success.
+func SaveSnapshot(cfg Config) ([]byte, error) {
 	path, err := DefaultConfigPath()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if err := privateDir(filepath.Dir(path)); err != nil {
-		return err
+		return nil, err
 	}
 	data, err := marshalConfig(cfg)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if err := os.WriteFile(path, data, 0o600); err != nil {
-		return err
+		return nil, err
 	}
-	return os.Chmod(path, 0o600)
+	return data, os.Chmod(path, 0o600)
 }
 
 func Init(force bool) (string, error) {

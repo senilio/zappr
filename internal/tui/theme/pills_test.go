@@ -188,7 +188,11 @@ func TestReviewPill(t *testing.T) {
 		{"", false, PillNone},
 		{"unknown", false, PillNone},
 		{"approved", false, PillPassed},
-		{"APPROVED", true, PillNone},
+		{"APPROVED", true, PillPassed},
+		{"approved", true, PillPassed},
+		{"CHANGES_REQUESTED", true, PillFailed},
+		{"REVIEW_REQUIRED", true, PillNone},
+		{"", true, PillNone},
 	}
 	for _, th := range []Theme{colorTheme(), New(DarkDefault(false), colorprofile.TrueColor, false, false), ansiTheme(), noColorTheme()} {
 		for _, shape := range []PillShape{PillRounded, PillSquare} {

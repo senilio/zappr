@@ -225,22 +225,25 @@ background) to `1` (original intensity), defaulting to `0.7`. Labels keep their
 brightness. This blends colors rather than using terminal transparency and has
 no effect in no-color mode or the `ansi` palette.
 
-Use `:reload` after editing the config file to apply settings without restarting.
-Invalid or unreadable configuration leaves the current settings unchanged and
-shows an error. Changes to `cache.path` are saved but require a restart; the
-current database stays open. Reload is manual, not a file watcher.
+Config edits are checked once per second and applied without restarting,
+independently of PR refresh. Use `:reload` to reload immediately. Invalid,
+unreadable, or missing configuration leaves the last working settings active
+and shows an error once per distinct failed change; valid edits recover
+automatically. Reload never recreates a missing file. Changes to `cache.path`
+require a restart; the current database stays open.
 
 ### TUI actions
 
 `zappr config init` creates `$XDG_CONFIG_HOME/zappr/config.yaml` (or
 `~/.config/zappr/config.yaml`). The generated file includes only configurable
-PR/view actions plus generic approval and comment actions. Fixed controls are
+PR/view actions, reload, and generic approval and comment actions. Fixed controls are
 built in and cannot be configured. Add only the fields to change; each action
 overlays its built-in `keys` and `commands` independently. An empty list clears
 that field.
 
 ```yaml
 actions:
+  reload: { keys: [ctrl+r] }
   refresh-inbox: { keys: [R], commands: [refresh-all] }
   approve: { operation: approve, keys: [a], confirm: true }
   approve-now: { operation: approve, keys: [A], confirm: false }
@@ -248,10 +251,15 @@ actions:
 ```
 
 Configurable built-in IDs: `open-pr`, `copy-pr-url`, `refresh-pr`,
-`refresh-inbox`, `toggle-diff`, `toggle-wrap`, `open-diff-pager`, `next-file`, `prev-file`,
+`refresh-inbox`, `reload`, `toggle-diff`, `toggle-wrap`, `open-diff-pager`, `next-file`, `prev-file`,
 `toggle-side-by-side`, `toggle-file-content`, `toggle-draft`, `toggle-automerge`, `close-pr`,
 `update-branch`, `request-changes`, and `merge-pr`. Generic action
 IDs include the default `approve`, `approve-now`, and `comment` entries.
+
+`reload` has no default key and retains `:reload` when only `keys` is changed.
+It is a built-in action, not a generic `operation: reload`. Command-modified
+shortcuts work only if the terminal forwards the corresponding key events;
+zappr does not change the terminal's shortcut configuration or keyboard protocol.
 
 Custom generic actions require `operation: approve` or `operation: comment`
 and at least one `keys` or `commands` entry. `description` is optional and

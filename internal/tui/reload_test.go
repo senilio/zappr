@@ -11,7 +11,7 @@ import (
 	"github.com/senilio/zappr/internal/model"
 )
 
-func TestReloadCommandIsFixedAndPRIndependent(t *testing.T) {
+func TestReloadCommandIsPRIndependent(t *testing.T) {
 	r, err := newActionRegistry(config.Default().Actions)
 	if err != nil {
 		t.Fatal(err)
@@ -19,6 +19,30 @@ func TestReloadCommandIsFixedAndPRIndependent(t *testing.T) {
 	a, ok := r.commands["reload"]
 	if !ok || a.ID != "reload" || a.RequiresPR || a.Confirmation != confirmationNone {
 		t.Fatalf("reload unavailable or requires PR/confirmation: %#v", a)
+	}
+}
+
+func TestReloadConfiguredKeyWithoutPR(t *testing.T) {
+	m := reloadFixture(t)
+	a := m.cfg.Actions["reload"]
+	a.Keys = []string{"ctrl+r"}
+	m.cfg.Actions["reload"] = a
+	var err error
+	m.actions, err = newActionRegistry(m.cfg.Actions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	action, ok := m.actions.actionForKey(actionContextNormal, "ctrl+r")
+	if !ok {
+		t.Fatal("reload key missing")
+	}
+	_, cmd := m.executeAction(action)
+	if cmd == nil {
+		t.Fatal("reload shortcut did not execute without a PR")
+	}
+	msg := cmd()
+	if _, ok := msg.(configReloadedMsg); !ok {
+		t.Fatalf("reload returned %T", msg)
 	}
 }
 

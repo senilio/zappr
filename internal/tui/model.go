@@ -72,6 +72,8 @@ type Model struct {
 	theme             uitheme.Theme
 	cfg               config.Config
 	settingsSaver     *settingsSaver
+	settingsPending   int
+	quitPending       bool
 	inboxManualScroll bool
 	actions           actionRegistry
 	prevMode          Mode
@@ -191,11 +193,11 @@ func New(zappr *app.App, repo string, pollEvery time.Duration, themeName string,
 	hvp := viewport.New()
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
-	return Model{app: zappr, repo: repo, loading: true, pollEvery: pollEvery, sortMode: app.ParseSortMode(cfg.Sort), hideDrafts: cfg.HideDrafts, theme: uitheme.DefaultWithName(themeName), cfg: cfg, actions: actions, inboxVP: ivp, summaryVP: vp, diffVP: dvp, helpVP: hvp, statusSpinner: sp, summaryMode: SummaryModeFiles, diffEnabled: true, recentPlans: map[recentPlanKey]time.Time{}}, nil
+	return Model{app: zappr, repo: repo, loading: true, pollEvery: pollEvery, sortMode: app.ParseSortMode(cfg.Sort), hideDrafts: cfg.HideDrafts, theme: uitheme.DefaultWithName(themeName), cfg: cfg, actions: actions, settingsSaver: newSettingsSaver(cfg), inboxVP: ivp, summaryVP: vp, diffVP: dvp, helpVP: hvp, statusSpinner: sp, summaryMode: SummaryModeFiles, diffEnabled: true, recentPlans: map[recentPlanKey]time.Time{}}, nil
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.refreshCmd(!m.hideDrafts), tickCmd(m.pollEvery, m.pollGeneration), uiTickCmd(), tea.RequestBackgroundColor)
+	return tea.Batch(m.refreshCmd(!m.hideDrafts), tickCmd(m.pollEvery, m.pollGeneration), uiTickCmd(), tea.RequestBackgroundColor, configWatchTickCmd())
 }
 
 type refreshMsg struct {

@@ -20,6 +20,7 @@ import (
 type settingsSaver struct {
 	mu       sync.Mutex
 	revision atomic.Uint64
+	observed configObservation // protected by mu
 }
 
 var hangingPrefix = regexp.MustCompile(`^\s*(?:(?:•|[0-9]+\.)\s+(?:\[[ x]\]\s+)?)?`)
@@ -297,17 +298,22 @@ type settingsSavedMsg struct{ err error }
 
 func (m *Model) saveSettings() tea.Cmd {
 	if m.settingsSaver == nil {
-		m.settingsSaver = &settingsSaver{}
+		m.settingsSaver = newSettingsSaver(m.cfg)
 	}
 	saver, cfg := m.settingsSaver, m.cfg
 	revision := saver.revision.Add(1)
+	m.settingsPending++
 	return func() tea.Msg {
 		saver.mu.Lock()
 		defer saver.mu.Unlock()
 		if revision != saver.revision.Load() {
 			return settingsSavedMsg{}
 		}
-		return settingsSavedMsg{err: config.Save(cfg)}
+		data, err := config.SaveSnapshot(cfg)
+		if err == nil {
+			saver.observed = observeConfig(data, nil)
+		}
+		return settingsSavedMsg{err: err}
 	}
 }
 

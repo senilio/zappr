@@ -15,29 +15,37 @@ type configReloadedMsg struct {
 	actions  actionRegistry
 	revision uint64
 	err      error
+	observed configObservation
+}
+
+func readConfig(revision uint64) configReloadedMsg {
+	data, err := config.ReadSnapshot()
+	msg := configReloadedMsg{revision: revision, observed: observeConfig(data, err), err: err}
+	if msg.err == nil {
+		msg.cfg, msg.err = config.Parse(data)
+	}
+	if msg.err == nil && time.Duration(msg.cfg.Refresh.Interval) < 0 {
+		msg.err = fmt.Errorf("refresh.interval must not be negative")
+	}
+	if msg.err == nil {
+		msg.actions, msg.err = newActionRegistry(msg.cfg.Actions)
+	}
+	return msg
 }
 
 func (m *Model) reloadConfig() tea.Cmd {
 	if m.settingsSaver == nil {
-		m.settingsSaver = &settingsSaver{}
+		m.settingsSaver = newSettingsSaver(m.cfg)
 	}
 	saver := m.settingsSaver
 	revision := saver.revision.Add(1)
 	return func() tea.Msg {
 		saver.mu.Lock()
 		defer saver.mu.Unlock()
-		msg := configReloadedMsg{revision: revision}
 		if revision != saver.revision.Load() {
-			return msg
+			return configReloadedMsg{revision: revision}
 		}
-		msg.cfg, msg.err = config.Reload()
-		if msg.err == nil && time.Duration(msg.cfg.Refresh.Interval) < 0 {
-			msg.err = fmt.Errorf("refresh.interval must not be negative")
-		}
-		if msg.err == nil {
-			msg.actions, msg.err = newActionRegistry(msg.cfg.Actions)
-		}
-		return msg
+		return readConfig(revision)
 	}
 }
 

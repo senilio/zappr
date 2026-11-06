@@ -167,6 +167,8 @@ actions:
     keys: [R]
   refresh-pr:
     keys: [r]
+  reload:
+    commands: [reload]
   request-changes:
     commands: [block]
   toggle-automerge:

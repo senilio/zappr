@@ -112,13 +112,13 @@ func pillSymbol(state PillState) string {
 // ReviewPill renders a review decision symbol in a three-cell status pill.
 func (t Theme) ReviewPill(decision string, draft bool, shape PillShape, opacity float64) string {
 	state := PillNone
-	if !draft {
-		switch strings.ToUpper(decision) {
-		case "APPROVED":
-			state = PillPassed
-		case "CHANGES_REQUESTED":
-			state = PillFailed
-		case "REVIEW_REQUIRED":
+	switch strings.ToUpper(decision) {
+	case "APPROVED":
+		state = PillPassed
+	case "CHANGES_REQUESTED":
+		state = PillFailed
+	case "REVIEW_REQUIRED":
+		if !draft {
 			state = PillWait
 		}
 	}

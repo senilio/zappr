@@ -51,3 +51,28 @@ func TestReloadUsesLoadParsing(t *testing.T) {
 		})
 	}
 }
+
+func TestReloadActionConfigurable(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	path, err := Init(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, commands := range []string{"", "\n    commands: [reload-config]"} {
+		if err := os.WriteFile(path, []byte("actions:\n  reload:\n    keys: [ctrl+r]"+commands+"\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := Reload()
+		if err != nil {
+			t.Fatal(err)
+		}
+		a := cfg.Actions["reload"]
+		wantCommand := "reload"
+		if commands != "" {
+			wantCommand = "reload-config"
+		}
+		if len(a.Keys) != 1 || a.Keys[0] != "ctrl+r" || len(a.Commands) != 1 || a.Commands[0] != wantCommand {
+			t.Fatalf("reload action = %#v", a)
+		}
+	}
+}

@@ -68,7 +68,7 @@ func TestInboxRow2RightAligned(t *testing.T) {
 	lines := inboxLines(m, 60)
 	// Each item has a title and metadata row, separated by a divider.
 	rows := map[int]string{0: stripANSI(lines[1]), 1: stripANSI(lines[len(lines)-1])}
-	icons := map[int]string{0: "–", 1: "…"}
+	icons := map[int]string{0: "✓", 1: "…"}
 	col := -1
 	for i, line := range rows {
 		if !strings.HasSuffix(line, " ci   "+icons[i]+" ") {
