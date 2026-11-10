@@ -59,7 +59,7 @@ func TestListPRsUsesSingleListCallWithoutCommitsOrComments(t *testing.T) {
 		t.Fatalf("read calls: %v", err)
 	}
 	got := strings.Split(strings.TrimSpace(string(data)), "\n")
-	fields := "number,title,author,url,labels,additions,deletions,changedFiles,isDraft,autoMergeRequest,state,headRefOid,statusCheckRollup,reviewDecision,mergeStateStatus,files,updatedAt"
+	fields := "number,title,author,url,body,labels,additions,deletions,changedFiles,isDraft,autoMergeRequest,state,headRefOid,statusCheckRollup,reviewDecision,mergeStateStatus,files,updatedAt"
 	want := []string{
 		"pr list --repo owner/repo --state open --search sort:updated-desc --limit 60 --json " + fields,
 	}
@@ -199,6 +199,32 @@ func TestGetPRAutoMergeState(t *testing.T) {
 				t.Fatalf("AutoMerge = %v, want %v", pr.AutoMerge, enabled)
 			}
 		})
+	}
+}
+
+func TestListPRsAndGetPRDecodeBody(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "gh")
+	response := `{"number":7,"body":"## Why\nBecause"}`
+	script := "#!/bin/sh\nif [ \"$1\" = api ]; then printf '[[]]'; exit; fi\ncase \"$*\" in *,body,*) ;; *) exit 1 ;; esac\n" +
+		"if [ \"$2\" = list ]; then printf '[%s]' " + testShellQuote(response) + "; else printf '%s' " + testShellQuote(response) + "; fi\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	provider := &GHProvider{Bin: bin}
+	prs, _, err := provider.ListPRs(context.Background(), "owner/repo")
+	if err != nil {
+		t.Fatalf("ListPRs: %v", err)
+	}
+	if len(prs) != 1 || prs[0].Body != "## Why\nBecause" {
+		t.Fatalf("list body = %#v", prs)
+	}
+	pr, err := provider.GetPR(context.Background(), "owner/repo", 7)
+	if err != nil {
+		t.Fatalf("GetPR: %v", err)
+	}
+	if pr.Body != "## Why\nBecause" {
+		t.Fatalf("view body = %q", pr.Body)
 	}
 }
 

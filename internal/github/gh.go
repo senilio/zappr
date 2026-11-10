@@ -27,7 +27,7 @@ func NewGHProvider() *GHProvider {
 func (p *GHProvider) ListPRs(ctx context.Context, repo string) ([]model.PullRequest, bool, error) {
 	// Commits and comments are omitted: their nested connections dominate the
 	// GraphQL cost of a list query. GetPR fetches them for the selected PR.
-	args := []string{"pr", "list", "--repo", repo, "--state", "open", "--search", "sort:updated-desc", "--limit", strconv.Itoa(prListLimit), "--json", "number,title,author,url,labels,additions,deletions,changedFiles,isDraft,autoMergeRequest,state,headRefOid,statusCheckRollup,reviewDecision,mergeStateStatus,files,updatedAt"}
+	args := []string{"pr", "list", "--repo", repo, "--state", "open", "--search", "sort:updated-desc", "--limit", strconv.Itoa(prListLimit), "--json", "number,title,author,url,body,labels,additions,deletions,changedFiles,isDraft,autoMergeRequest,state,headRefOid,statusCheckRollup,reviewDecision,mergeStateStatus,files,updatedAt"}
 	out, err := p.run(ctx, args...)
 	if err != nil {
 		return nil, false, err
@@ -46,7 +46,7 @@ func (p *GHProvider) ListPRs(ctx context.Context, repo string) ([]model.PullRequ
 }
 
 func (p *GHProvider) GetPR(ctx context.Context, repo string, number int) (model.PullRequest, error) {
-	out, err := p.run(ctx, "pr", "view", strconv.Itoa(number), "--repo", repo, "--json", "number,title,author,url,labels,additions,deletions,changedFiles,isDraft,autoMergeRequest,state,headRefOid,statusCheckRollup,reviewDecision,files,commits,reviews,latestReviews,reviewRequests,mergeStateStatus,updatedAt")
+	out, err := p.run(ctx, "pr", "view", strconv.Itoa(number), "--repo", repo, "--json", "number,title,author,url,body,labels,additions,deletions,changedFiles,isDraft,autoMergeRequest,state,headRefOid,statusCheckRollup,reviewDecision,files,commits,reviews,latestReviews,reviewRequests,mergeStateStatus,updatedAt")
 	if err != nil {
 		return model.PullRequest{}, err
 	}
@@ -263,6 +263,7 @@ type ghPR struct {
 	Title             string            `json:"title"`
 	Author            ghAuthor          `json:"author"`
 	URL               string            `json:"url"`
+	Body              string            `json:"body"`
 	Labels            []ghLabel         `json:"labels"`
 	Additions         int               `json:"additions"`
 	Deletions         int               `json:"deletions"`
@@ -425,6 +426,7 @@ func (p ghPR) toModel(repo string) model.PullRequest {
 		Title:          p.Title,
 		Author:         p.Author.Login,
 		URL:            p.URL,
+		Body:           p.Body,
 		Labels:         labels,
 		Files:          files,
 		Additions:      p.Additions,

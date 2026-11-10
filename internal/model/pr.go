@@ -59,6 +59,7 @@ type PullRequest struct {
 	Title          string
 	Author         string
 	URL            string
+	Body           string `json:"body,omitempty"`
 	Labels         []string
 	Files          []ChangedFile
 	Additions      int

@@ -1291,7 +1291,27 @@ func (m Model) commentDetail(comment model.PRComment) string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
+// descriptionDetail renders the PR description for the large pane.
+func (m Model) descriptionDetail(pr model.PullRequest) string {
+	s := m.theme.Styles
+	var b strings.Builder
+	b.WriteString(s.File.Render(readerInput(pr.Author+" · description")) + "\n\n")
+	if strings.TrimSpace(pr.Body) == "" {
+		b.WriteString(s.Muted.Render("no description"))
+	} else {
+		b.WriteString(m.renderCommentMarkdown(pr.Body))
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
 func (m Model) diffPanel(width int, height int) string {
+	if m.descriptionShown() {
+		if _, ok := m.current(); !ok {
+			return m.theme.Styles.Muted.Render("select PR")
+		}
+		vpW := m.paneInnerWidth(width, FocusDiff)
+		return m.renderDiffViewport(m.diffContentWidth(vpW), m.paneInnerHeight(height, FocusDiff))
+	}
 	if m.summaryMode == SummaryModePlan {
 		vpW := m.paneInnerWidth(width, FocusDiff)
 		return m.renderDiffViewport(m.diffContentWidth(vpW), m.paneInnerHeight(height, FocusDiff))
