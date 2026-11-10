@@ -106,11 +106,12 @@ type Model struct {
 	sideDiffRequested  string
 	sideDiffFailed     string
 	diffEnabled        bool
-	// descriptionActive shows the PR description in the large pane. Inbox
-	// focus sets it; Summary focus and next-item/prev-item clear it.
+	// descriptionActive shows the PR description in the large pane. The
+	// toggle-description action sets it; navigating to another PR or Summary
+	// item clears it.
 	descriptionActive bool
-	// parkedDiffOffset holds the large-pane scroll position of whichever
-	// content (description or diff/reader) is currently hidden.
+	// parkedDiffOffset holds the large-pane scroll position from before the
+	// description was opened.
 	parkedDiffOffset  paneOffset
 	summaryMode       SummaryMode
 	planState         planReaderState
@@ -199,7 +200,7 @@ func New(zappr *app.App, repo string, pollEvery time.Duration, themeName string,
 	hvp := viewport.New()
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
-	return Model{app: zappr, repo: repo, loading: true, pollEvery: pollEvery, sortMode: app.ParseSortMode(cfg.Sort), hideDrafts: cfg.HideDrafts, theme: uitheme.DefaultWithName(themeName), cfg: cfg, actions: actions, settingsSaver: newSettingsSaver(cfg), inboxVP: ivp, summaryVP: vp, diffVP: dvp, helpVP: hvp, statusSpinner: sp, summaryMode: SummaryModeFiles, diffEnabled: true, descriptionActive: true, recentPlans: map[recentPlanKey]time.Time{}}, nil
+	return Model{app: zappr, repo: repo, loading: true, pollEvery: pollEvery, sortMode: app.ParseSortMode(cfg.Sort), hideDrafts: cfg.HideDrafts, theme: uitheme.DefaultWithName(themeName), cfg: cfg, actions: actions, settingsSaver: newSettingsSaver(cfg), inboxVP: ivp, summaryVP: vp, diffVP: dvp, helpVP: hvp, statusSpinner: sp, summaryMode: SummaryModeFiles, diffEnabled: true, recentPlans: map[recentPlanKey]time.Time{}}, nil
 }
 
 func (m Model) Init() tea.Cmd {

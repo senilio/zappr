@@ -207,6 +207,7 @@ func (m Model) helpPanel() string {
 		shortcut{"1/2/3/4", "files/commits/comments/plan (when available)"},
 		shortcut{"shift+↑/↓", "next/previous file/commit/comment/plan item"},
 		shortcut{m.actionAlias("toggle-diff"), "toggle diff"},
+		shortcut{m.actionAlias("toggle-description"), "toggle PR description"},
 		shortcut{m.actionAlias("toggle-wrap"), "wrap focused pane"},
 		shortcut{"←/→", "pan diff/commits"},
 		shortcut{m.actionAlias("toggle-side-by-side"), "side-by-side diff"},

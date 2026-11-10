@@ -105,7 +105,7 @@ q            quit
 The following PR/view actions use their default aliases and may be configured:
 `a` approves after confirmation, `A` approves immediately, `c` opens the
 comment editor, `r` refreshes the selected PR, `R` refreshes the inbox, `v`
-toggles the diff pane (shown by default), `V` opens the full diff pager, `s` toggles side-by-side
+toggles the diff pane (shown by default), `d` toggles the PR description in the large pane, `V` opens the full diff pager, `s` toggles side-by-side
 diff, `w` toggles wrapping in the focused pane, `x` expands file content,
 `n`/`p` and `[`/`]` move between files or
 commits, `o` opens the PR, and `C` copies its URL. The [Plan reader](#plan-reader)
@@ -251,7 +251,7 @@ actions:
 ```
 
 Configurable built-in IDs: `open-pr`, `copy-pr-url`, `refresh-pr`,
-`refresh-inbox`, `reload`, `toggle-diff`, `toggle-wrap`, `open-diff-pager`, `next-file`, `prev-file`,
+`refresh-inbox`, `reload`, `toggle-diff`, `toggle-description`, `toggle-wrap`, `open-diff-pager`, `next-file`, `prev-file`,
 `toggle-side-by-side`, `toggle-file-content`, `toggle-draft`, `toggle-automerge`, `close-pr`,
 `update-branch`, `request-changes`, and `merge-pr`. Generic action
 IDs include the default `approve`, `approve-now`, and `comment` entries.

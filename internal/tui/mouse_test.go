@@ -39,8 +39,6 @@ func TestMouseWheelDiffAfterIdenticalReload(t *testing.T) {
 	if m.diff != "" {
 		t.Fatal("click did not clear the loaded diff")
 	}
-	// Inbox focus shows the description; this test covers the diff.
-	m.descriptionActive = false
 	next, _ = m.Update(loaded)
 	m = next.(Model)
 	for _, region = range m.paneRegions() {
@@ -176,7 +174,7 @@ func TestMouseWheelFilterPreservesFirstManualScroll(t *testing.T) {
 
 func TestMouseWheelFilterHorizontal(t *testing.T) {
 	m := scrollModel(t, 1)
-	m.focus, m.diffEnabled, m.descriptionActive = FocusDiff, true, false
+	m.focus, m.diffEnabled = FocusDiff, true
 	m.diff = strings.Repeat("long diff line ", 40) + "\nsecond line"
 	m.syncDiffVP()
 	for _, shift := range []bool{false, true} {

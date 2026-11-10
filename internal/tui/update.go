@@ -28,7 +28,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	oldRaw := m.sideLayoutRaw()
 	next, cmd := m.update(msg)
 	n := next.(Model)
-	restore := n.applyDescriptionFocus(m)
+	n.leaveDescriptionOnNavigation(m, msg)
 	// Keep stored content current for scrolling and the pre-Update mouse filter.
 	if n.focus != m.focus || n.mode != m.mode {
 		n.resizeViewports()
@@ -36,10 +36,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		n.syncInboxVP()
 		n.syncSummaryVP()
 		n.syncDiffVP()
-	}
-	if restore != nil {
-		n.diffVP.SetYOffset(restore.y)
-		n.diffXOffset = min(restore.x, n.maxDiffXOffset())
 	}
 	anchor := 0
 	if n.sideLayoutNeeded(n.sideLayoutKey()) {
@@ -838,7 +834,6 @@ func (m Model) executeAction(action tuiAction) (tea.Model, tea.Cmd) {
 			m.inboxVP.PageUp()
 		}
 	case "next-item":
-		m.descriptionActive = false
 		if m.summaryMode == SummaryModePlan {
 			m.movePlan(1)
 		} else if m.summaryMode == SummaryModeComments {
@@ -864,7 +859,6 @@ func (m Model) executeAction(action tuiAction) (tea.Model, tea.Cmd) {
 			m.syncSummaryVPScroll()
 		}
 	case "prev-item":
-		m.descriptionActive = false
 		if m.summaryMode == SummaryModePlan {
 			m.movePlan(-1)
 		} else if m.summaryMode == SummaryModeComments {
@@ -921,6 +915,9 @@ func (m Model) executeAction(action tuiAction) (tea.Model, tea.Cmd) {
 		m.loading = true
 		m.message = "refreshing"
 		return m, tea.Batch(m.startStatus("refreshing…"), m.refreshCmd(!m.hideDrafts))
+	case "toggle-description":
+		m.toggleDescription()
+		return m, nil
 	case "toggle-diff":
 		if m.width > 0 && m.width < minMediumWidth {
 			if m.diffEnabled && m.mode == ModeDiff {

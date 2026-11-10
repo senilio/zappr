@@ -167,6 +167,7 @@ func DefaultActions() map[string]ActionConfig {
 		"refresh-inbox":       {Keys: []string{"R"}},
 		"reload":              {Commands: []string{"reload"}},
 		"toggle-diff":         {Keys: []string{"v"}},
+		"toggle-description":  {Keys: []string{"d"}},
 		"toggle-wrap":         {Keys: []string{"w"}},
 		"open-diff-pager":     {Keys: []string{"V"}},
 		"toggle-side-by-side": {Keys: []string{"s"}},

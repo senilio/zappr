@@ -75,6 +75,7 @@ var actionDescriptors = []tuiAction{
 	{"refresh-pr", "refresh pull request", actionContextNormal, nil, nil, true, confirmationNone, "refresh-pr", ""},
 	{"refresh-inbox", "refresh full inbox", actionContextNormal, nil, nil, false, confirmationNone, "refresh-inbox", ""},
 	{"toggle-diff", "toggle diff", actionContextNormal, nil, nil, true, confirmationNone, "toggle-diff", ""},
+	{"toggle-description", "toggle PR description", actionContextNormal, nil, nil, true, confirmationNone, "toggle-description", ""},
 	{"toggle-wrap", "toggle focused pane wrapping", actionContextNormal, nil, nil, false, confirmationNone, "toggle-wrap", ""},
 	{"open-diff-pager", "open diff pager", actionContextNormal, nil, nil, true, confirmationNone, "open-diff-pager", ""},
 	{"toggle-side-by-side", "toggle side-by-side", actionContextNormal, nil, nil, true, confirmationNone, "toggle-side-by-side", ""},

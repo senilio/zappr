@@ -118,7 +118,6 @@ func TestPaneLayoutInvalidation(t *testing.T) {
 	for _, change := range []string{"selection", "width", "wrap", "theme"} {
 		t.Run(change, func(t *testing.T) {
 			m := scrollModel(t, 2)
-			m.descriptionActive = false
 			m.prs[0].Files = []model.ChangedFile{{Path: "main.go"}}
 			m.diff = "+a long line that can wrap into several rows"
 			width := 30
@@ -170,7 +169,6 @@ func TestSummaryLayoutRefreshesRelativeTime(t *testing.T) {
 
 func TestDiffPaddingDoesNotModifyCachedRows(t *testing.T) {
 	m := scrollModel(t, 1)
-	m.descriptionActive = false
 	m.diff = "one\ntwo\nthree\nfour"
 	layout := m.diffPane(20)
 	m.diffVP.SetContent(m.diff)
@@ -188,7 +186,6 @@ func TestDiffPaddingDoesNotModifyCachedRows(t *testing.T) {
 func TestDiffWidthCalculationReused(t *testing.T) {
 	m := scrollModel(t, 1)
 	m.diffEnabled = true
-	m.descriptionActive = false
 	m.diff = strings.Repeat(strings.Repeat("wide line", 40)+"\n", 100)
 	m.syncDiffVP()
 	if allocs := testing.AllocsPerRun(10, func() { m.maxDiffXOffset() }); allocs != 0 {

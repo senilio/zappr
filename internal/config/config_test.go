@@ -173,6 +173,8 @@ actions:
     commands: [block]
   toggle-automerge:
     commands: [automerge]
+  toggle-description:
+    keys: [d]
   toggle-diff:
     keys: [v]
   toggle-draft:

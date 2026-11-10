@@ -83,4 +83,4 @@ Use `rtk go test ./...` if available in the environment.
 - Inbox rendering, click hit testing, selection preservation, and scrolling must use the shared `inboxContent` row spans, never fixed-stride arithmetic. Items taller than the viewport start at the title and remain manually scrollable.
 - Inbox items are always clickable regardless of current selection state.
 - Clicking the Summary or Diff pane only changes focus to that pane; item selection stays Inbox-only.
-- When the Inbox gains focus, the large pane shows the selected PR's description (`descriptionActive`). Summary focus or `next-item`/`prev-item` switch it back to the diff or reader; focusing the large pane keeps the description. Narrow layouts are unaffected.
+- `d` (`toggle-description`) switches the large pane between its normal content and the selected PR's description (`descriptionActive`, off by default). Selecting another PR or Summary item returns to the normal content; focus changes do not. Narrow layouts are unaffected.
