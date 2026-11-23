@@ -26,7 +26,7 @@ func TestCommentRowsAreMetadataOnly(t *testing.T) {
 				t.Fatalf("indent/marker or incorrect span: %q %+v", line, spans)
 			}
 		}
-		if strings.Contains(stripANSI(view), "Plan result") || !strings.Contains(lines[0], m.theme.Styles.TitleStrong.Render(stripANSI(lines[0]))) || !strings.Contains(lines[1], m.theme.Styles.Muted.Render(stripANSI(lines[1]))) {
+		if strings.Contains(stripANSI(view), "Plan result") || !strings.Contains(lines[0], m.theme.Styles.TitleStrong.Render("alex ")) || !strings.Contains(lines[1], m.theme.Styles.Muted.Render("alexander ")) {
 			t.Fatalf("preview or incorrect selection styles: %q", view)
 		}
 		view, _ = m.commentSummaryLayout(m.prs[0], 18)

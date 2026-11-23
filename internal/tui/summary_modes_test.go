@@ -30,7 +30,7 @@ func TestSummaryTitleNamesActiveDestination(t *testing.T) {
 	}{
 		{SummaryModeFiles, "Summary [1 files] [2] [3]"},
 		{SummaryModeCommits, "Summary [1] [2 commits] [3]"},
-		{SummaryModeComments, "Summary 0/0 [1] [2] [3 comments]"},
+		{SummaryModeComments, "Summary 0/0 [1] [2] [3 activity]"},
 	} {
 		t.Run(tc.mode.String(), func(t *testing.T) {
 			m := minimalModel()

@@ -46,7 +46,7 @@ func TestReaderProseWrapsAtWordBoundaries(t *testing.T) {
 	if !strings.Contains(stripANSI(content), "alpha beta") {
 		t.Fatalf("selected comment body missing: %q", stripANSI(content))
 	}
-	layout, _ := m.buildDiffLayout(content, 30)
+	layout, _, _ := m.buildDiffLayout(content, 30)
 	words := map[string]bool{"alpha": true, "beta": true, "gamma": true, "delta": true}
 	for _, row := range strings.Split(stripANSI(layout), "\n") {
 		if !strings.Contains(row, "alpha") && !strings.Contains(row, "gamma") && !strings.Contains(row, "beta") {

@@ -123,6 +123,30 @@ func TestRefreshDoesNotPruneIncompleteList(t *testing.T) {
 	assertOrder(t, prs, []int{2, 1})
 }
 
+func TestRefreshReviewActivityCache(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		head string
+		want bool
+	}{
+		{"same head", "old", true},
+		{"changed head", "new", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := cache.NewMemoryStore()
+			pr := model.PullRequest{Repo: "owner/repo", Number: 1, HeadRefOID: "old", Reviews: []model.PRReview{{ID: "review"}}, ReviewDismissals: []model.PRReviewDismissal{{ID: "event"}}, ReviewActivityLoaded: true}
+			if err := store.Put(pr); err != nil {
+				t.Fatal(err)
+			}
+			listed := model.PullRequest{Repo: pr.Repo, Number: pr.Number, HeadRefOID: tc.head}
+			got, err := New(fakeGitHub{prs: []model.PullRequest{listed}}, store).Refresh(context.Background(), pr.Repo, true)
+			if err != nil || len(got) != 1 || got[0].ReviewActivityLoaded != tc.want || len(got[0].Reviews) != 1 || len(got[0].ReviewDismissals) != 1 {
+				t.Fatalf("Refresh: %+v, %v", got, err)
+			}
+		})
+	}
+}
+
 func TestRefreshKeepsCachedDetailsWhenPRUnchanged(t *testing.T) {
 	store := cache.NewMemoryStore()
 	updated := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
@@ -250,6 +274,29 @@ func TestRefreshPRPrunesClosedPR(t *testing.T) {
 	}
 	if _, err := store.Get("owner/repo", 2); err != nil {
 		t.Fatalf("open cached PR missing: %v", err)
+	}
+}
+
+func TestRefreshPRKeepsNewerSameHeadActivity(t *testing.T) {
+	store := cache.NewMemoryStore()
+	older := model.PullRequest{
+		Repo: "owner/repo", Number: 1, HeadRefOID: "same", UpdatedAt: time.Now(),
+		ReviewActivityLoaded: true,
+	}
+	newer := older
+	newer.UpdatedAt = older.UpdatedAt.Add(time.Minute)
+	newer.ReviewDismissals = []model.PRReviewDismissal{{ID: "dismissed"}}
+	if err := store.Put(newer); err != nil {
+		t.Fatal(err)
+	}
+	a := New(fakeGitHub{pr: older}, store)
+	pr, err := a.RefreshPR(context.Background(), older.Repo, older.Number)
+	if err != nil || len(pr.ReviewDismissals) != 1 {
+		t.Errorf("refresh replaced newer activity: %+v, %v", pr, err)
+	}
+	pr, err = store.Get(older.Repo, older.Number)
+	if err != nil || len(pr.ReviewDismissals) != 1 {
+		t.Fatalf("cache replaced newer activity: %+v, %v", pr, err)
 	}
 }
 

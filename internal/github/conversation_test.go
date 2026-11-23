@@ -13,7 +13,7 @@ const conversationItem = `{"id":101,"user":{"login":"deploy-bot[bot]"},"body":"p
 func conversationProvider(t *testing.T, command string) *GHProvider {
 	t.Helper()
 	bin := filepath.Join(t.TempDir(), "gh")
-	script := "#!/bin/sh\ncase \"$*\" in\n*issues/7/comments*) " + command + ";;\n*pulls/7/comments*) printf '[[]]';;\n*) printf '{\"number\":7}';;\nesac\n"
+	script := "#!/bin/sh\n" + emptyReviewTimelineScript() + "case \"$*\" in\n*issues/7/comments*) " + command + ";;\n*pulls/7/comments*) printf '[[]]';;\n*) printf '{\"number\":7}';;\nesac\n"
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}

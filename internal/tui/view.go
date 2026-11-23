@@ -216,7 +216,7 @@ func (m Model) helpPanel() string {
 	)
 	actions := []shortcut{
 		{m.actionAlias("open-pr"), "open PR"},
-		{m.actionAlias("copy-pr-url"), "copy PR URL"},
+		{m.actionAlias("copy-pr-url"), "copy focused item URL"},
 		{m.actionAlias("refresh-pr"), "refresh PR"},
 		{m.actionAlias("refresh-inbox"), "refresh inbox"},
 		{m.actionAlias("approve"), "approve [?]"},
@@ -1241,40 +1241,25 @@ func (m Model) writeCommentSummary(b *strings.Builder, pr model.PullRequest, inn
 	b.WriteString(content)
 }
 
-func (m Model) selectedComment() (model.PRComment, bool) {
-	pr, ok := m.current()
-	if !ok {
-		return model.PRComment{}, false
-	}
-	comments := m.visibleComments(pr)
-	if m.commentState.selectedKey != "" {
-		for _, comment := range comments {
-			if comment.Key() == m.commentState.selectedKey {
-				return comment, true
-			}
-		}
-		return model.PRComment{}, false
-	}
-	if m.commentIndex < 0 || m.commentIndex >= len(comments) {
-		return model.PRComment{}, false
-	}
-	return comments[m.commentIndex], true
-}
-
 // commentDetail renders the selected comment for the large pane, including
 // the type and location context that the summary list omits.
 func (m Model) commentDetail(comment model.PRComment) string {
 	s := m.theme.Styles
-	kind := comment.Kind
-	if kind == "" {
-		kind = "comment"
-	}
-	meta := comment.Author + " · " + kind
+	meta := comment.Author + " · " + commentKind(comment)
 	if !comment.CreatedAt.IsZero() {
 		meta += " · " + summaryTimestamp(comment.CreatedAt, time.Now())
 	}
+	return m.commentDetailWithHeader(comment, s.File.Render(readerInput(meta)))
+}
+
+func (m Model) activityDetail(entry activityEntry) string {
+	header := m.activityLine(entry, time.Now(), 0, false, true)
+	return m.commentDetailWithHeader(entry.Comment, header)
+}
+
+func (m Model) commentDetailWithHeader(comment model.PRComment, header string) string {
 	var b strings.Builder
-	b.WriteString(s.File.Render(readerInput(meta)) + "\n")
+	b.WriteString(header + "\n")
 	if comment.Path != "" {
 		location := comment.Path
 		if comment.Line > 0 {
@@ -1285,7 +1270,7 @@ func (m Model) commentDetail(comment model.PRComment) string {
 		if comment.Side == "LEFT" {
 			location += " (left)"
 		}
-		b.WriteString(s.Muted.Render(readerInput(location)) + "\n")
+		b.WriteString(m.theme.Styles.Muted.Render(readerInput(location)) + "\n")
 	}
 	b.WriteByte('\n')
 	b.WriteString(m.renderCommentMarkdown(comment.Body))
@@ -1322,34 +1307,38 @@ func (m Model) diffPanel(width int, height int) string {
 		if !ok {
 			return m.theme.Styles.Muted.Render("select PR")
 		}
-		if len(m.visibleComments(pr)) == 0 {
-			if len(pr.Comments) != 0 {
-				return m.theme.Styles.Muted.Render("no matching comments")
-			}
-			return m.theme.Styles.Muted.Render("no comments")
+		if len(m.activityEntries(pr)) == 0 {
+			return m.theme.Styles.Muted.Render("no activity")
 		}
 		vpW := m.paneInnerWidth(width, FocusDiff)
 		return m.renderDiffViewport(m.diffContentWidth(vpW), m.paneInnerHeight(height, FocusDiff))
 	}
-	if !m.diffEnabled {
-		return m.theme.Styles.Muted.Render("press v to load diff")
-	}
-	if _, ok := m.current(); !ok {
-		return m.theme.Styles.Muted.Render("select PR")
-	}
-	if m.diffMode == DiffModeFile && m.currentFileContent() == "" {
-		return m.theme.Styles.Muted.Render("loading file…")
-	}
-	if m.summaryMode == SummaryModeCommits {
-		if m.renderedCommitDiff == "" {
-			return m.theme.Styles.Muted.Render("loading commit diff…")
-		}
-	} else if m.diff == "" {
-		return m.theme.Styles.Muted.Render("loading diff…")
+	if placeholder := m.diffPlaceholder(); placeholder != "" {
+		return m.theme.Styles.Muted.Render(placeholder)
 	}
 	vpW := m.paneInnerWidth(width, FocusDiff)
 	vpH := m.paneInnerHeight(height, FocusDiff)
 	return m.renderDiffViewport(m.diffContentWidth(vpW), vpH)
+}
+
+func (m *Model) diffPlaceholder() string {
+	switch {
+	case !m.diffEnabled:
+		return "press v to load diff"
+	case m.selected < 0 || m.selected >= len(m.prs):
+		return "select PR"
+	case m.diffMode == DiffModeFile:
+		if m.currentFileContent() == "" {
+			return "loading file…"
+		}
+	case m.summaryMode == SummaryModeCommits:
+		if m.renderedCommitDiff == "" {
+			return "loading commit diff…"
+		}
+	case m.diff == "":
+		return "loading diff…"
+	}
+	return ""
 }
 
 func (m Model) diffContentWidth(innerWidth int) int {

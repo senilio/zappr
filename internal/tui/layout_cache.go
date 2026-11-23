@@ -16,11 +16,12 @@ import (
 // Entries are immutable once published. Model copies can share them without
 // changing earlier states; only the latest entry for each pane is retained.
 type paneLayout struct {
-	content  string
-	spans    []rowSpan
-	sources  []int
-	lines    []string
-	viewport viewport.Model
+	content      string
+	spans        []rowSpan
+	sources      []int
+	renderedRows []int
+	lines        []string
+	viewport     viewport.Model
 }
 
 func newPaneLayout(content string, width int) *paneLayout {
@@ -109,14 +110,17 @@ type summaryLayoutKey struct {
 	second                                               int64
 	planRevision                                         string
 	commentKey                                           string
+	reviewActivityLoaded                                 bool
 }
 
 type summaryLayoutCache struct {
-	key      summaryLayoutKey
-	files    []model.ChangedFile
-	commits  []model.PRCommit
-	comments []model.PRComment
-	layout   *paneLayout
+	key        summaryLayoutKey
+	files      []model.ChangedFile
+	commits    []model.PRCommit
+	comments   []model.PRComment
+	reviews    []model.PRReview
+	dismissals []model.PRReviewDismissal
+	layout     *paneLayout
 }
 
 func (m *Model) summaryPane(pr model.PullRequest, width int) *paneLayout {
@@ -124,6 +128,8 @@ func (m *Model) summaryPane(pr model.PullRequest, width int) *paneLayout {
 	var files []model.ChangedFile
 	var commits []model.PRCommit
 	var comments []model.PRComment
+	var reviews []model.PRReview
+	var dismissals []model.PRReviewDismissal
 	switch m.summaryMode {
 	case SummaryModeFiles:
 		files = pr.Files
@@ -132,18 +138,20 @@ func (m *Model) summaryPane(pr model.PullRequest, width int) *paneLayout {
 		key.second = time.Now().Unix()
 	case SummaryModeComments:
 		comments = pr.Comments
+		reviews, dismissals = pr.Reviews, pr.ReviewDismissals
+		key.reviewActivityLoaded = pr.ReviewActivityLoaded
 		key.second = time.Now().Unix()
 		key.commentKey = m.commentState.selectedKey
 	case SummaryModePlan:
 		key.planRevision = fmt.Sprint(m.planState.fingerprint, m.planState.reportID, m.planState.nodeID)
 	}
-	if cached := m.summaryLayoutCache; cached != nil && cached.key == key && slices.Equal(cached.files, files) && slices.Equal(cached.commits, commits) && slices.Equal(cached.comments, comments) {
+	if cached := m.summaryLayoutCache; cached != nil && cached.key == key && slices.Equal(cached.files, files) && slices.Equal(cached.commits, commits) && slices.Equal(cached.comments, comments) && slices.Equal(cached.reviews, reviews) && slices.Equal(cached.dismissals, dismissals) {
 		return cached.layout
 	}
 	content, spans := m.buildSummaryLayout(pr, width)
 	layout := newPaneLayout(m.summaryViewportContent(content, width), width)
 	layout.content, layout.spans = content, spans
-	m.summaryLayoutCache = &summaryLayoutCache{key, slices.Clone(files), slices.Clone(commits), slices.Clone(comments), layout}
+	m.summaryLayoutCache = &summaryLayoutCache{key, slices.Clone(files), slices.Clone(commits), slices.Clone(comments), slices.Clone(reviews), slices.Clone(dismissals), layout}
 	return layout
 }
 
@@ -169,9 +177,10 @@ func (m *Model) diffPane(width int) *paneLayout {
 	if cached := m.diffLayoutCache; cached != nil && cached.key == key {
 		return cached.layout
 	}
-	content, sources := m.buildDiffLayout(key.content, width)
+	content, sources, renderedRows := m.buildDiffLayout(key.content, width)
 	layout := newPaneLayout(content, width)
 	layout.sources, layout.lines = sources, strings.Split(content, "\n")
+	layout.renderedRows = renderedRows
 	m.diffLayoutCache = &diffLayoutCache{key, layout, longestLineWidth(key.content)}
 	return layout
 }

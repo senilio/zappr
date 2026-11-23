@@ -92,8 +92,8 @@ enter        inspect selected PR
 y            confirm
 tab          cycle focus
 g/G          top / bottom of list
-shift-up/down previous / next file, commit, or comment
-1/2/3        summary pane: files / commits / comments
+shift-up/down previous / next file, commit, or activity item
+1/2/3        summary pane: files / commits / activity
 4            summary pane: plan (only when a supported report is found)
 f            filters / settings
 ?            help
@@ -108,21 +108,31 @@ comment editor, `r` refreshes the selected PR, `R` refreshes the inbox, `v`
 toggles the diff pane (shown by default), `d` toggles the PR description in the large pane, `V` opens the full diff pager, `s` toggles side-by-side
 diff, `w` toggles wrapping in the focused pane, `x` expands file content,
 `n`/`p` and `[`/`]` move between files or
-commits, `o` opens the PR, and `C` copies its URL. The [Plan reader](#plan-reader)
+commits, and `o` opens the PR. `C` copies the PR URL from Inbox, the selected
+item's link from Summary, or the visible file or Activity item's link from
+the large pane. Description, Plan, and items without a link fall back to the
+PR URL. The [Plan reader](#plan-reader)
 uses the basic navigation keys. Command palette
 operations below are also configurable where listed.
 
 The summary pane starts on changed files and can switch to commits, PR
-comments, or an Atlantis plan with `1`, `2`, `3`, and `4`. Every available
+activity, or an Atlantis plan with `1`, `2`, `3`, and `4`. Every available
 destination is named in the Summary title. Files show the selected file diff in
 the large pane; ordinary modified labels and zero counts are omitted so added,
 removed, and renamed files stand out. Commits show the selected commit diff.
-Comments are listed newest first, one row per comment with timestamp, author,
-and kind. The selected row is bold; other rows are muted. There is no marker,
-indentation, or body preview. Comments include conversation comments, review
-bodies, and inline review comments. The selected comment appears in the large
-Comment pane, with author, kind, time, and file location in its content.
-The Comment pane is available even when the diff is off.
+Activity lists comments, reviews, and review dismissals newest first as
+`time - author action`. Active approvals are green, active change requests
+are red, and dismissals GitHub identifies as stale approvals are yellow.
+Dismissals have their own row; the original review stays in the timeline.
+The selected row is bold and its details appear in the large pane, even
+when the diff is off. A trailing `[bot]` is hidden in Activity. To shorten
+names further, configure an optional `author_aliases` map (empty by default):
+
+```yaml
+author_aliases:
+  trustly-code-reviewer: "Code Reviewer"
+  trustly-atlantis-bot: "Atlantis"
+```
 Wrapping is off by default. Press `w` to toggle it independently in Inbox,
 Summary, or Diff; each preference is saved across restarts. Inbox wrapping
 expands every PR title while keeping metadata on one row. Diff wrapping keeps
@@ -151,7 +161,7 @@ number and author use plain text:
 
 Atlantis status appears as an additional metadata pill; see
 [Plan reader](#plan-reader). Reviewer names are not shown in the Inbox; review
-details and bot reports remain available in Comments.
+details and bot reports remain available in Activity.
 
 Pills use Nerd Font rounded ends by default. Set `pills: square` to avoid Nerd
 Font glyphs. Terminals without color show symbols instead: `ci✓`, `ci…`,
@@ -313,7 +323,7 @@ actions:
 
 For repositories that already use Atlantis, generic comment actions can post
 its commands. The action IDs and aliases below are user-defined. Bot replies
-remain available in the Comments summary (`3`). Key `4` is reserved for the
+remain available in the Activity summary (`3`). Key `4` is reserved for the
 Plan tab; binding a custom action to it is reported as a key collision.
 
 ### Plan reader
@@ -330,7 +340,7 @@ project:` or `Ran Plan for N projects:` header, output in a collapsible
 `diff` block, and `Continued plan output from previous comment.` for reports
 split across several comments. Split comments are joined only when they are
 adjacent and explicitly marked as continuations; otherwise the report is shown
-as incomplete. Unrecognized comments stay available in Comments.
+as incomplete. Unrecognized comments stay available in Activity.
 
 Each report states whether its source is complete. Counts come from the report
 itself, not checks. Multi-project reports support numbered or unnumbered

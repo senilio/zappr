@@ -32,24 +32,24 @@ func nativeCommentModel(t *testing.T) Model {
 func TestVisibleCommentsPreservesNativeSelectionOnEdit(t *testing.T) {
 	m := nativeCommentModel(t)
 	m = pressSpecial(m, tea.KeyDown)
-	if c, _ := m.selectedComment(); c.Key() != "inline:101" {
+	if c, _ := m.selectedActivity(); c.Key != "inline:101" {
 		t.Fatalf("native kind collision: %#v", c)
 	}
 	m.prs[0].Comments[1].Body = "edited inline body"
 	m.prs[0].Comments[1].UpdatedAt = time.Now()
 	m.prs[0].Comments = append([]model.PRComment{{ID: "new", Author: "newer", Body: "new", CreatedAt: time.Now()}}, m.prs[0].Comments...)
 	m.reconcileComments()
-	if c, _ := m.selectedComment(); c.Key() != "inline:101" || c.Body != "edited inline body" || m.commentIndex != 2 {
+	if c, _ := m.selectedActivity(); c.Key != "inline:101" || c.Comment.Body != "edited inline body" || m.commentIndex != 2 {
 		t.Fatalf("edit/insert moved native selection: %#v index=%d", c, m.commentIndex)
 	}
 	m = pressKey(m, "1")
 	m = pressKey(m, "3")
-	if c, _ := m.selectedComment(); c.Key() != "inline:101" {
+	if c, _ := m.selectedActivity(); c.Key != "inline:101" {
 		t.Fatalf("tab change lost selection: %#v", c)
 	}
 	m.prs[0].Comments = append(m.prs[0].Comments[:2], m.prs[0].Comments[3:]...)
 	m.reconcileComments()
-	if c, _ := m.selectedComment(); c.ID != "103" {
+	if c, _ := m.selectedActivity(); c.Comment.ID != "103" {
 		t.Fatalf("removed selection did not choose nearest row: %#v", c)
 	}
 }
@@ -85,7 +85,7 @@ func TestCommentContextAndSelectionWithoutColor(t *testing.T) {
 	m := nativeCommentModel(t)
 	m.theme = uitheme.New(uitheme.DarkANSI(), colorprofile.ASCII, true)
 	view := stripANSI(m.summaryPanel(70, 16))
-	if strings.HasPrefix(view, "> ") || strings.Contains(view, "Plan result a.*[b]") || !strings.Contains(view, "alex · comment") {
+	if strings.HasPrefix(view, "> ") || strings.Contains(view, "Plan result a.*[b]") || !strings.Contains(view, "alex commented") {
 		t.Fatalf("incorrect metadata-only list: %q", view)
 	}
 	m = pressSpecial(m, tea.KeyDown)

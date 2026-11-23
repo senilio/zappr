@@ -12,8 +12,8 @@ func TestCommentPaneTitleStaysSparse(t *testing.T) {
 	m := minimalModel()
 	m.summaryMode = SummaryModeComments
 	m.prs[0].Comments = []model.PRComment{{ID: "long-review-id", Author: "reviewer", Kind: "review", Path: "internal/main.go", Line: 42, CreatedAt: time.Now(), Body: "Review text"}}
-	if got := stripANSI(m.diffTitle()); got != "Comment" {
-		t.Fatalf("comment pane title = %q, want Comment", got)
+	if got := stripANSI(m.diffTitle()); got != "Review" {
+		t.Fatalf("review pane title = %q, want Review", got)
 	}
 }
 

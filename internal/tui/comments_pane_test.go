@@ -39,7 +39,7 @@ func TestCommentsListShowsIdentityAndTimestamp(t *testing.T) {
 	if strings.Index(view, "newest-author") > strings.Index(view, "older-author") {
 		t.Fatalf("comment list not newest first: %q", view)
 	}
-	if lines := strings.Split(view, "\n"); !strings.HasPrefix(lines[0], "Today ") || !strings.Contains(lines[0], " · newest-author") || !strings.Contains(lines[1], " · older-author") {
+	if lines := strings.Split(view, "\n"); !strings.HasPrefix(lines[0], "Today ") || !strings.Contains(lines[0], " - newest-author commented") || !strings.Contains(lines[1], " - older-author commented") {
 		t.Fatalf("comment rows missing identity: %q", lines[:2])
 	}
 	if strings.Contains(view, "newest body") || strings.Contains(view, "older body") || !strings.Contains(view, "inline") {

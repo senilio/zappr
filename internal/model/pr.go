@@ -53,6 +53,17 @@ type Reviewer struct {
 	Bot   bool
 }
 
+type PRReview struct {
+	ID, URL, Author, Body, State string
+	SubmittedAt                  time.Time
+}
+
+type PRReviewDismissal struct {
+	ID, URL, ReviewID, PreviousState string
+	CreatedAt                        time.Time
+	Stale                            bool
+}
+
 type PullRequest struct {
 	Repo           string
 	Number         int
@@ -72,14 +83,17 @@ type PullRequest struct {
 	Reviewers      []Reviewer `json:"reviewers,omitempty"`
 	// ReviewersLoaded reports whether Reviewers came from a selected-PR
 	// fetch; inbox list refreshes do not include them.
-	ReviewersLoaded bool `json:"reviewers_loaded,omitempty"`
-	Draft           bool
-	AutoMerge       bool
-	State           string
-	HeadRefOID      string
-	UpdatedAt       time.Time
-	Commits         []PRCommit
-	Comments        []PRComment
+	ReviewersLoaded      bool `json:"reviewers_loaded,omitempty"`
+	Draft                bool
+	AutoMerge            bool
+	State                string
+	HeadRefOID           string
+	UpdatedAt            time.Time
+	Commits              []PRCommit
+	Comments             []PRComment
+	Reviews              []PRReview          `json:"reviews,omitempty"`
+	ReviewDismissals     []PRReviewDismissal `json:"review_dismissals,omitempty"`
+	ReviewActivityLoaded bool                `json:"review_activity_loaded,omitempty"`
 	// DetailsLoaded reports whether Commits and Comments were
 	// fetched; inbox list refreshes do not include them.
 	DetailsLoaded bool `json:"details_loaded,omitempty"`

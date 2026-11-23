@@ -180,12 +180,13 @@ func continuationGutter(gutter string) string {
 
 // Every visual diff row records its original logical row. Both the stored
 // viewport and the renderer use this layout, so scrolling and reflow agree.
-func (m Model) buildDiffLayout(content string, width int) (string, []int) {
+func (m Model) buildDiffLayout(content string, width int) (string, []int, []int) {
 	var rows []string
 	var sources []int
+	var renderedRows []int
 	source := -1
 	reader := m.readerContentActive()
-	for _, line := range strings.Split(content, "\n") {
+	for renderedRow, line := range strings.Split(content, "\n") {
 		nativeSide := !reader && m.sideBySide && strings.HasPrefix(stripANSI(line), "│") && strings.Count(stripANSI(line), "│") >= 4
 		if !nativeSide || sideLineNumber.MatchString(stripANSI(line)) {
 			source++
@@ -197,15 +198,17 @@ func (m Model) buildDiffLayout(content string, width int) (string, []int) {
 		for _, row := range visual {
 			rows = append(rows, row)
 			sources = append(sources, source)
+			renderedRows = append(renderedRows, renderedRow)
 		}
 	}
-	return strings.Join(rows, "\n"), sources
+	return strings.Join(rows, "\n"), sources, renderedRows
 }
 
 var sideLineNumber = regexp.MustCompile(`│\s*[0-9]+\s*│`)
 
 type sideLayoutMsg struct {
 	key, content string
+	fileStarts   []diffFileStart
 	anchor       int
 	offset       int
 	err          error
@@ -247,8 +250,8 @@ func (m *Model) sideLayoutCmd(anchor int) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		content, err := renderDiff(ctx, raw, max(1, width), true, wrap)
-		return sideLayoutMsg{key: key, content: content, anchor: anchor, offset: offset, err: err}
+		content, starts, err := renderDiffSections(ctx, raw, max(1, width), true, wrap)
+		return sideLayoutMsg{key: key, content: content, fileStarts: starts, anchor: anchor, offset: offset, err: err}
 	}
 }
 

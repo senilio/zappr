@@ -28,5 +28,13 @@ func (m Model) readerTitle() string {
 	if m.summaryMode == SummaryModePlan {
 		return "Plan"
 	}
+	if entry, ok := m.selectedActivity(); ok {
+		if entry.possessive {
+			return "Activity"
+		}
+		if entry.Comment.Kind == "review" {
+			return "Review"
+		}
+	}
 	return "Comment"
 }

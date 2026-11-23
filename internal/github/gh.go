@@ -88,6 +88,11 @@ func (p *GHProvider) GetPR(ctx context.Context, repo string, number int) (model.
 			})
 		}
 	}
+	pr.Reviews, pr.ReviewDismissals, err = p.reviewActivity(ctx, repo, number)
+	if err != nil {
+		return model.PullRequest{}, err
+	}
+	pr.ReviewActivityLoaded = true
 	pr.Reviewers = reviewersFrom(raw.LatestReviews, raw.ReviewRequests)
 	pr.ReviewersLoaded = true
 	pr.DetailsLoaded = true

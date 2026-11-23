@@ -91,6 +91,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			anchor = m.diffAnchor()
 		}
 		m.sideDiffKey, m.sideDiffContent = msg.key, msg.content
+		m.sideFileStarts = msg.fileStarts
 		m.syncDiffVP()
 		m.restoreDiffAnchor(anchor)
 		return m, nil
@@ -183,6 +184,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.sha == m.commitDiffKey {
 			m.renderedCommitDiff = msg.rendered
 			m.rawCommitDiff = msg.raw
+			m.commitFileStarts = msg.fileStarts
 			m.diffVP.GotoTop()
 			m.syncDiffVP()
 		}
@@ -220,6 +222,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.diff = trimDiff(msg.rendered)
 		m.diffFiles = msg.files
 		m.renderedFiles = msg.renderedFiles
+		m.diffFileStarts = msg.fileStarts
 		m.diffXOffset = 0
 		m.diffVP.GotoTop()
 		m.syncDiffVP()
@@ -236,6 +239,13 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.restoreInboxAnchor(inboxAnchor)
 		return m, nil
 
+	case clipboardMsg:
+		if msg.err != nil {
+			m.error = "copy failed: " + msg.err.Error()
+			return m, m.finishStatus(m.error, true)
+		}
+		m.error = ""
+		return m, m.finishStatus("copied URL", false)
 	case actionMsg:
 		m.loading = false
 		if msg.err != nil {
@@ -641,6 +651,8 @@ func (m Model) executeAction(action tuiAction) (tea.Model, tea.Cmd) {
 		m.summaryXOffset = 0
 		m.commitDiffKey = ""
 		m.renderedCommitDiff = ""
+		m.rawCommitDiff = ""
+		m.commitFileStarts = nil
 		m.diffVP.GotoTop()
 		m.diffXOffset = 0
 		m.syncSummaryVP()
@@ -718,11 +730,7 @@ func (m Model) executeAction(action tuiAction) (tea.Model, tea.Cmd) {
 			return m, openPRURLCmd(prURL(pr))
 		}
 	case "copy-pr-url":
-		if m.focus == FocusInbox {
-			if pr, ok := m.current(); ok {
-				return m, tea.Batch(m.finishStatus("copied URL", false), copyPRURLCmd(prURL(pr)))
-			}
-		}
+		return m, copyPRURLCmd(m.contextualCopyURL())
 	case "settings":
 		m.prevMode = m.mode
 		m.mode = ModeSettings
@@ -1036,6 +1044,9 @@ func (m Model) handleApproveKey(key string) (tea.Model, tea.Cmd) {
 func (m *Model) updateCachedPR(pr model.PullRequest) {
 	for i := range m.allPRs {
 		if m.allPRs[i].Repo == pr.Repo && m.allPRs[i].Number == pr.Number {
+			if m.allPRs[i].UpdatedAt.After(pr.UpdatedAt) {
+				return
+			}
 			if m.allPRs[i].HeadRefOID != pr.HeadRefOID {
 				m.clearLoadedDiffState()
 			}
@@ -1075,6 +1086,7 @@ func (m *Model) clearLoadedDiffState() {
 	m.rawDiff = ""
 	m.diffFiles = nil
 	m.renderedFiles = nil
+	m.diffFileStarts = nil
 	m.diffMode = DiffModeHunks
 	m.fileContent = ""
 	m.fileContentKey = ""
@@ -1085,6 +1097,7 @@ func (m *Model) clearLoadedDiffState() {
 	m.commitDiffKey = ""
 	m.renderedCommitDiff = ""
 	m.rawCommitDiff = ""
+	m.commitFileStarts, m.sideFileStarts = nil, nil
 	m.sideDiffContent, m.sideDiffKey, m.sideDiffRequested, m.sideDiffFailed = "", "", "", ""
 	m.diffXOffset = 0
 	m.summaryXOffset = 0
@@ -1116,7 +1129,7 @@ func (m *Model) selectionCmd() tea.Cmd {
 // version once.
 func (m *Model) autoDetailsCmd() tea.Cmd {
 	pr, ok := m.current()
-	if !ok || (pr.DetailsLoaded && pr.ReviewCommentsLoaded && pr.ReviewersLoaded && pr.ConversationCommentsLoaded) {
+	if !ok || (pr.DetailsLoaded && pr.ReviewCommentsLoaded && pr.ReviewersLoaded && pr.ConversationCommentsLoaded && pr.ReviewActivityLoaded) {
 		return nil
 	}
 	key := fmt.Sprintf("%s@%s", prRefreshKey(pr), pr.UpdatedAt.Format(time.RFC3339Nano))
@@ -1168,6 +1181,7 @@ func (m *Model) autoCommitDiffCmd() tea.Cmd {
 	m.commitDiffKey = sha
 	m.renderedCommitDiff = ""
 	m.rawCommitDiff = ""
+	m.commitFileStarts = nil
 	m.diffVP.GotoTop()
 	mv := Model{width: m.width, height: m.height, theme: m.theme, focus: m.focus, prs: m.prs, selected: m.selected}
 	diffInnerW := mv.paneInnerWidth(mv.diffPaneOuterWidth(), FocusDiff)
@@ -1308,10 +1322,7 @@ func copyPRURLCmd(url string) tea.Cmd {
 			}
 		}
 		cmd.Stdin = strings.NewReader(url)
-		if err := cmd.Run(); err != nil {
-			return actionMsg{message: "copy failed: " + err.Error(), err: err}
-		}
-		return actionMsg{message: "copied URL"}
+		return clipboardMsg{err: cmd.Run()}
 	}
 }
 
@@ -1418,18 +1429,15 @@ func (m *Model) currentDiffContent() string {
 		return m.planDetail()
 	}
 	if m.summaryMode == SummaryModeComments {
-		if comment, ok := m.selectedComment(); ok {
-			return m.commentDetail(comment)
+		if entry, ok := m.selectedActivity(); ok {
+			return m.activityDetail(entry)
 		}
-		if pr, ok := m.current(); ok && len(pr.Comments) != 0 && len(m.visibleComments(pr)) == 0 {
-			return "no matching comments"
-		}
-		return "no comments available"
+		return "no activity"
 	}
 	if m.diffMode == DiffModeFile {
 		return m.currentFileContent()
 	}
-	if m.sideBySide && m.sideDiffKey != "" && m.sideDiffKey == m.sideLayoutKey() {
+	if m.activeSideDiff() {
 		return m.sideDiffContent
 	}
 	// In commits mode show the selected commit's diff (if loaded).
@@ -1444,9 +1452,19 @@ func (m *Model) currentDiffContent() string {
 		}
 		return ""
 	}
-	content := m.diff
+	if file, ok := m.displayedPRDiffFile(); ok {
+		return file.Body
+	}
+	return m.diff
+}
+
+func (m *Model) activeSideDiff() bool {
+	return m.sideBySide && m.sideDiffKey != "" && m.sideDiffKey == m.sideLayoutKey()
+}
+
+func (m Model) displayedPRDiffFile() (diffFile, bool) {
 	if len(m.renderedFiles) == 0 {
-		return content
+		return diffFile{}, false
 	}
 	idx := 0
 	if pr, ok := m.current(); ok && m.fileIndex >= 0 && m.fileIndex < len(pr.Files) {
@@ -1460,7 +1478,7 @@ func (m *Model) currentDiffContent() string {
 	} else if m.fileIndex >= 0 && m.fileIndex < len(m.renderedFiles) {
 		idx = m.fileIndex
 	}
-	return m.renderedFiles[idx].Body
+	return m.renderedFiles[idx], true
 }
 
 func (m Model) selectedFileContentKey() string {
@@ -1520,12 +1538,12 @@ func (m *Model) moveComment(delta int) {
 		return
 	}
 	next := m.commentIndex + delta
-	comments := m.visibleComments(pr)
+	comments := m.activityEntries(pr)
 	if next < 0 || next >= len(comments) {
 		return
 	}
 	m.commentIndex = next
-	m.commentState.selectedKey = comments[next].Key()
+	m.commentState.selectedKey = comments[next].Key
 	m.diffVP.GotoTop()
 	m.diffXOffset = 0
 	m.syncDiffVP()

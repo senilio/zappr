@@ -1019,8 +1019,13 @@ func TestShiftCCopiesPRURL(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("Shift+C should return a command")
 	}
+	if m.statusActive {
+		t.Fatal("Shift+C should not report success before the clipboard finishes")
+	}
+	next, _ = m.Update(clipboardMsg{})
+	m = next.(Model)
 	if !m.statusActive {
-		t.Fatal("statusActive should be true after Shift+C")
+		t.Fatal("successful clipboard result did not show status")
 	}
 	if m.statusText != "copied URL" {
 		t.Fatalf("statusText = %q, want %q", m.statusText, "copied URL")
@@ -1581,6 +1586,23 @@ func TestRefreshPRUpdatesOnlyMatchingPR(t *testing.T) {
 	}
 	if m.mode != ModeDetail || m.focus != FocusSummary {
 		t.Fatalf("mode/focus = %v/%v, want detail/summary preserved", m.mode, m.focus)
+	}
+}
+
+func TestRefreshPRMessageKeepsNewerSameHeadActivity(t *testing.T) {
+	newer := model.PullRequest{
+		Number: 1, Repo: "org/repo", HeadRefOID: "same", UpdatedAt: time.Now(),
+		ReviewActivityLoaded: true,
+		ReviewDismissals:     []model.PRReviewDismissal{{ID: "dismissed"}},
+	}
+	older := newer
+	older.UpdatedAt = newer.UpdatedAt.Add(-time.Minute)
+	older.ReviewDismissals = nil
+	m := modelWithPRs([]model.PullRequest{newer}, 0)
+	next, _ := m.Update(refreshPRMsg{pr: older, repo: older.Repo, number: older.Number, requestHead: older.HeadRefOID})
+	pr, _ := next.(Model).current()
+	if len(pr.ReviewDismissals) != 1 {
+		t.Fatalf("detail message replaced newer activity: %+v", pr)
 	}
 }
 
@@ -2571,7 +2593,7 @@ func contains(s, sub string) bool {
 
 func TestAutoDetailsCmdFetchesMissingDetailsOnce(t *testing.T) {
 	m := modelWithPRs([]model.PullRequest{
-		{Number: 1, Repo: "org/repo", DetailsLoaded: true, ReviewCommentsLoaded: true, ReviewersLoaded: true, ConversationCommentsLoaded: true},
+		{Number: 1, Repo: "org/repo", DetailsLoaded: true, ReviewCommentsLoaded: true, ReviewersLoaded: true, ConversationCommentsLoaded: true, ReviewActivityLoaded: true},
 		{Number: 2, Repo: "org/repo"},
 	}, 0)
 
@@ -2990,13 +3012,26 @@ func TestAtlantisGuardDialogShowsChoices(t *testing.T) {
 	}
 }
 
+func TestSelectedPRLoadsMissingReviewActivity(t *testing.T) {
+	pr := model.PullRequest{Repo: "org/repo", Number: 1, DetailsLoaded: true, ReviewCommentsLoaded: true, ReviewersLoaded: true, ConversationCommentsLoaded: true}
+	m := modelWithPRs([]model.PullRequest{pr}, 0)
+	m.app = app.New(&commentRecordingGitHub{}, cache.NewMemoryStore())
+	if m.autoDetailsCmd() == nil {
+		t.Fatal("legacy cached details should fetch review activity")
+	}
+	m.prs[0].ReviewActivityLoaded = true
+	if m.autoDetailsCmd() != nil {
+		t.Fatal("complete details should not be refetched")
+	}
+}
+
 func TestSelectionFetchesWhenReviewersNotLoaded(t *testing.T) {
-	m := modelWithPRs([]model.PullRequest{{Repo: "org/repo", Number: 1, DetailsLoaded: true, ReviewCommentsLoaded: true, ConversationCommentsLoaded: true}}, 0)
+	m := modelWithPRs([]model.PullRequest{{Repo: "org/repo", Number: 1, DetailsLoaded: true, ReviewCommentsLoaded: true, ConversationCommentsLoaded: true, ReviewActivityLoaded: true}}, 0)
 	m.app = app.New(&commentRecordingGitHub{}, cache.NewMemoryStore())
 	if cmd := m.autoDetailsCmd(); cmd == nil {
 		t.Fatal("autoDetailsCmd = nil for PR without loaded reviewers")
 	}
-	m = modelWithPRs([]model.PullRequest{{Repo: "org/repo", Number: 1, DetailsLoaded: true, ReviewCommentsLoaded: true, ReviewersLoaded: true, ConversationCommentsLoaded: true}}, 0)
+	m.prs[0].ReviewersLoaded = true
 	if cmd := m.autoDetailsCmd(); cmd != nil {
 		t.Fatal("autoDetailsCmd fetched a fully loaded PR")
 	}

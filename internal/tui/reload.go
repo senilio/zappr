@@ -72,6 +72,7 @@ func (m *Model) applyReloadedConfig(cfg config.Config, actions actionRegistry) t
 		m.diffXOffset = 0
 	}
 	m.cfg, m.actions = cfg, actions
+	m.summaryLayoutCache = nil
 	m.sortMode, m.hideDrafts = app.ParseSortMode(cfg.Sort), cfg.HideDrafts
 	m.theme = uitheme.New(uitheme.PaletteByName(cfg.Theme, m.theme.IsDark), m.theme.Profile, m.theme.NoColor, m.theme.IsDark)
 	var poll tea.Cmd

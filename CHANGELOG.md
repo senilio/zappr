@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+## v0.4.0
+
+### Added
+
+- `C` copies a link for the focused pane: the pull request, selected file or commit, visible diff file, or Activity entry.
+- The Activity tab shows who approved or requested changes and when, alongside comments. GitHub-confirmed stale approvals have a separate dismissal entry.
+- Configure Activity display names with `author_aliases`.
+- Watch the config file for changes and configure the reload action's bindings.
+- Press `d` to toggle the pull request description in the large pane.
+
+### Changed
+
+- Renamed the Comments tab to Activity; its existing shortcut and action ID still work.
+
 ## v0.3.0
 
 ### Added

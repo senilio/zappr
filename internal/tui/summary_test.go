@@ -240,11 +240,11 @@ func TestCommentSummaryIncludesReviewAndInlineContext(t *testing.T) {
 	if strings.Contains(view, "dave · review") || strings.Contains(view, "roles.tf:290") || strings.Contains(view, "file.tf:0") {
 		t.Fatalf("incorrect comment context: %q", view)
 	}
-	// The summary list shows only author and timestamp, within the pane width.
+	// The summary list shows metadata only, within the pane width.
 	var b strings.Builder
 	m.writeCommentSummary(&b, pr, 12)
 	list := stripANSI(b.String())
-	if strings.Contains(list, "Review summary") || strings.Contains(list, "roles.tf") || strings.Contains(list, "review") {
+	if strings.Contains(list, "Review summary") || strings.Contains(list, "roles.tf") || !strings.Contains(list, "reviewed") {
 		t.Fatalf("comment list shows content: %q", list)
 	}
 	for _, line := range strings.Split(b.String(), "\n") {
@@ -258,8 +258,8 @@ func TestEmptyCommentSummary(t *testing.T) {
 	m := minimalModel()
 	var b strings.Builder
 	m.writeCommentSummary(&b, model.PullRequest{}, 80)
-	if got := stripANSI(b.String()); got != "no comments\n" {
-		t.Fatalf("empty comment summary = %q, want no comments", got)
+	if got := stripANSI(b.String()); got != "no activity\n" {
+		t.Fatalf("empty activity summary = %q, want no activity", got)
 	}
 }
 
@@ -306,7 +306,7 @@ func TestSelectedCommentRowUsesStrongStyle(t *testing.T) {
 	var b strings.Builder
 	m.writeCommentSummary(&b, pr, 80)
 	rows := strings.Split(strings.TrimSuffix(b.String(), "\n"), "\n")
-	if len(rows) != 2 || rows[0] != truncateANSIWidth(m.theme.Styles.Muted.Render("first · comment"), 80) || rows[1] != truncateANSIWidth(m.theme.Styles.TitleStrong.Render("second · comment"), 80) {
+	if len(rows) != 2 || !strings.Contains(rows[0], m.theme.Styles.Muted.Render("first ")) || !strings.Contains(rows[1], m.theme.Styles.TitleStrong.Render("second ")) {
 		t.Fatalf("unexpected comment row styles: %q", rows)
 	}
 }

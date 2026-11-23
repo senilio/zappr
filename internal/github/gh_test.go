@@ -187,7 +187,7 @@ func TestGetPRAutoMergeState(t *testing.T) {
 			if enabled {
 				request = `{"enabledAt":"2026-10-07T10:00:00Z"}`
 			}
-			script := "#!/bin/sh\nif [ \"$1\" = api ]; then printf '[[]]'; exit; fi\ncase \"$*\" in *autoMergeRequest*) ;; *) exit 1 ;; esac\nprintf '%s' " + testShellQuote(`{"number":123,"autoMergeRequest":`+request+`}`) + "\n"
+			script := "#!/bin/sh\n" + emptyReviewTimelineScript() + "if [ \"$1\" = api ]; then printf '[[]]'; exit; fi\ncase \"$*\" in *autoMergeRequest*) ;; *) exit 1 ;; esac\nprintf '%s' " + testShellQuote(`{"number":123,"autoMergeRequest":`+request+`}`) + "\n"
 			if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
 				t.Fatal(err)
 			}
@@ -206,7 +206,7 @@ func TestListPRsAndGetPRDecodeBody(t *testing.T) {
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "gh")
 	response := `{"number":7,"body":"## Why\nBecause"}`
-	script := "#!/bin/sh\nif [ \"$1\" = api ]; then printf '[[]]'; exit; fi\ncase \"$*\" in *,body,*) ;; *) exit 1 ;; esac\n" +
+	script := "#!/bin/sh\n" + emptyReviewTimelineScript() + "if [ \"$1\" = api ]; then printf '[[]]'; exit; fi\ncase \"$*\" in *,body,*) ;; *) exit 1 ;; esac\n" +
 		"if [ \"$2\" = list ]; then printf '[%s]' " + testShellQuote(response) + "; else printf '%s' " + testShellQuote(response) + "; fi\n"
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
@@ -240,7 +240,7 @@ func TestGetPRParsesReviewers(t *testing.T) {
 	   {"__typename":"User","login":"carol"},
 	   {"__typename":"User","login":"dan"},
 	   {"__typename":"Team","name":"Platform","slug":"platform"}]}`
-	script := "#!/bin/sh\nif [ \"$1\" = api ]; then printf '[[]]'; exit; fi\ncase \"$*\" in *latestReviews*reviewRequests*mergeStateStatus*) ;; *) exit 1 ;; esac\nprintf '%s' " + testShellQuote(response) + "\n"
+	script := "#!/bin/sh\n" + emptyReviewTimelineScript() + "if [ \"$1\" = api ]; then printf '[[]]'; exit; fi\ncase \"$*\" in *latestReviews*reviewRequests*mergeStateStatus*) ;; *) exit 1 ;; esac\nprintf '%s' " + testShellQuote(response) + "\n"
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -266,7 +266,7 @@ func TestGetPRParsesReviewers(t *testing.T) {
 
 func TestGetPRNoReviewersIsLoadedEmpty(t *testing.T) {
 	bin := filepath.Join(t.TempDir(), "gh")
-	script := "#!/bin/sh\nif [ \"$1\" = api ]; then printf '[[]]'; exit; fi\nprintf '%s' " + testShellQuote(`{"number":2}`) + "\n"
+	script := "#!/bin/sh\n" + emptyReviewTimelineScript() + "if [ \"$1\" = api ]; then printf '[[]]'; exit; fi\nprintf '%s' " + testShellQuote(`{"number":2}`) + "\n"
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -274,7 +274,7 @@ func TestGetPRNoReviewersIsLoadedEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !pr.ReviewersLoaded || len(pr.Reviewers) != 0 {
+	if !pr.ReviewersLoaded || len(pr.Reviewers) != 0 || !pr.ReviewActivityLoaded {
 		t.Fatalf("ReviewersLoaded = %v, Reviewers = %#v", pr.ReviewersLoaded, pr.Reviewers)
 	}
 }
@@ -282,7 +282,7 @@ func TestGetPRNoReviewersIsLoadedEmpty(t *testing.T) {
 func TestGetPRPreservesBotConversationComments(t *testing.T) {
 	bin := filepath.Join(t.TempDir(), "gh")
 	item := strings.Replace(conversationItem, `"body":"plan"`, `"body":"Plan: 1 to add, 2 to change, 0 to destroy."`, 1)
-	script := "#!/bin/sh\ncase \"$*\" in\n*issues/7/comments*) printf '%s' " + testShellQuote("[["+item+"]]") + ";;\n*pulls/7/comments*) printf '[[]]';;\n*) printf '{\"number\":7}';;\nesac\n"
+	script := "#!/bin/sh\n" + emptyReviewTimelineScript() + "case \"$*\" in\n*issues/7/comments*) printf '%s' " + testShellQuote("[["+item+"]]") + ";;\n*pulls/7/comments*) printf '[[]]';;\n*) printf '{\"number\":7}';;\nesac\n"
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatalf("write fake gh: %v", err)
 	}
@@ -302,7 +302,7 @@ func TestGetPRIncludesReviewBodiesAndPaginatedInlineComments(t *testing.T) {
 	callsPath := filepath.Join(dir, "calls")
 	response := `{"number":7,"comments":[{"author":{"login":"bot"},"body":"Review started","createdAt":"2026-10-14T12:40:07Z"}],"reviews":[{"author":{"login":"bot"},"body":"Code Review summary","submittedAt":"2026-10-14T12:40:53Z","state":"COMMENTED"},{"body":"  ","state":"APPROVED"},{"body":"Draft review","state":"PENDING"}]}`
 	pages := `[[{"user":{"login":"bot[bot]"},"body":"Inline finding","path":"roles.tf","line":291,"original_line":290,"side":"RIGHT","created_at":"2026-10-14T12:40:53Z"}],[{"user":{"login":"alice"},"body":"Outdated reply","path":"old.tf","line":null,"original_line":10,"side":"LEFT","in_reply_to_id":123,"created_at":"2026-10-14T12:41:00Z"},{"user":{"login":"bob"},"body":"File comment","path":"file.tf","line":null,"original_line":null,"subject_type":"file","created_at":"2026-10-14T12:42:00Z"}]]`
-	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + testShellQuote(callsPath) + "\ncase \"$*\" in\n*issues/7/comments*) printf '%s' " + testShellQuote("[["+conversationItem+"]]") + ";;\n*pulls/7/comments*) printf '%s' " + testShellQuote(pages) + ";;\npr*) printf '%s' " + testShellQuote(response) + ";;\n*) exit 1;;\nesac\n"
+	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + testShellQuote(callsPath) + "\n" + emptyReviewTimelineScript() + "case \"$*\" in\n*issues/7/comments*) printf '%s' " + testShellQuote("[["+conversationItem+"]]") + ";;\n*pulls/7/comments*) printf '%s' " + testShellQuote(pages) + ";;\npr*) printf '%s' " + testShellQuote(response) + ";;\n*) exit 1;;\nesac\n"
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -333,7 +333,7 @@ func TestGetPRIncludesReviewBodiesAndPaginatedInlineComments(t *testing.T) {
 		t.Fatal(err)
 	}
 	lines := strings.Split(strings.TrimSpace(string(calls)), "\n")
-	if len(lines) != 3 || !strings.Contains(lines[0], ",reviews,") || strings.Contains(lines[0], ",comments,") || lines[1] != "api repos/owner/repo/issues/7/comments?per_page=100 --paginate --slurp" || lines[2] != "api repos/owner/repo/pulls/7/comments?per_page=100 --paginate --slurp" {
+	if len(lines) != 4 || !strings.Contains(lines[0], ",reviews,") || strings.Contains(lines[0], ",comments,") || lines[1] != "api repos/owner/repo/issues/7/comments?per_page=100 --paginate --slurp" || lines[2] != "api repos/owner/repo/pulls/7/comments?per_page=100 --paginate --slurp" || !strings.HasPrefix(lines[3], "api graphql ") {
 		t.Fatalf("gh calls = %q, want reviews field and paginated inline endpoint", calls)
 	}
 }

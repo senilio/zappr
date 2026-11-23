@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/senilio/zappr/internal/cache"
@@ -51,8 +52,9 @@ func ParseSortMode(s string) SortMode {
 }
 
 type App struct {
-	GitHub github.Provider
-	Cache  cache.Store
+	GitHub         github.Provider
+	Cache          cache.Store
+	cacheRefreshMu sync.Mutex // orders the cache read/modify/write portions of refreshes
 }
 
 func New(githubProvider github.Provider, store cache.Store) *App {
@@ -64,12 +66,20 @@ func (a *App) Refresh(ctx context.Context, repo string, includeDrafts bool) ([]m
 	if err != nil {
 		return nil, err
 	}
+	a.cacheRefreshMu.Lock()
+	defer a.cacheRefreshMu.Unlock()
 	for i := range prs {
 		if cached, err := a.Cache.Get(prs[i].Repo, prs[i].Number); err == nil {
+			if cached.UpdatedAt.After(prs[i].UpdatedAt) {
+				continue
+			}
 			// Preserve evidence while refreshing, but never preserve its loaded
 			// markers across a source-version change or a provenance upgrade.
 			prs[i].Commits = cached.Commits
 			prs[i].Comments = cached.Comments
+			prs[i].Reviews = cached.Reviews
+			prs[i].ReviewDismissals = cached.ReviewDismissals
+			prs[i].ReviewActivityLoaded = cached.ReviewActivityLoaded && cached.UpdatedAt.Equal(prs[i].UpdatedAt) && cached.HeadRefOID == prs[i].HeadRefOID
 			if cached.DetailsLoaded && cached.ReviewCommentsLoaded && cached.ConversationCommentsLoaded && cached.UpdatedAt.Equal(prs[i].UpdatedAt) && cached.HeadRefOID == prs[i].HeadRefOID {
 				prs[i].DetailsLoaded = true
 				prs[i].ReviewCommentsLoaded = true
@@ -115,6 +125,11 @@ func (a *App) RefreshPR(ctx context.Context, repo string, number int) (model.Pul
 	pr, err := a.GitHub.GetPR(ctx, repo, number)
 	if err != nil {
 		return model.PullRequest{}, err
+	}
+	a.cacheRefreshMu.Lock()
+	defer a.cacheRefreshMu.Unlock()
+	if cached, err := a.Cache.Get(repo, number); err == nil && cached.UpdatedAt.After(pr.UpdatedAt) {
+		return cached, nil
 	}
 	if pr.State != "" && !strings.EqualFold(pr.State, "OPEN") {
 		if err := a.Cache.Delete(repo, number); err != nil {

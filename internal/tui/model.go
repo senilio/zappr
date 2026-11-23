@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 
@@ -53,6 +54,7 @@ type Model struct {
 	rawDiff           string
 	diffFiles         []diffFile // raw per-file bodies (for file switching + V pager)
 	renderedFiles     []diffFile // rendered (delta/fallback) per-file bodies
+	diffFileStarts    []diffFileStart
 	diffMode          DiffMode
 	fileContent       string
 	fileContentKey    string
@@ -101,7 +103,9 @@ type Model struct {
 	commitDiffKey      string
 	renderedCommitDiff string
 	rawCommitDiff      string
+	commitFileStarts   []diffFileStart
 	sideDiffContent    string
+	sideFileStarts     []diffFileStart
 	sideDiffKey        string
 	sideDiffRequested  string
 	sideDiffFailed     string
@@ -170,7 +174,7 @@ func (m SummaryMode) String() string {
 	case SummaryModeCommits:
 		return "commits"
 	case SummaryModeComments:
-		return "comments"
+		return "activity"
 	case SummaryModePlan:
 		return "plan"
 	default:
@@ -235,6 +239,7 @@ type diffMsg struct {
 	rendered      string
 	files         []diffFile
 	renderedFiles []diffFile
+	fileStarts    []diffFileStart
 	key           string
 	err           error
 }
@@ -252,11 +257,14 @@ type pagerMsg struct {
 	err     error
 }
 
+type clipboardMsg struct{ err error }
+
 type commitDiffMsg struct {
-	sha      string
-	raw      string
-	rendered string
-	err      error
+	sha        string
+	raw        string
+	rendered   string
+	fileStarts []diffFileStart
+	err        error
 }
 
 type fileContentMsg struct {
@@ -350,9 +358,12 @@ func diffCmd(app *app.App, pr model.PullRequest, width int) tea.Cmd {
 		// Rendering (delta) rewrites those headers so splitting rendered output
 		// would collapse all files into a single chunk.
 		files := splitDiffFiles(diff)
-		rendered, err := renderDiff(ctx, diff, width, false)
 		renderedFiles := renderDiffFiles(ctx, files, width, false)
-		return diffMsg{repo: pr.Repo, number: pr.Number, key: key, raw: diff, rendered: rendered, files: files, renderedFiles: renderedFiles, err: err}
+		rendered, starts := joinRenderedDiffFiles(renderedFiles)
+		if rendered == "" {
+			rendered, err = renderDiff(ctx, diff, width, false)
+		}
+		return diffMsg{repo: pr.Repo, number: pr.Number, key: key, raw: diff, rendered: rendered, files: files, renderedFiles: renderedFiles, fileStarts: starts, err: err}
 	}
 }
 
@@ -366,8 +377,8 @@ func commitDiffCmd(ghProvider interface {
 		if err != nil {
 			return commitDiffMsg{sha: sha, err: err}
 		}
-		rendered, _ := renderDiff(ctx, raw, width, false)
-		return commitDiffMsg{sha: sha, raw: raw, rendered: rendered}
+		rendered, starts, err := renderDiffSections(ctx, raw, width, false, false)
+		return commitDiffMsg{sha: sha, raw: raw, rendered: rendered, fileStarts: starts, err: err}
 	}
 }
 
@@ -491,26 +502,112 @@ func splitDiffFiles(diff string) []diffFile {
 	for _, line := range strings.Split(diff, "\n") {
 		if strings.HasPrefix(line, "diff --git ") {
 			if current != nil {
+				current.Path = patchFilePath(current.Body)
 				files = append(files, *current)
 			}
-			current = &diffFile{Path: diffPath(line)}
+			current = &diffFile{}
 		}
 		if current != nil {
 			current.Body += line + "\n"
 		}
 	}
 	if current != nil {
+		current.Path = patchFilePath(current.Body)
 		files = append(files, *current)
 	}
 	return files
 }
 
-func diffPath(line string) string {
-	parts := strings.Fields(line)
-	if len(parts) >= 4 {
-		return strings.TrimPrefix(parts[3], "b/")
+func patchFilePath(body string) string {
+	header, rest, _ := strings.Cut(body, "\n")
+	var before, after string
+	for line := range strings.SplitSeq(rest, "\n") {
+		switch {
+		case strings.HasPrefix(line, "@@"), strings.HasPrefix(line, "GIT binary patch"):
+			return patchHeaderPath(header, before, after)
+		case strings.HasPrefix(line, "rename to "):
+			return patchPath(strings.TrimPrefix(line, "rename to "))
+		case strings.HasPrefix(line, "copy to "):
+			return patchPath(strings.TrimPrefix(line, "copy to "))
+		case strings.HasPrefix(line, "--- "):
+			before, _, _ = strings.Cut(strings.TrimPrefix(line, "--- "), "\t")
+		case strings.HasPrefix(line, "+++ "):
+			after, _, _ = strings.Cut(strings.TrimPrefix(line, "+++ "), "\t")
+		}
 	}
-	return "diff"
+	return patchHeaderPath(header, before, after)
+}
+
+func patchHeaderPath(header, before, after string) string {
+	if after != "" && after != "/dev/null" {
+		return strings.TrimPrefix(patchPath(after), "b/")
+	}
+	if before != "" && before != "/dev/null" {
+		return strings.TrimPrefix(patchPath(before), "a/")
+	}
+	// Metadata-only changes may have no ---/+++ lines. Match the duplicated
+	// path rather than splitting it on spaces (which Git can leave unquoted).
+	pair := strings.TrimPrefix(header, "diff --git ")
+	for i := range len(pair) {
+		if pair[i] != ' ' {
+			continue
+		}
+		a, aOK := strings.CutPrefix(patchPath(pair[:i]), "a/")
+		b, bOK := strings.CutPrefix(patchPath(pair[i+1:]), "b/")
+		if aOK && bOK && a == b {
+			return b
+		}
+	}
+	return ""
+}
+
+func patchPath(path string) string {
+	if strings.HasPrefix(path, `"`) {
+		path, _ = strconv.Unquote(path)
+	}
+	return path
+}
+
+type diffFileStart struct {
+	row  int
+	path string
+}
+
+func joinRenderedDiffFiles(files []diffFile) (string, []diffFileStart) {
+	var b strings.Builder
+	var starts []diffFileStart
+	row := 0
+	for _, f := range files {
+		body := strings.TrimRight(f.Body, "\n")
+		if body == "" {
+			continue
+		}
+		if b.Len() > 0 {
+			b.WriteByte('\n')
+			row++
+		}
+		starts = append(starts, diffFileStart{row: row, path: f.Path})
+		b.WriteString(body)
+		row += strings.Count(body, "\n")
+	}
+	return b.String(), starts
+}
+
+func renderDiffSections(ctx context.Context, raw string, width int, side, wrap bool) (string, []diffFileStart, error) {
+	files := splitDiffFiles(raw)
+	for i := range files {
+		rendered, err := renderDiff(ctx, files[i].Body, width, side, wrap)
+		if err != nil {
+			return "", nil, err
+		}
+		files[i].Body = rendered
+	}
+	rendered, starts := joinRenderedDiffFiles(files)
+	if rendered != "" {
+		return rendered, starts, nil
+	}
+	rendered, err := renderDiff(ctx, raw, width, side, wrap)
+	return rendered, nil, err
 }
 
 func renderDiff(ctx context.Context, diff string, width int, sideBySide bool, wrap ...bool) (string, error) {

@@ -10,6 +10,26 @@ import (
 	"time"
 )
 
+func TestAuthorAliasesRoundTrip(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	empty, err := Parse(nil)
+	if err != nil || len(empty.AuthorAliases) != 0 {
+		t.Fatalf("default aliases: %v, %v", empty.AuthorAliases, err)
+	}
+	cfg, err := Parse([]byte("author_aliases:\n  trustly-code-reviewer: Code Reviewer\n  trustly-atlantis-bot: Atlantis\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Reload()
+	want := map[string]string{"trustly-code-reviewer": "Code Reviewer", "trustly-atlantis-bot": "Atlantis"}
+	if err != nil || !reflect.DeepEqual(got.AuthorAliases, want) {
+		t.Fatalf("reloaded aliases: %v, %v", got.AuthorAliases, err)
+	}
+}
+
 func TestInitAndLoad(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(t.TempDir(), "config"))
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(t.TempDir(), "cache"))

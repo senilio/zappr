@@ -177,7 +177,7 @@ func TestReaderTabsFitActualSummaryPane(t *testing.T) {
 		}
 		m = pressKey(m, "3")
 		title = stripANSI(m.summaryTitle())
-		if ansi.StringWidth(title) > summaryW || !strings.Contains(title, "comments") || !strings.Contains(title, "1/1") {
+		if ansi.StringWidth(title) > summaryW || !strings.Contains(title, "activity") || !strings.Contains(title, "1/1") {
 			t.Fatalf("width=%d title loses context or exceeds pane: %q", width, title)
 		}
 	}

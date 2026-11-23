@@ -23,16 +23,17 @@ var (
 )
 
 type Config struct {
-	Refresh     RefreshConfig           `yaml:"refresh"`
-	Cache       CacheConfig             `yaml:"cache"`
-	Theme       string                  `yaml:"theme,omitempty"`
-	Pills       string                  `yaml:"pills,omitempty"`
-	PillOpacity *float64                `yaml:"pill_opacity,omitempty"`
-	Sort        string                  `yaml:"sort,omitempty"`
-	HideDrafts  bool                    `yaml:"hide_drafts"`
-	Wrap        WrapConfig              `yaml:"wrap"`
-	Atlantis    AtlantisConfig          `yaml:"atlantis,omitempty"`
-	Actions     map[string]ActionConfig `yaml:"actions"`
+	Refresh       RefreshConfig           `yaml:"refresh"`
+	Cache         CacheConfig             `yaml:"cache"`
+	Theme         string                  `yaml:"theme,omitempty"`
+	Pills         string                  `yaml:"pills,omitempty"`
+	PillOpacity   *float64                `yaml:"pill_opacity,omitempty"`
+	Sort          string                  `yaml:"sort,omitempty"`
+	HideDrafts    bool                    `yaml:"hide_drafts"`
+	Wrap          WrapConfig              `yaml:"wrap"`
+	Atlantis      AtlantisConfig          `yaml:"atlantis,omitempty"`
+	AuthorAliases map[string]string       `yaml:"author_aliases,omitempty"`
+	Actions       map[string]ActionConfig `yaml:"actions"`
 }
 
 // EffectivePillOpacity leaves unset configurations slightly softer by default.
@@ -279,16 +280,17 @@ func ReadSnapshot() ([]byte, error) {
 func Parse(data []byte) (Config, error) {
 	cfg := Default()
 	file := struct {
-		Refresh     RefreshConfig             `yaml:"refresh"`
-		Cache       CacheConfig               `yaml:"cache"`
-		Theme       string                    `yaml:"theme,omitempty"`
-		Pills       string                    `yaml:"pills,omitempty"`
-		PillOpacity *float64                  `yaml:"pill_opacity,omitempty"`
-		Sort        string                    `yaml:"sort,omitempty"`
-		HideDrafts  bool                      `yaml:"hide_drafts,omitempty"`
-		Wrap        WrapConfig                `yaml:"wrap"`
-		Atlantis    AtlantisConfig            `yaml:"atlantis,omitempty"`
-		Actions     map[string]actionOverride `yaml:"actions"`
+		Refresh       RefreshConfig             `yaml:"refresh"`
+		Cache         CacheConfig               `yaml:"cache"`
+		Theme         string                    `yaml:"theme,omitempty"`
+		Pills         string                    `yaml:"pills,omitempty"`
+		PillOpacity   *float64                  `yaml:"pill_opacity,omitempty"`
+		Sort          string                    `yaml:"sort,omitempty"`
+		HideDrafts    bool                      `yaml:"hide_drafts,omitempty"`
+		Wrap          WrapConfig                `yaml:"wrap"`
+		Atlantis      AtlantisConfig            `yaml:"atlantis,omitempty"`
+		AuthorAliases map[string]string         `yaml:"author_aliases,omitempty"`
+		Actions       map[string]actionOverride `yaml:"actions"`
 	}{
 		Refresh:     cfg.Refresh,
 		Cache:       cfg.Cache,
@@ -314,6 +316,7 @@ func Parse(data []byte) (Config, error) {
 	cfg.HideDrafts = file.HideDrafts
 	cfg.Wrap = file.Wrap
 	cfg.Atlantis = file.Atlantis
+	cfg.AuthorAliases = file.AuthorAliases
 	for id, override := range file.Actions {
 		// Older generated configs included these reader bindings. Do not let
 		// them occupy keys or prevent startup after removing the functions.

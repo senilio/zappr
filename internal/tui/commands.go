@@ -53,14 +53,14 @@ var actionDescriptors = []tuiAction{
 	{"help", "show help", actionContextNormal, nil, nil, false, confirmationNone, "help", ""},
 	{"summary-files", "show files", actionContextNormal, nil, nil, true, confirmationNone, "summary-files", ""},
 	{"summary-commits", "show commits", actionContextNormal, nil, nil, true, confirmationNone, "summary-commits", ""},
-	{"summary-comments", "show comments", actionContextNormal, nil, nil, true, confirmationNone, "summary-comments", ""},
+	{"summary-comments", "show activity", actionContextNormal, nil, nil, true, confirmationNone, "summary-comments", ""},
 	{"summary-plan", "show plan report", actionContextNormal, nil, nil, true, confirmationNone, "summary-plan", ""},
 	{"focus-next", "focus next pane", actionContextNormal, nil, nil, false, confirmationNone, "focus-next", ""},
 	{"focus-prev", "focus previous pane", actionContextNormal, nil, nil, false, confirmationNone, "focus-prev", ""},
 	{"go-top", "go to top", actionContextNormal, nil, nil, false, confirmationNone, "go-top", ""},
 	{"go-bottom", "go to bottom", actionContextNormal, nil, nil, false, confirmationNone, "go-bottom", ""},
 	{"open-pr", "open pull request", actionContextNormal, nil, nil, true, confirmationNone, "open-pr", ""},
-	{"copy-pr-url", "copy pull request URL", actionContextNormal, nil, nil, true, confirmationNone, "copy-pr-url", ""},
+	{"copy-pr-url", "copy focused item URL", actionContextNormal, nil, nil, true, confirmationNone, "copy-pr-url", ""},
 	{"settings", "open settings", actionContextNormal, nil, nil, false, confirmationNone, "settings", ""},
 	{"move-down", "move down", actionContextNormal, nil, nil, false, confirmationNone, "move-down", ""},
 	{"move-up", "move up", actionContextNormal, nil, nil, false, confirmationNone, "move-up", ""},
@@ -219,12 +219,13 @@ func (m Model) selectedPRAction(action tuiAction) tuiAction {
 }
 
 // diffFallbackActionIDs are normal-context actions that stay reachable while the
-// full-screen diff is open. They only scroll, navigate, or change how the diff is
-// rendered, so none of them mutate a pull request. Actions that write to GitHub
+// full-screen diff is open. These actions never mutate a pull request.
+// Actions that write to GitHub
 // (approvals, comments, merges, custom comment actions) are deliberately absent:
 // a key press meant for the diff viewer must never trigger a remote change.
 var diffFallbackActionIDs = []string{
 	"quit", "help",
+	"copy-pr-url",
 	"go-top", "go-bottom",
 	"move-down", "move-up",
 	"pan-left", "pan-right",
