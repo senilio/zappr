@@ -19,7 +19,7 @@ func TestPlanNeverShownForAnotherPRAfterClose(t *testing.T) {
 	if m.summaryMode != SummaryModePlan {
 		t.Fatal("setup did not open Plan")
 	}
-	m.handlePRClosed(m.prs[0].Repo, 1)
+	m = deliver(m, testPRRemoval(m.prs[0], 1))
 	if pr, _ := m.current(); pr.Number != 2 {
 		t.Fatalf("selected %d after close", pr.Number)
 	}

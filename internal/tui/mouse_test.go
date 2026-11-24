@@ -39,6 +39,7 @@ func TestMouseWheelDiffAfterIdenticalReload(t *testing.T) {
 	if m.diff != "" {
 		t.Fatal("click did not clear the loaded diff")
 	}
+	loaded.request = m.diffRequest
 	next, _ = m.Update(loaded)
 	m = next.(Model)
 	for _, region = range m.paneRegions() {
@@ -256,7 +257,7 @@ func TestMouseWheelFilterUsesFreshInboxAfterRefresh(t *testing.T) {
 	m.inboxVP.GotoBottom()
 	prs := append([]model.PullRequest(nil), m.prs...)
 	prs = append(prs, model.PullRequest{Repo: "org/repo", Number: 101, Title: "new PR"})
-	next, _ := m.Update(refreshMsg{prs: prs})
+	next, _ := m.Update(refreshMsg{id: m.inboxRequestID, updates: testInboxUpdates(1, prs...)})
 	m = next.(Model)
 	if FilterMouseWheel(m, wheel(tea.MouseWheelDown)) == nil {
 		t.Fatal("new rows were not scrollable after refresh")

@@ -19,7 +19,6 @@ func scrollModel(t testing.TB, count int) Model {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m.loading = false
 	m.width, m.height = 160, 48
 	for i := 0; i < count; i++ {
 		m.prs = append(m.prs, model.PullRequest{Repo: "org/repo", Number: i + 1, Title: fmt.Sprintf("Pull request %d with a reasonably long title", i+1), Author: "author", CIStatus: "success", ReviewDecision: "APPROVED"})

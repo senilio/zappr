@@ -67,6 +67,21 @@ func (m Model) inboxMetaRow(pr model.PullRequest, selected bool, innerW int) str
 	}
 	number := fmt.Sprintf("#%d", pr.Number)
 	minLeftW := ansi.StringWidth(number)
+	queued := m.prActionPills(pr)
+	primary, secondary := queued[0], queued[1]
+	if secondary.label != "" {
+		occasional = append(occasional, m.theme.Pill(secondary.label, secondary.state, shape, opacity))
+	}
+	if primary.label != "" {
+		available := innerW - minLeftW - 1
+		pillWidth := available - ansi.StringWidth(strings.Join(fixed, " ")) - 1
+		// Keep the action legible even when only a short label fits.
+		if pillWidth < min(ansi.StringWidth(primary.label)+2, 16) {
+			fixed, pillWidth = nil, available
+		}
+		label := truncateANSIWidth(primary.label, max(1, pillWidth-2))
+		fixed = append([]string{m.theme.Pill(label, primary.state, shape, opacity)}, fixed...)
+	}
 	right := strings.Join(append(append([]string{}, occasional...), fixed...), " ")
 	for len(occasional) > 0 && minLeftW+1+ansi.StringWidth(right) > innerW {
 		occasional = occasional[1:]

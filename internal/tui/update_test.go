@@ -15,12 +15,14 @@ import (
 	"github.com/senilio/zappr/internal/app"
 	"github.com/senilio/zappr/internal/cache"
 	"github.com/senilio/zappr/internal/config"
+	"github.com/senilio/zappr/internal/github"
 	"github.com/senilio/zappr/internal/model"
 	"github.com/senilio/zappr/internal/tui/theme"
 )
 
 type commentRecordingGitHub struct {
 	comments         []string
+	commentTargets   []app.PRKey
 	approvals        int
 	autoMerge        []bool
 	autoMergeTargets []string
@@ -30,14 +32,25 @@ type commentRecordingGitHub struct {
 	commitDiffSHAs   []string
 	getPR            model.PullRequest
 	getPRErr         error
+	actionCheckErr   error
+	evidenceErr      error
+	commentErr       error
+	listIncomplete   bool
+	prCalls          []string
 }
 
 func (f *commentRecordingGitHub) ListPRs(context.Context, string) ([]model.PullRequest, bool, error) {
-	return f.listedPRs, true, nil
+	return f.listedPRs, !f.listIncomplete, nil
 }
 
-func (f *commentRecordingGitHub) GetPR(context.Context, string, int) (model.PullRequest, error) {
+func (f *commentRecordingGitHub) GetPR(_ context.Context, _ string, number int) (model.PullRequest, error) {
+	f.prCalls = append(f.prCalls, fmt.Sprintf("get:%d", number))
 	return f.getPR, f.getPRErr
+}
+
+func (f *commentRecordingGitHub) CheckPRAction(_ context.Context, _ string, number int, guarded bool) (github.PRActionCheck, error) {
+	f.prCalls = append(f.prCalls, fmt.Sprintf("verify:%d:%t", number, guarded))
+	return github.PRActionCheck{PR: f.getPR, ChecksKnown: guarded, EvidenceErr: f.evidenceErr}, f.actionCheckErr
 }
 
 func (f *commentRecordingGitHub) GetDiff(context.Context, string, int) (string, error) {
@@ -58,9 +71,11 @@ func (f *commentRecordingGitHub) Approve(context.Context, string, int, string) e
 	return nil
 }
 
-func (f *commentRecordingGitHub) Comment(_ context.Context, _ string, _ int, body string) error {
+func (f *commentRecordingGitHub) Comment(_ context.Context, repo string, number int, body string) error {
+	f.prCalls = append(f.prCalls, fmt.Sprintf("comment:%d:%s", number, body))
 	f.comments = append(f.comments, body)
-	return nil
+	f.commentTargets = append(f.commentTargets, app.PRKey{Repo: repo, Number: number})
+	return f.commentErr
 }
 
 func (f *commentRecordingGitHub) ToggleDraft(_ context.Context, _ string, _ int, draft bool) error {
@@ -86,7 +101,7 @@ func (f *commentRecordingGitHub) MergePR(context.Context, string, int) error { r
 
 func TestMergePRCmdReportsMergeRequested(t *testing.T) {
 	provider := &commentRecordingGitHub{}
-	msg := mergePRCmd(app.New(provider, nil), model.PullRequest{Repo: "owner/repo", Number: 123})()
+	msg := mergePRCmd(app.New(provider, nil), model.PullRequest{Repo: "owner/repo", Number: 123}, 0, 0)()
 
 	action, ok := msg.(actionMsg)
 	if !ok {
@@ -929,6 +944,7 @@ func TestModalHintsUseFixedActions(t *testing.T) {
 		t.Fatalf("comment hint = %q", panel)
 	}
 	m.pendingAction, _ = m.actions.actionByID("hello")
+	m.modalTarget = m.intentForPR(m.prs[0])
 	m.mode = ModeConfirmCommand
 	if panel := stripANSI(m.commandPanel()); !strings.Contains(panel, "y/enter confirm  esc/n cancel") {
 		t.Fatalf("confirmation hint = %q", panel)
@@ -1138,8 +1154,7 @@ func TestToggleActionsReflectCurrentState(t *testing.T) {
 	for _, enabled := range []bool{false, true} {
 		m := modelWithPRs([]model.PullRequest{{Number: 1, Draft: enabled, AutoMerge: enabled}}, 0)
 		m.width = 120
-		m.mode = ModeCommand
-		m.prevMode = ModeInbox
+		m = pressKey(m, ":")
 		m.commandInput = "draft"
 		want := "Mark as draft"
 		if enabled {
@@ -1190,9 +1205,10 @@ func TestToggleCommandsRefreshAuthoritativeState(t *testing.T) {
 					m := modelWithPRs([]model.PullRequest{pr}, 0)
 					m.app = application
 					m.repo = pr.Repo
-					cmd := toggleDraftCmd(application, pr)
+					owner := m.startStatus("toggling…")
+					cmd := toggleDraftCmd(application, pr, owner, 0)
 					if id == "toggle-automerge" {
-						cmd = toggleAutoMergeCmd(application, pr)
+						cmd = toggleAutoMergeCmd(application, pr, owner, 0)
 					}
 					msg := cmd().(actionMsg)
 					calls := provider.drafts
@@ -1272,9 +1288,7 @@ func TestAutoMergeConfirmationKeepsTargetAndIntent(t *testing.T) {
 			if cmd == nil {
 				t.Fatal("confirmation did not execute")
 			}
-			for _, command := range cmd().(tea.BatchMsg) {
-				command()
-			}
+			runCmd(cmd)
 			if len(provider.autoMerge) != 1 || !provider.autoMerge[0] {
 				t.Fatalf("confirmation changed enable intent: %v", provider.autoMerge)
 			}
@@ -1543,7 +1557,8 @@ func TestRefreshEmptyQueueResetsToInbox(t *testing.T) {
 	m.diffEnabled = true
 	m.resizeViewports()
 
-	next, _ := m.Update(refreshMsg{prs: nil})
+	key := keyForPR(m.prs[0])
+	next, _ := m.Update(refreshMsg{id: m.inboxRequestID, updates: []app.PRUpdate{{Key: key, Revision: 1, ClosedRevision: 1, Closed: true}}})
 	m = next.(Model)
 
 	if len(m.prs) != 0 {
@@ -1565,7 +1580,7 @@ func TestRefreshPRUpdatesOnlyMatchingPR(t *testing.T) {
 	m.mode = ModeDetail
 	m.focus = FocusSummary
 
-	next, _ := m.Update(refreshPRMsg{pr: model.PullRequest{Number: 2, Repo: "org/repo", Title: "second updated"}})
+	next, _ := m.Update(refreshPRMsg{update: testPRUpdate(model.PullRequest{Number: 2, Repo: "org/repo", Title: "second updated"}, 1)})
 	m = next.(Model)
 
 	if len(m.prs) != 2 {
@@ -1599,7 +1614,8 @@ func TestRefreshPRMessageKeepsNewerSameHeadActivity(t *testing.T) {
 	older.UpdatedAt = newer.UpdatedAt.Add(-time.Minute)
 	older.ReviewDismissals = nil
 	m := modelWithPRs([]model.PullRequest{newer}, 0)
-	next, _ := m.Update(refreshPRMsg{pr: older, repo: older.Repo, number: older.Number, requestHead: older.HeadRefOID})
+	m.prVersions = map[app.PRKey]prVersion{keyForPR(newer): {revision: 2}}
+	next, _ := m.Update(refreshPRMsg{update: testPRUpdate(older, 1)})
 	pr, _ := next.(Model).current()
 	if len(pr.ReviewDismissals) != 1 {
 		t.Fatalf("detail message replaced newer activity: %+v", pr)
@@ -1614,7 +1630,8 @@ func TestRefreshPRRemovesClosedPR(t *testing.T) {
 	m.mode = ModeDetail
 	m.focus = FocusSummary
 
-	next, _ := m.Update(refreshPRMsg{repo: "org/repo", number: 2, err: app.ErrPRNotOpen})
+	key := keyForPR(m.prs[1])
+	next, _ := m.Update(refreshPRMsg{update: app.PRUpdate{Key: key, Revision: 1, ClosedRevision: 1, Closed: true}, err: app.ErrPRNotOpen})
 	m = next.(Model)
 
 	if len(m.prs) != 1 || m.prs[0].Number != 1 {
@@ -1644,7 +1661,7 @@ func TestRefreshPRHeadChangeClearsDiffState(t *testing.T) {
 	m.summaryXOffset = 3
 	m.syncDiffVP()
 
-	next, _ := m.Update(refreshPRMsg{pr: model.PullRequest{Number: 1, Repo: "org/repo", Title: "first", HeadRefOID: "new"}})
+	next, _ := m.Update(refreshPRMsg{update: testPRUpdate(model.PullRequest{Number: 1, Repo: "org/repo", Title: "first", HeadRefOID: "new"}, 1)})
 	m = next.(Model)
 
 	if m.diff != "" || m.rawDiff != "" || len(m.diffFiles) != 0 || len(m.renderedFiles) != 0 {
@@ -1680,7 +1697,7 @@ func TestRefreshHeadChangeClearsDiffState(t *testing.T) {
 	m.summaryXOffset = 3
 	m.syncDiffVP()
 
-	next, _ := m.Update(refreshMsg{prs: []model.PullRequest{{Number: 1, Repo: "org/repo", Title: "first", HeadRefOID: "new"}}})
+	next, _ := m.Update(refreshMsg{id: m.inboxRequestID, updates: testInboxUpdates(1, model.PullRequest{Number: 1, Repo: "org/repo", Title: "first", HeadRefOID: "new"})})
 	m = next.(Model)
 
 	if m.diff != "" || m.rawDiff != "" || len(m.diffFiles) != 0 || len(m.renderedFiles) != 0 {
@@ -1712,7 +1729,9 @@ func TestDiffMsgIgnoresStaleHeadResult(t *testing.T) {
 
 func TestTickPollsInboxAndSelectedPR(t *testing.T) {
 	m := modelWithPRs([]model.PullRequest{{Number: 1, Repo: "org/repo", Title: "first"}}, 0)
-	m.loading = false
+	m.app = app.New(&commentRecordingGitHub{}, cache.NewMemoryStore())
+	m.repo = "org/repo"
+	m.inboxRefreshing = false
 
 	next, cmd := m.Update(tickMsg{})
 	m = next.(Model)
@@ -1720,11 +1739,8 @@ func TestTickPollsInboxAndSelectedPR(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("tick should schedule polling commands")
 	}
-	if !m.loading {
-		t.Fatal("tick should mark model loading")
-	}
-	if m.message != "polling inbox" {
-		t.Fatalf("message = %q, want polling inbox", m.message)
+	if !m.inboxRefreshing || m.message != "" {
+		t.Fatalf("polling affected the wrong status: inbox=%v header=%q", m.inboxRefreshing, m.message)
 	}
 	sequence := cmd()
 	commands := reflect.ValueOf(sequence)
@@ -2190,7 +2206,7 @@ func TestApprovalViewUsesModalOverlayWhenSized(t *testing.T) {
 	m.width = 100
 	m.height = 20
 	m.theme = theme.Default()
-	m.mode = ModeConfirmApprove
+	m = pressKey(m, "a")
 	m.focus = FocusInbox
 	m.resizeViewports()
 
@@ -2450,8 +2466,9 @@ func TestRKeyRefreshesSelectedPR(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("r should return selected refresh command")
 	}
-	if m.statusErr || m.statusText != "refreshing PR…" {
-		t.Fatalf("status = (%v, %q), want refreshing PR", m.statusErr, m.statusText)
+	pr, _ := m.current()
+	if pills := m.prActionPills(pr); m.statusActive || pills[0].label != "refreshing" {
+		t.Fatalf("header = %q, pills = %+v, want refreshing on the row", m.statusText, pills)
 	}
 }
 
@@ -2471,11 +2488,8 @@ func TestRefreshAllCommandRefreshesInbox(t *testing.T) {
 	if cmd == nil {
 		t.Fatal(":refresh-all should return refresh command")
 	}
-	if !m.loading || m.message != "refreshing" {
-		t.Fatalf("loading/message = %v/%q, want true/refreshing", m.loading, m.message)
-	}
-	if m.statusText != "refreshing…" {
-		t.Fatalf("statusText = %q, want refreshing", m.statusText)
+	if !m.inboxRefreshing || !strings.Contains(m.inboxTitle(), "refreshing") || m.statusActive {
+		t.Fatalf("refreshing should appear only in Inbox title: Inbox=%q header=%q", m.inboxTitle(), m.statusText)
 	}
 }
 
@@ -2629,42 +2643,17 @@ func atlantisGuardModel(t *testing.T, cfg config.Config, pr model.PullRequest) (
 	m.prs = []model.PullRequest{pr}
 	m.allPRs = m.prs
 	m.selected = 0
+	m.diffEnabled = false
 	return m, provider
 }
 
-// runAtlantis executes cmd, finds the atlantisCheckMsg it produced (walking any
-// BatchMsg), feeds it to Update, runs the resulting cmd, and returns the model.
 func runAtlantis(t *testing.T, m Model, cmd tea.Cmd) Model {
 	t.Helper()
-	msg := collectAtlantisCheckMsg(cmd)
-	if msg == nil {
-		t.Fatal("no atlantisCheckMsg produced")
+	m, post := keyUpdateResult(m, commandResult[prActionResult](t, cmd))
+	if post != nil {
+		m = deliver(m, commandResult[prActionResult](t, post))
 	}
-	next, cmd2 := m.Update(*msg)
-	if cmd2 != nil {
-		runCmd(cmd2)
-	}
-	return next.(Model)
-}
-
-// collectAtlantisCheckMsg runs every command in cmd exactly once and returns
-// the atlantisCheckMsg among the results, if any.
-func collectAtlantisCheckMsg(cmd tea.Cmd) *atlantisCheckMsg {
-	if cmd == nil {
-		return nil
-	}
-	var found *atlantisCheckMsg
-	switch v := cmd().(type) {
-	case atlantisCheckMsg:
-		found = &v
-	case tea.BatchMsg:
-		for _, c := range v {
-			if got := collectAtlantisCheckMsg(c); got != nil {
-				found = got
-			}
-		}
-	}
-	return found
+	return m
 }
 
 // typeComment types text into the comment editor using real key events.
@@ -2690,7 +2679,7 @@ func atlantisConfig() config.Config {
 func TestAtlantisPlanBlockedWhileRunningFreeText(t *testing.T) {
 	cfg := atlantisConfig()
 	m, provider := atlantisGuardModel(t, cfg, model.PullRequest{Number: 1, Repo: "org/repo"})
-	provider.getPR = model.PullRequest{Number: 1, Repo: "org/repo", State: "OPEN",
+	provider.getPR = model.PullRequest{Number: 1, Repo: "org/repo", State: "OPEN", HeadRefOID: "abc",
 		Checks: []model.Check{{Context: "atlantis/plan", State: "PENDING"}}}
 
 	m = updateKey(m, "c")
@@ -2702,6 +2691,8 @@ func TestAtlantisPlanBlockedWhileRunningFreeText(t *testing.T) {
 		t.Fatalf("comment posted before check: %#v", provider.comments)
 	}
 	m = runAtlantis(t, m, cmd)
+	assertMode(t, m, ModeDetail)
+	m, _ = runConfirmAction(m)
 	assertMode(t, m, ModeConfirmAtlantis)
 	if !strings.Contains(atlantisDialogText(m), "running") {
 		t.Fatalf("dialog = %q, want 'running'", atlantisDialogText(m))
@@ -2716,15 +2707,17 @@ func TestAtlantisPlanBlockedWhileRunningFreeText(t *testing.T) {
 func TestAtlantisSendAnywayPosts(t *testing.T) {
 	cfg := atlantisConfig()
 	m, provider := atlantisGuardModel(t, cfg, model.PullRequest{Number: 1, Repo: "org/repo"})
-	provider.getPR = model.PullRequest{Number: 1, Repo: "org/repo", State: "OPEN",
+	provider.getPR = model.PullRequest{Number: 1, Repo: "org/repo", State: "OPEN", HeadRefOID: "abc",
 		Checks: []model.Check{{Context: "atlantis/plan", State: "PENDING"}}}
 
 	m = updateKey(m, "c")
 	m = typeComment(m, "atlantis plan")
 	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = runAtlantis(t, next.(Model), cmd)
+	m, _ = runConfirmAction(m)
 	assertMode(t, m, ModeConfirmAtlantis)
-	m = updateKey(m, "y")
+	m, recheck := keyUpdate(m, "y")
+	runAtlantis(t, m, recheck)
 	assertCommentBody(t, provider, "atlantis plan")
 }
 
@@ -2733,16 +2726,18 @@ func TestAtlantisApplyBlockedPresetConfirm(t *testing.T) {
 	confirm := true
 	cfg.Actions["atlantis-apply"] = config.ActionConfig{Operation: "comment", Comment: "atlantis apply", Commands: []string{"aa"}, Confirm: &confirm}
 	m, provider := atlantisGuardModel(t, cfg, model.PullRequest{Number: 1, Repo: "org/repo"})
-	provider.getPR = model.PullRequest{Number: 1, Repo: "org/repo", State: "OPEN"}
+	provider.getPR = model.PullRequest{Number: 1, Repo: "org/repo", State: "OPEN", HeadRefOID: "abc"}
 
 	m = openCommandAndType(m, "aa")
 	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = runAtlantis(t, next.(Model), cmd)
+	m, _ = runConfirmAction(m)
 	assertMode(t, m, ModeConfirmAtlantis)
 	if !strings.Contains(atlantisDialogText(m), "no Atlantis plan") {
 		t.Fatalf("dialog = %q, want 'no plan'", atlantisDialogText(m))
 	}
-	m = updateKey(m, "y")
+	m, recheck := keyUpdate(m, "y")
+	m = runAtlantis(t, m, recheck)
 	if len(provider.comments) != 1 || provider.comments[0] != "atlantis apply" {
 		t.Fatalf("comments = %#v, want one atlantis apply", provider.comments)
 	}
@@ -2754,7 +2749,7 @@ func TestAtlantisApplyAllowedFallsThroughToConfirmation(t *testing.T) {
 	confirm := true
 	cfg.Actions["atlantis-apply"] = config.ActionConfig{Operation: "comment", Comment: "atlantis apply", Commands: []string{"aa"}, Confirm: &confirm}
 	m, provider := atlantisGuardModel(t, cfg, model.PullRequest{Number: 1, Repo: "org/repo"})
-	provider.getPR = model.PullRequest{Number: 1, Repo: "org/repo", State: "OPEN",
+	provider.getPR = model.PullRequest{Number: 1, Repo: "org/repo", State: "OPEN", HeadRefOID: "abc",
 		Checks: []model.Check{
 			{Context: "atlantis/plan", State: "SUCCESS"},
 			{Context: "atlantis/policy_check", State: "SUCCESS"},
@@ -2763,8 +2758,13 @@ func TestAtlantisApplyAllowedFallsThroughToConfirmation(t *testing.T) {
 	m = openCommandAndType(m, "aa")
 	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = runAtlantis(t, next.(Model), cmd)
-	assertMode(t, m, ModeConfirmCommand)
-	m = updateKey(m, "y")
+	m, _ = runConfirmAction(m)
+	assertMode(t, m, ModeConfirmAtlantis)
+	if dialog := atlantisDialogText(m); !strings.Contains(dialog, " confirm ") || strings.Contains(dialog, "send anyway") {
+		t.Fatalf("ordinary confirmation choices: %q", dialog)
+	}
+	m, recheck := keyUpdate(m, "y")
+	runAtlantis(t, m, recheck)
 	assertCommentBody(t, provider, "atlantis apply")
 }
 
@@ -2775,10 +2775,11 @@ func TestAtlantisPlanImmediatePresetGuarded(t *testing.T) {
 
 	// Blocked PR -> dialog.
 	m, provider := atlantisGuardModel(t, cfg, model.PullRequest{Number: 1, Repo: "org/repo"})
-	provider.getPR = model.PullRequest{Number: 1, Repo: "org/repo", State: "OPEN",
+	provider.getPR = model.PullRequest{Number: 1, Repo: "org/repo", State: "OPEN", HeadRefOID: "abc",
 		Checks: []model.Check{{Context: "atlantis/plan", State: "PENDING"}}}
 	next, cmd := m.Update(tea.KeyPressMsg{Text: "P"})
 	m = runAtlantis(t, next.(Model), cmd)
+	m, _ = runConfirmAction(m)
 	assertMode(t, m, ModeConfirmAtlantis)
 	if len(provider.comments) != 0 {
 		t.Fatalf("comments = %#v, want none while blocked", provider.comments)
@@ -2786,27 +2787,29 @@ func TestAtlantisPlanImmediatePresetGuarded(t *testing.T) {
 
 	// Clean PR -> posts directly.
 	m, provider = atlantisGuardModel(t, cfg, model.PullRequest{Number: 1, Repo: "org/repo"})
-	provider.getPR = model.PullRequest{Number: 1, Repo: "org/repo", State: "OPEN"}
+	provider.getPR = model.PullRequest{Number: 1, Repo: "org/repo", State: "OPEN", HeadRefOID: "abc"}
 	next, cmd = m.Update(tea.KeyPressMsg{Text: "P"})
 	m = runAtlantis(t, next.(Model), cmd)
 	assertCommentBody(t, provider, "atlantis plan")
 }
 
-func TestAtlantisRefreshErrorShowsDialog(t *testing.T) {
+func TestAtlantisTargetErrorCannotBeOverridden(t *testing.T) {
 	cfg := atlantisConfig()
 	m, provider := atlantisGuardModel(t, cfg, model.PullRequest{Number: 1, Repo: "org/repo"})
-	provider.getPRErr = errors.New("boom")
+	provider.actionCheckErr = errors.New("network unavailable")
 
 	m = updateKey(m, "c")
 	m = typeComment(m, "atlantis plan")
 	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = runAtlantis(t, next.(Model), cmd)
-	assertMode(t, m, ModeConfirmAtlantis)
-	if !strings.Contains(atlantisDialogText(m), "could not verify Atlantis status: boom") {
-		t.Fatalf("dialog = %q, want error reason", atlantisDialogText(m))
+	pr, _ := m.current()
+	if !strings.Contains(m.prActionPills(pr)[0].label, "network unavailable") {
+		t.Fatalf("missing check failure: %v", m.prActionPills(pr))
 	}
-	m = updateKey(m, "y")
-	assertCommentBody(t, provider, "atlantis plan")
+	m, _ = runConfirmAction(m)
+	if m.mode == ModeConfirmAtlantis || len(provider.comments) != 0 {
+		t.Fatal("unverified target allowed a send-anyway prompt")
+	}
 }
 
 func TestAtlantisRecentPlanBlocksApply(t *testing.T) {
@@ -2831,6 +2834,7 @@ func TestAtlantisRecentPlanBlocksApply(t *testing.T) {
 	m = typeComment(m, "atlantis apply")
 	next, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = runAtlantis(t, next.(Model), cmd)
+	m, _ = runConfirmAction(m)
 	assertMode(t, m, ModeConfirmAtlantis)
 	if !strings.Contains(atlantisDialogText(m), "just requested") {
 		t.Fatalf("dialog = %q, want 'just requested'", atlantisDialogText(m))
@@ -2843,64 +2847,29 @@ func TestNonAtlantisCommentBypassesGuard(t *testing.T) {
 
 	m = updateKey(m, "c")
 	m = typeComment(m, "hello")
-	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	_ = next
-	if msg := collectAtlantisCheckMsg(cmd); msg != nil {
-		t.Fatal("non-atlantis comment produced atlantisCheckMsg")
-	}
+	m = updateKey(m, "enter")
 	assertCommentBody(t, provider, "hello")
+	if len(provider.prCalls) != 1 || len(m.prActions) != 0 {
+		t.Fatal("ordinary comment used the queue or verified Atlantis")
+	}
 }
 
 func TestAtlantisGuardDisabled(t *testing.T) {
 	cfg := config.Default()
 	disabled := false
 	cfg.Atlantis.Enabled = &disabled
-	m, provider := atlantisGuardModel(t, cfg, model.PullRequest{Number: 1, Repo: "org/repo"})
+	pr := model.PullRequest{Number: 1, Repo: "org/repo", State: "OPEN", HeadRefOID: "abc"}
+	m, provider := atlantisGuardModel(t, cfg, pr)
+	provider.getPR = pr
 
 	m = updateKey(m, "c")
 	m = typeComment(m, "atlantis apply")
 	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	_ = next
-	if msg := collectAtlantisCheckMsg(cmd); msg != nil {
-		t.Fatal("disabled guard produced atlantisCheckMsg")
+	runAtlantis(t, next.(Model), cmd)
+	if want := []string{"verify:1:false", "comment:1:atlantis apply"}; !reflect.DeepEqual(provider.prCalls, want) {
+		t.Fatalf("calls = %v, want %v", provider.prCalls, want)
 	}
 	assertCommentBody(t, provider, "atlantis apply")
-}
-
-func TestAtlantisStaleCheckIgnored(t *testing.T) {
-	cfg := atlantisConfig()
-	m, provider := atlantisGuardModel(t, cfg, model.PullRequest{Number: 1, Repo: "org/repo"})
-	provider.getPR = model.PullRequest{Number: 1, Repo: "org/repo", State: "OPEN"}
-
-	m = updateKey(m, "c")
-	m = typeComment(m, "atlantis plan")
-	next, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	m = next.(Model)
-	next, cmd := m.Update(atlantisCheckMsg{repo: "org/repo", number: 99})
-	m = next.(Model)
-	if cmd != nil || !m.loading || len(provider.comments) != 0 {
-		t.Fatalf("stale check acted: cmd=%v loading=%v comments=%#v", cmd != nil, m.loading, provider.comments)
-	}
-}
-
-func TestAtlantisDismissedDialogDoesNotBlockNewGuard(t *testing.T) {
-	cfg := atlantisConfig()
-	m, provider := atlantisGuardModel(t, cfg, model.PullRequest{Number: 1, Repo: "org/repo"})
-	provider.getPR = model.PullRequest{Number: 1, Repo: "org/repo", State: "OPEN",
-		Checks: []model.Check{{Context: "atlantis/plan", State: "PENDING"}}}
-
-	m = updateKey(m, "c")
-	m = typeComment(m, "atlantis plan")
-	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	m = runAtlantis(t, next.(Model), cmd)
-	assertMode(t, m, ModeConfirmAtlantis)
-	m.mode = ModeInbox // e.g. a refresh emptied the inbox
-
-	m = updateKey(m, "c")
-	m = typeComment(m, "atlantis plan")
-	next, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	m = runAtlantis(t, next.(Model), cmd)
-	assertMode(t, m, ModeConfirmAtlantis)
 }
 
 func TestAtlantisPresetConfirmRecordsRecentPlan(t *testing.T) {
@@ -2913,8 +2882,10 @@ func TestAtlantisPresetConfirmRecordsRecentPlan(t *testing.T) {
 	m = openCommandAndType(m, "ap")
 	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = runAtlantis(t, next.(Model), cmd)
-	assertMode(t, m, ModeConfirmCommand)
-	m = updateKey(m, "y")
+	m, _ = runConfirmAction(m)
+	assertMode(t, m, ModeConfirmAtlantis)
+	m, recheck := keyUpdate(m, "y")
+	m = runAtlantis(t, m, recheck)
 	assertCommentBody(t, provider, "atlantis plan")
 	assertMode(t, m, ModeInbox)
 	if _, ok := m.recentPlans[recentPlanKey{repo: "org/repo", number: 1, head: "new"}]; !ok {
@@ -2931,12 +2902,12 @@ func TestAtlantisPRClosedDuringCheck(t *testing.T) {
 	m = typeComment(m, "atlantis apply")
 	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = runAtlantis(t, next.(Model), cmd)
-	if len(provider.comments) != 0 || m.loading || len(m.prs) != 0 || m.mode != ModeInbox || m.statusText != "PR closed" {
-		t.Fatalf("closed PR: comments=%#v loading=%v prs=%d mode=%v status=%q", provider.comments, m.loading, len(m.prs), m.mode, m.statusText)
+	if len(provider.comments) != 0 || len(m.prActions) != 0 || len(m.prs) != 0 || m.mode != ModeInbox {
+		t.Fatalf("closed PR: comments=%#v queues=%d prs=%d mode=%v", provider.comments, len(m.prActions), len(m.prs), m.mode)
 	}
 }
 
-func TestAtlantisCheckDiscardedWhenModalOpenedMidCheck(t *testing.T) {
+func TestAtlantisCheckParksWithoutInterruptingApproval(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		checks []model.Check
@@ -2949,7 +2920,7 @@ func TestAtlantisCheckDiscardedWhenModalOpenedMidCheck(t *testing.T) {
 			confirm := true
 			cfg.Actions["atlantis-apply"] = config.ActionConfig{Operation: "comment", Comment: "atlantis apply", Commands: []string{"aa"}, Confirm: &confirm}
 			m, provider := atlantisGuardModel(t, cfg, model.PullRequest{Number: 1, Repo: "org/repo"})
-			provider.getPR = model.PullRequest{Number: 1, Repo: "org/repo", State: "OPEN", Checks: tc.checks}
+			provider.getPR = model.PullRequest{Number: 1, Repo: "org/repo", State: "OPEN", HeadRefOID: "abc", Checks: tc.checks}
 
 			m = openCommandAndType(m, "aa")
 			next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -2964,45 +2935,25 @@ func TestAtlantisCheckDiscardedWhenModalOpenedMidCheck(t *testing.T) {
 			if !reflect.DeepEqual(m.pendingAction, pending) {
 				t.Fatalf("pendingAction = %#v, want %#v", m.pendingAction, pending)
 			}
-			if len(provider.comments) != 0 || m.loading || m.atlantisPending.cmd != atlantisCommandNone {
-				t.Fatalf("comments=%#v loading=%v pending=%#v", provider.comments, m.loading, m.atlantisPending)
-			}
-			if m.statusText != "Atlantis check discarded: view changed" {
-				t.Fatalf("status = %q", m.statusText)
+			pr, _ := m.current()
+			if len(provider.comments) != 0 || m.prActionPills(pr)[0].label != "confirm apply" {
+				t.Fatalf("comments=%#v pills=%#v", provider.comments, m.prActionPills(pr))
 			}
 		})
-	}
-}
-
-func TestAtlantisCheckDiscardedWhenSelectionChanged(t *testing.T) {
-	cfg := atlantisConfig()
-	m, provider := atlantisGuardModel(t, cfg, model.PullRequest{Number: 1, Repo: "org/repo"})
-	m.prs = append(m.prs, model.PullRequest{Number: 2, Repo: "org/repo"})
-	m.allPRs = m.prs
-	provider.getPR = model.PullRequest{Number: 1, Repo: "org/repo", State: "OPEN"}
-
-	m = updateKey(m, "c")
-	m = typeComment(m, "atlantis plan")
-	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	m = next.(Model)
-	m.mode = ModeDetail
-	m.selected = 1
-	m = runAtlantis(t, m, cmd)
-	if len(provider.comments) != 0 || m.statusText != "Atlantis check discarded: view changed" {
-		t.Fatalf("comments=%#v status=%q", provider.comments, m.statusText)
 	}
 }
 
 func TestAtlantisGuardDialogShowsChoices(t *testing.T) {
 	cfg := atlantisConfig()
 	m, provider := atlantisGuardModel(t, cfg, model.PullRequest{Number: 1, Repo: "org/repo"})
-	provider.getPR = model.PullRequest{Number: 1, Repo: "org/repo", State: "OPEN",
+	provider.getPR = model.PullRequest{Number: 1, Repo: "org/repo", State: "OPEN", HeadRefOID: "abc",
 		Checks: []model.Check{{Context: "atlantis/plan", State: "PENDING"}}}
 
 	m = updateKey(m, "c")
 	m = typeComment(m, "atlantis plan")
 	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = runAtlantis(t, next.(Model), cmd)
+	m, _ = runConfirmAction(m)
 	assertMode(t, m, ModeConfirmAtlantis)
 	view := stripANSI(m.View().Content)
 	for _, want := range []string{"atlantis plan on #1?", "send anyway", "cancel"} {
@@ -3061,7 +3012,7 @@ func batchMsgs(cmd tea.Cmd) []tea.Msg {
 	return []tea.Msg{msg}
 }
 
-func assertReviewActionRefreshesPR(t *testing.T, cmd func(*app.App, model.PullRequest) tea.Cmd, state string) {
+func assertReviewActionRefreshesPR(t *testing.T, cmd func(*app.App, model.PullRequest, int) tea.Cmd, state string) {
 	t.Helper()
 	pr := model.PullRequest{Repo: "org/repo", Number: 7, State: "OPEN",
 		DetailsLoaded: true, ReviewCommentsLoaded: true, ReviewersLoaded: true,
@@ -3075,7 +3026,7 @@ func assertReviewActionRefreshesPR(t *testing.T, cmd func(*app.App, model.PullRe
 	if err := m.app.Cache.Put(pr); err != nil {
 		t.Fatal(err)
 	}
-	msg, ok := cmd(m.app, pr)().(actionMsg)
+	msg, ok := cmd(m.app, pr, m.startStatus("reviewing…"))().(actionMsg)
 	if !ok || msg.refreshPR == nil || msg.refreshPR.Number != pr.Number {
 		t.Fatalf("actionMsg = %#v, want refreshPR for #7", msg)
 	}
@@ -3095,7 +3046,7 @@ func assertReviewActionRefreshesPR(t *testing.T, cmd func(*app.App, model.PullRe
 			if _, ok := got.(refreshMsg); !ok {
 				t.Fatalf("first refresh = %T, want refreshMsg", got)
 			}
-		} else if refreshed, ok := got.(refreshPRMsg); !ok || refreshed.number != pr.Number {
+		} else if refreshed, ok := got.(refreshPRMsg); !ok || refreshed.update.Key != keyForPR(pr) {
 			t.Fatalf("second refresh = %#v, want refreshPRMsg for #7", got)
 		}
 		next, _ = m.Update(got)
@@ -3107,16 +3058,18 @@ func assertReviewActionRefreshesPR(t *testing.T, cmd func(*app.App, model.PullRe
 }
 
 func TestApproveRefreshesSelectedPR(t *testing.T) {
-	assertReviewActionRefreshesPR(t, approveCmd, "APPROVED")
+	assertReviewActionRefreshesPR(t, func(a *app.App, pr model.PullRequest, owner int) tea.Cmd { return approveCmd(a, pr, owner, 0) }, "APPROVED")
 }
 
 func TestRequestChangesRefreshesSelectedPR(t *testing.T) {
-	assertReviewActionRefreshesPR(t, func(a *app.App, pr model.PullRequest) tea.Cmd { return requestChangesCmd(a, pr, "") }, "CHANGES_REQUESTED")
+	assertReviewActionRefreshesPR(t, func(a *app.App, pr model.PullRequest, owner int) tea.Cmd {
+		return requestChangesCmd(a, pr, "", owner, 0)
+	}, "CHANGES_REQUESTED")
 }
 
 func TestCommentActionDoesNotRefreshPR(t *testing.T) {
 	pr := model.PullRequest{Repo: "org/repo", Number: 7}
-	msg, ok := commentCmd(app.New(&commentRecordingGitHub{}, cache.NewMemoryStore()), pr, "hi")().(actionMsg)
+	msg, ok := commentCmd(app.New(&commentRecordingGitHub{}, cache.NewMemoryStore()), pr, "hi", 0, 0)().(actionMsg)
 	if !ok || msg.refreshPR != nil {
 		t.Fatalf("comment actionMsg = %#v, want no refreshPR", msg)
 	}

@@ -168,7 +168,8 @@ func TestClassifyAtlantisComment(t *testing.T) {
 		{"atlantis plan", atlantisCommandPlan},
 		{"  Atlantis   PLAN -p sso", atlantisCommandPlan},
 		{"atlantis apply -d foo", atlantisCommandApply},
-		{"atlantis unlock", atlantisCommandNone},
+		{"atlantis unlock", atlantisCommandUnlock},
+		{"ATLANTIS cancel", atlantisCommandCancel},
 		{"please atlantis plan", atlantisCommandNone},
 		{"", atlantisCommandNone},
 		{"atlantisplan", atlantisCommandNone},
@@ -232,7 +233,7 @@ func TestGuardReasons(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			pr := model.PullRequest{Number: 1, Checks: tt.checks}
-			reasons := guardReasons(tt.cmd, pr, tt.postedAt, now)
+			reasons := guardReasons(tt.cmd, pr, tt.postedAt, now, true)
 			if tt.want == "" {
 				if len(reasons) != 0 {
 					t.Fatalf("expected allowed, got %v", reasons)
@@ -242,7 +243,7 @@ func TestGuardReasons(t *testing.T) {
 			if len(reasons) == 0 {
 				t.Fatalf("expected block containing %q, got allowed", tt.want)
 			}
-			if !strings.Contains(strings.Join(reasons, "; "), tt.want) {
+			if !strings.Contains(reasons[0].text(), tt.want) {
 				t.Errorf("reasons %v missing %q", reasons, tt.want)
 			}
 		})

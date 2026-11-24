@@ -77,7 +77,7 @@ func TestAtlantisApplyGuardAfterUnlock(t *testing.T) {
 	pr := model.PullRequest{Checks: atlantisChecks("SUCCESS", at), Comments: []model.PRComment{{
 		Body: "All Atlantis locks for this PR have been unlocked and plans discarded", CreatedAt: at.Add(time.Minute),
 	}}}
-	if reasons := guardReasons(atlantisCommandApply, pr, time.Time{}, at.Add(2*time.Minute)); len(reasons) == 0 {
+	if reasons := guardReasons(atlantisCommandApply, pr, time.Time{}, at.Add(2*time.Minute), true); len(reasons) == 0 {
 		t.Fatal("apply guard accepted a discarded plan")
 	}
 }

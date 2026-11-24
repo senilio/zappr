@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -47,7 +46,6 @@ type Model struct {
 	colorschemeIndex  int // selected index in colorscheme picker
 	focus             Focus
 	mode              Mode
-	loading           bool
 	error             string
 	message           string
 	diff              string
@@ -65,10 +63,13 @@ type Model struct {
 	comment           string
 	diffXOffset       int
 	summaryXOffset    int
-	lastFetch         time.Time
+	lastInboxRefresh  time.Time
+	inboxRefreshing   bool
+	inboxRefreshErr   error
 	pollEvery         time.Duration
 	pollGeneration    uint64
-	refreshGeneration uint64
+	inboxRequestID    uint64
+	prVersions        map[app.PRKey]prVersion
 	width             int
 	height            int
 	theme             uitheme.Theme
@@ -94,13 +95,21 @@ type Model struct {
 	diffVPLayout       *paneLayout
 
 	statusActive       bool
+	statusPending      bool
 	statusText         string
 	statusErr          bool
-	statusSpinner      spinner.Model
 	statusToken        int
+	loadToken          uint64
+	diffRequest        uint64
+	fileRequest        uint64
+	commitDiffRequest  uint64
 	diffLoadKey        string
+	diffLoadErr        string
+	fileLoadErr        string
+	fileLoadErrKey     string
 	detailsLoadKey     string
 	commitDiffKey      string
+	commitDiffErr      string
 	renderedCommitDiff string
 	rawCommitDiff      string
 	commitFileStarts   []diffFileStart
@@ -122,26 +131,19 @@ type Model struct {
 	readerIntentToken uint64
 	commentState      commentViewState
 
-	commandInput  string // typed input after ":"
-	helpInput     string
-	pendingAction tuiAction         // action awaiting confirmation
-	pendingPR     model.PullRequest // auto-merge confirmation target and original state
-	commandCursor int               // selected index in command palette list
+	commandInput       string // typed input after ":"
+	helpInput          string
+	pendingAction      tuiAction         // action awaiting confirmation
+	pendingPR          model.PullRequest // auto-merge confirmation target and original state
+	modalTarget        prIntent
+	invalidatedPRModal Mode
+	commandCursor      int // selected index in command palette list
 
-	atlantisPending atlantisGuard
-	recentPlans     map[recentPlanKey]time.Time
-}
-
-// atlantisGuard is an Atlantis comment awaiting a status check or the guard dialog.
-// confirm records whether the original path still needs its normal confirmation.
-type atlantisGuard struct {
-	pr         model.PullRequest
-	body       string
-	cmd        atlantisCommand
-	confirm    bool
-	action     tuiAction
-	reasons    []string
-	returnMode Mode
+	prActions           map[app.PRKey]*prActionQueue
+	prActionToken       uint64
+	prConfirmationToken uint64
+	prConfirmationPage  int
+	recentPlans         map[recentPlanKey]time.Time
 }
 
 type SummaryMode int
@@ -202,37 +204,38 @@ func New(zappr *app.App, repo string, pollEvery time.Duration, themeName string,
 	ivp := viewport.New()
 	dvp := viewport.New()
 	hvp := viewport.New()
-	sp := spinner.New()
-	sp.Spinner = spinner.Dot
-	return Model{app: zappr, repo: repo, loading: true, pollEvery: pollEvery, sortMode: app.ParseSortMode(cfg.Sort), hideDrafts: cfg.HideDrafts, theme: uitheme.DefaultWithName(themeName), cfg: cfg, actions: actions, settingsSaver: newSettingsSaver(cfg), inboxVP: ivp, summaryVP: vp, diffVP: dvp, helpVP: hvp, statusSpinner: sp, summaryMode: SummaryModeFiles, diffEnabled: true, recentPlans: map[recentPlanKey]time.Time{}}, nil
+	m := Model{app: zappr, repo: repo, pollEvery: pollEvery, sortMode: app.ParseSortMode(cfg.Sort), hideDrafts: cfg.HideDrafts, theme: uitheme.DefaultWithName(themeName), cfg: cfg, actions: actions, settingsSaver: newSettingsSaver(cfg), inboxVP: ivp, summaryVP: vp, diffVP: dvp, helpVP: hvp, summaryMode: SummaryModeFiles, diffEnabled: true, recentPlans: map[recentPlanKey]time.Time{}}
+	if zappr != nil {
+		m.inboxRequestID = zappr.BeginInboxRefresh(repo)
+		m.inboxRefreshing = true
+		if zappr.Cache != nil {
+			m.allPRs = zappr.InboxRepo(repo, m.sortMode)
+			m.applyPRSettings()
+		}
+	}
+	return m, nil
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.refreshCmd(!m.hideDrafts), tickCmd(m.pollEvery, m.pollGeneration), uiTickCmd(), tea.RequestBackgroundColor, configWatchTickCmd())
+	return tea.Batch(m.inboxRefreshCmd(), tickCmd(m.pollEvery, m.pollGeneration), uiTickCmd(), tea.RequestBackgroundColor, configWatchTickCmd())
 }
 
 type refreshMsg struct {
-	prs        []model.PullRequest
-	err        error
-	generation uint64
+	id      uint64
+	updates []app.PRUpdate
+	err     error
 }
 
 type refreshPRMsg struct {
-	repo        string
-	number      int
-	pr          model.PullRequest
+	update      app.PRUpdate
 	err         error
+	requestKey  app.PRKey
 	requestHead string
 }
 
-type atlantisCheckMsg struct {
-	repo   string
-	number int
-	pr     model.PullRequest
-	err    error
-}
-
 type diffMsg struct {
+	owner         int
+	request       uint64
 	repo          string
 	number        int
 	raw           string
@@ -245,11 +248,19 @@ type diffMsg struct {
 }
 
 type actionMsg struct {
+	owner   int
 	message string
 	err     error
 	// refreshPR is refetched after a successful review so the reviewers
 	// row reflects the new review.
 	refreshPR *model.PullRequest
+}
+
+type closePRMsg struct {
+	owner  int
+	key    app.PRKey
+	update app.PRUpdate
+	err    error
 }
 
 type pagerMsg struct {
@@ -260,6 +271,7 @@ type pagerMsg struct {
 type clipboardMsg struct{ err error }
 
 type commitDiffMsg struct {
+	request    uint64
 	sha        string
 	raw        string
 	rendered   string
@@ -268,6 +280,8 @@ type commitDiffMsg struct {
 }
 
 type fileContentMsg struct {
+	owner   int
+	request uint64
 	key     string
 	content string
 	err     error
@@ -293,49 +307,75 @@ func dismissStatusCmd(token int, d time.Duration) tea.Cmd {
 	})
 }
 
-// startStatus shows the status popup with an in-progress message and returns
-// the spinner tick command to animate it.
-func (m *Model) startStatus(text string) tea.Cmd {
+// startStatus gives the command displaying this text exclusive ownership of
+// its completion, even if another command fetches the same PR or file.
+func (m *Model) startStatus(text string) int {
 	m.statusActive = true
+	m.statusPending = true
 	m.statusErr = false
 	m.statusText = text
 	m.statusToken++
-	return m.statusSpinner.Tick
+	return m.statusToken
+}
+
+func (m Model) ownsStatus(owner int) bool {
+	return owner != 0 && m.statusPending && m.statusToken == owner
+}
+
+func (m *Model) clearStatus() {
+	m.statusActive, m.statusPending, m.statusErr, m.statusText = false, false, false, ""
+}
+
+func (m *Model) completeStatus(owner int, text string, isErr bool) tea.Cmd {
+	if !m.ownsStatus(owner) {
+		return nil
+	}
+	if text == "" {
+		m.clearStatus()
+		return nil
+	}
+	return m.finishStatus(text, isErr)
 }
 
 // finishStatus updates the popup to a final message and schedules auto-dismiss.
 func (m *Model) finishStatus(text string, isErr bool) tea.Cmd {
 	m.statusActive = true
+	m.statusPending = false
 	m.statusErr = isErr
 	m.statusText = text
 	m.statusToken++
 	return dismissStatusCmd(m.statusToken, 1200*time.Millisecond)
 }
 
-func (m Model) refreshCmd(includeDrafts bool) tea.Cmd {
+func (m *Model) startInboxRefresh() tea.Cmd {
+	if m.app == nil {
+		return nil
+	}
+	m.inboxRequestID = m.app.BeginInboxRefresh(m.repo)
+	m.inboxRefreshing = true
+	return m.inboxRefreshCmd()
+}
+
+func (m Model) inboxRefreshCmd() tea.Cmd {
+	a, repo, id := m.app, m.repo, m.inboxRequestID
+	if a == nil {
+		return nil
+	}
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 		defer cancel()
-		prs, err := m.app.Refresh(ctx, m.repo, includeDrafts)
-		return refreshMsg{prs: prs, err: err, generation: m.refreshGeneration}
+		updates, err := a.RefreshInbox(ctx, repo, id)
+		return refreshMsg{id: id, updates: updates, err: err}
 	}
 }
 
-func refreshPRCmd(app *app.App, pr model.PullRequest) tea.Cmd {
+func refreshPRCmd(a *app.App, pr model.PullRequest) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		fresh, err := app.RefreshPR(ctx, pr.Repo, pr.Number)
-		return refreshPRMsg{repo: pr.Repo, number: pr.Number, pr: fresh, err: err, requestHead: pr.HeadRefOID}
-	}
-}
-
-func atlantisCheckCmd(app *app.App, pr model.PullRequest) tea.Cmd {
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		fresh, err := app.RefreshPR(ctx, pr.Repo, pr.Number)
-		return atlantisCheckMsg{repo: pr.Repo, number: pr.Number, pr: fresh, err: err}
+		key := keyForPR(pr)
+		update, err := a.RefreshPRUpdate(ctx, key)
+		return refreshPRMsg{update: update, err: err, requestKey: key, requestHead: pr.HeadRefOID}
 	}
 }
 
@@ -345,14 +385,14 @@ func tickCmd(interval time.Duration, generation uint64) tea.Cmd {
 	})
 }
 
-func diffCmd(app *app.App, pr model.PullRequest, width int) tea.Cmd {
+func diffCmd(app *app.App, pr model.PullRequest, width, owner int, request uint64) tea.Cmd {
 	return func() tea.Msg {
 		key := prRefreshKey(pr)
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		diff, err := app.GitHub.GetDiff(ctx, pr.Repo, pr.Number)
 		if err != nil {
-			return diffMsg{repo: pr.Repo, number: pr.Number, key: key, err: err}
+			return diffMsg{owner: owner, request: request, repo: pr.Repo, number: pr.Number, key: key, err: err}
 		}
 		// Split on the raw diff so that the "diff --git" markers are intact.
 		// Rendering (delta) rewrites those headers so splitting rendered output
@@ -363,117 +403,119 @@ func diffCmd(app *app.App, pr model.PullRequest, width int) tea.Cmd {
 		if rendered == "" {
 			rendered, err = renderDiff(ctx, diff, width, false)
 		}
-		return diffMsg{repo: pr.Repo, number: pr.Number, key: key, raw: diff, rendered: rendered, files: files, renderedFiles: renderedFiles, fileStarts: starts, err: err}
+		return diffMsg{owner: owner, request: request, repo: pr.Repo, number: pr.Number, key: key, raw: diff, rendered: rendered, files: files, renderedFiles: renderedFiles, fileStarts: starts, err: err}
 	}
 }
 
 func commitDiffCmd(ghProvider interface {
 	GetCommitDiff(ctx context.Context, repo string, sha string) (string, error)
-}, repo string, sha string, width int) tea.Cmd {
+}, repo string, sha string, width int, request uint64) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
 		raw, err := ghProvider.GetCommitDiff(ctx, repo, sha)
 		if err != nil {
-			return commitDiffMsg{sha: sha, err: err}
+			return commitDiffMsg{request: request, sha: sha, err: err}
 		}
 		rendered, starts, err := renderDiffSections(ctx, raw, width, false, false)
-		return commitDiffMsg{sha: sha, raw: raw, rendered: rendered, fileStarts: starts, err: err}
+		return commitDiffMsg{request: request, sha: sha, raw: raw, rendered: rendered, fileStarts: starts, err: err}
 	}
 }
 
 func fileContentCmd(ghProvider interface {
 	GetFileContent(ctx context.Context, repo string, path string, ref string) (string, error)
-}, repo string, path string, ref string, key string) tea.Cmd {
+}, repo, path, ref, key string, owner int, request uint64) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
 		content, err := ghProvider.GetFileContent(ctx, repo, path, ref)
-		return fileContentMsg{key: key, content: content, err: err}
+		return fileContentMsg{owner: owner, request: request, key: key, content: content, err: err}
 	}
 }
 
-func approveCmd(app *app.App, pr model.PullRequest) tea.Cmd {
+func prWriteCmd(a *app.App, pr model.PullRequest, closedRevision uint64, result actionMsg, write func(context.Context) error) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		body := ""
-		err := app.Approve(ctx, pr.Repo, pr.Number, body)
-		return actionMsg{message: fmt.Sprintf("approved %s#%d", pr.Repo, pr.Number), err: err, refreshPR: &pr}
-	}
-}
-
-func commentCmd(app *app.App, pr model.PullRequest, body string) tea.Cmd {
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		err := app.Comment(ctx, pr.Repo, pr.Number, body)
-		return actionMsg{message: fmt.Sprintf("commented on %s#%d", pr.Repo, pr.Number), err: err}
-	}
-}
-
-func toggleDraftCmd(app *app.App, pr model.PullRequest) tea.Cmd {
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		newDraft := !pr.Draft
-		err := app.ToggleDraft(ctx, pr.Repo, pr.Number, newDraft)
-		action := "marked ready"
-		if newDraft {
-			action = "marked draft"
+		msg := result
+		msg.err = a.CheckPRIntent(keyForPR(pr), closedRevision)
+		if msg.err == nil {
+			msg.err = write(ctx)
 		}
-		return actionMsg{message: fmt.Sprintf("%s %s#%d", action, pr.Repo, pr.Number), err: err}
+		return msg
 	}
 }
 
-func toggleAutoMergeCmd(app *app.App, pr model.PullRequest) tea.Cmd {
+func approveCmd(a *app.App, pr model.PullRequest, owner int, closedRevision uint64) tea.Cmd {
+	msg := actionMsg{owner: owner, message: fmt.Sprintf("approved %s#%d", pr.Repo, pr.Number), refreshPR: &pr}
+	return prWriteCmd(a, pr, closedRevision, msg, func(ctx context.Context) error {
+		return a.Approve(ctx, pr.Repo, pr.Number, "")
+	})
+}
+
+func commentCmd(a *app.App, pr model.PullRequest, body string, owner int, closedRevision uint64) tea.Cmd {
+	msg := actionMsg{owner: owner, message: fmt.Sprintf("commented on %s#%d", pr.Repo, pr.Number)}
+	return prWriteCmd(a, pr, closedRevision, msg, func(ctx context.Context) error {
+		return a.Comment(ctx, pr.Repo, pr.Number, body)
+	})
+}
+
+func toggleDraftCmd(a *app.App, pr model.PullRequest, owner int, closedRevision uint64) tea.Cmd {
+	newDraft := !pr.Draft
+	action := "marked ready"
+	if newDraft {
+		action = "marked draft"
+	}
+	msg := actionMsg{owner: owner, message: fmt.Sprintf("%s %s#%d", action, pr.Repo, pr.Number)}
+	return prWriteCmd(a, pr, closedRevision, msg, func(ctx context.Context) error {
+		return a.ToggleDraft(ctx, pr.Repo, pr.Number, newDraft)
+	})
+}
+
+func toggleAutoMergeCmd(a *app.App, pr model.PullRequest, owner int, closedRevision uint64) tea.Cmd {
+	enabled := !pr.AutoMerge
+	action := "auto-merge disabled for"
+	if enabled {
+		action = "auto-merge requested for"
+	}
+	msg := actionMsg{owner: owner, message: fmt.Sprintf("%s %s#%d", action, pr.Repo, pr.Number)}
+	return prWriteCmd(a, pr, closedRevision, msg, func(ctx context.Context) error {
+		return a.ToggleAutoMerge(ctx, pr.Repo, pr.Number, enabled)
+	})
+}
+
+func closePRCmd(a *app.App, pr model.PullRequest, comment string, owner int, closedRevision uint64) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		enabled := !pr.AutoMerge
-		err := app.ToggleAutoMerge(ctx, pr.Repo, pr.Number, enabled)
-		action := "auto-merge disabled for"
-		if enabled {
-			action = "auto-merge requested for"
+		key := keyForPR(pr)
+		if err := a.CheckPRIntent(key, closedRevision); err != nil {
+			return closePRMsg{owner: owner, key: key, err: err}
 		}
-		return actionMsg{message: fmt.Sprintf("%s %s#%d", action, pr.Repo, pr.Number), err: err}
+		update, err := a.ClosePRUpdate(ctx, key, comment)
+		return closePRMsg{owner: owner, key: key, update: update, err: err}
 	}
 }
 
-func closePRCmd(app *app.App, pr model.PullRequest, comment string) tea.Cmd {
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		err := app.ClosePR(ctx, pr.Repo, pr.Number, comment)
-		return actionMsg{message: fmt.Sprintf("closed %s#%d", pr.Repo, pr.Number), err: err}
-	}
+func updateBranchCmd(a *app.App, pr model.PullRequest, owner int, closedRevision uint64) tea.Cmd {
+	msg := actionMsg{owner: owner, message: fmt.Sprintf("updated branch for %s#%d", pr.Repo, pr.Number)}
+	return prWriteCmd(a, pr, closedRevision, msg, func(ctx context.Context) error {
+		return a.UpdateBranch(ctx, pr.Repo, pr.Number)
+	})
 }
 
-func updateBranchCmd(app *app.App, pr model.PullRequest) tea.Cmd {
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		err := app.UpdateBranch(ctx, pr.Repo, pr.Number)
-		return actionMsg{message: fmt.Sprintf("updated branch for %s#%d", pr.Repo, pr.Number), err: err}
-	}
+func requestChangesCmd(a *app.App, pr model.PullRequest, body string, owner int, closedRevision uint64) tea.Cmd {
+	msg := actionMsg{owner: owner, message: fmt.Sprintf("requested changes on %s#%d", pr.Repo, pr.Number), refreshPR: &pr}
+	return prWriteCmd(a, pr, closedRevision, msg, func(ctx context.Context) error {
+		return a.RequestChanges(ctx, pr.Repo, pr.Number, body)
+	})
 }
 
-func requestChangesCmd(app *app.App, pr model.PullRequest, body string) tea.Cmd {
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		err := app.RequestChanges(ctx, pr.Repo, pr.Number, body)
-		return actionMsg{message: fmt.Sprintf("requested changes on %s#%d", pr.Repo, pr.Number), err: err, refreshPR: &pr}
-	}
-}
-
-func mergePRCmd(a *app.App, pr model.PullRequest) tea.Cmd {
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		err := a.MergePR(ctx, pr.Repo, pr.Number)
-		return actionMsg{message: fmt.Sprintf("merge requested for %s#%d", pr.Repo, pr.Number), err: err}
-	}
+func mergePRCmd(a *app.App, pr model.PullRequest, owner int, closedRevision uint64) tea.Cmd {
+	msg := actionMsg{owner: owner, message: fmt.Sprintf("merge requested for %s#%d", pr.Repo, pr.Number)}
+	return prWriteCmd(a, pr, closedRevision, msg, func(ctx context.Context) error {
+		return a.MergePR(ctx, pr.Repo, pr.Number)
+	})
 }
 
 func (m Model) current() (model.PullRequest, bool) {

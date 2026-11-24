@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -91,7 +92,7 @@ func TestPlanOpenRequestCannotFollowAnotherPR(t *testing.T) {
 	m.allPRs = append([]model.PullRequest(nil), m.prs...)
 	m.selected = 1
 	m.resetPRViewState()
-	next, _ := m.Update(refreshPRMsg{repo: fresh.Repo, number: fresh.Number, pr: fresh})
+	next, _ := m.Update(refreshPRMsg{update: testPRUpdate(fresh, 1)})
 	m = next.(Model)
 	if pr, _ := m.current(); pr.Number != 2 || m.summaryMode == SummaryModePlan {
 		t.Fatal("late request followed another PR")
@@ -101,10 +102,61 @@ func TestPlanOpenRequestCannotFollowAnotherPR(t *testing.T) {
 func TestPlanBackgroundFetchDoesNotStealFocus(t *testing.T) {
 	m := planModel(t)
 	m.planState = planReaderState{}
-	next, _ := m.Update(refreshPRMsg{repo: m.prs[0].Repo, number: 1, pr: m.prs[0]})
+	next, _ := m.Update(refreshPRMsg{update: testPRUpdate(m.prs[0], 1)})
 	m = next.(Model)
 	if m.summaryMode != SummaryModeFiles || m.focus != FocusInbox || !m.planAvailable() {
 		t.Fatal("background fetch changed reading intent")
+	}
+}
+
+func TestPendingPlanReadDoesNotDismissNewerModal(t *testing.T) {
+	for _, modal := range []struct {
+		key  string
+		mode Mode
+	}{{"c", ModeComment}, {"a", ModeConfirmApprove}} {
+		t.Run(modal.key, func(t *testing.T) {
+			fresh := planModel(t).prs[0]
+			initial := fresh
+			initial.Comments, initial.ConversationCommentsLoaded = nil, false
+			m, provider := atlantisGuardModel(t, atlantisConfig(), initial)
+			provider.getPR = fresh
+			m, refresh := keyUpdate(m, "r")
+			m = pressKey(m, "4")
+			if m.planState.pendingOpen == nil {
+				t.Fatal("Plan did not wait for the queued refresh")
+			}
+			m = pressKey(m, modal.key)
+			assertMode(t, m, modal.mode)
+			m = deliver(m, commandResult[prActionResult](t, refresh))
+			if m.mode != modal.mode || m.focus != FocusInbox || !m.planAvailable() {
+				t.Fatalf("pending Plan read changed newer modal: mode=%v focus=%v", m.mode, m.focus)
+			}
+		})
+	}
+}
+
+func TestPlanPendingEntrySettlesOwningReadFailure(t *testing.T) {
+	for _, queued := range []bool{false, true} {
+		t.Run(fmt.Sprintf("queued=%t", queued), func(t *testing.T) {
+			initial := planModel(t).prs[0]
+			initial.Comments, initial.ConversationCommentsLoaded = nil, false
+			m, provider := atlantisGuardModel(t, atlantisConfig(), initial)
+			provider.getPRErr = errors.New("comments rate limited")
+			if queued {
+				model, cmd := keyUpdate(m, "r")
+				m = pressKey(model, "4")
+				m = deliver(m, commandResult[prActionResult](t, cmd))
+			} else {
+				model, cmd := keyUpdate(m, "4")
+				m = deliver(model, commandResult[refreshPRMsg](t, cmd))
+			}
+			if m.planState.pendingOpen != nil || !strings.Contains(stripANSI(m.View().Content), "comments rate limited") {
+				t.Fatalf("failed read left Plan loading or hid the error: %q", m.message)
+			}
+			if _, retry := keyUpdate(m, "4"); retry == nil {
+				t.Fatal("explicit Plan retry could not start a read")
+			}
+		})
 	}
 }
 
@@ -120,7 +172,7 @@ func TestPlanRefreshPreservesRootAndNode(t *testing.T) {
 	newer.CreatedAt = newer.CreatedAt.Add(time.Minute)
 	newer.UpdatedAt = newer.CreatedAt
 	pr.Comments = append(pr.Comments, newer)
-	next, _ := m.Update(refreshPRMsg{repo: pr.Repo, number: pr.Number, pr: pr})
+	next, _ := m.Update(refreshPRMsg{update: testPRUpdate(pr, 1)})
 	m = next.(Model)
 	if m.planState.reportID != root || m.planState.nodeID != node {
 		t.Fatal("refresh switched report or resource")
@@ -190,7 +242,7 @@ func TestPlanPendingEntryHonorsLaterNavigation(t *testing.T) {
 			if action != "" {
 				m = pressKey(m, action)
 			}
-			next, _ := m.Update(refreshPRMsg{repo: fresh.Repo, number: fresh.Number, pr: fresh})
+			next, _ := m.Update(refreshPRMsg{update: testPRUpdate(fresh, 1)})
 			m = next.(Model)
 			if (m.summaryMode == SummaryModePlan) != (action == "") {
 				t.Fatal("pending explicit intent not respected")
@@ -204,7 +256,9 @@ func TestPlanLateHeadResponseCannotRollBackSelection(t *testing.T) {
 	old := m.prs[0]
 	m.prs[0].HeadRefOID = "head-two"
 	m.allPRs = append([]model.PullRequest(nil), m.prs...)
-	next, _ := m.Update(refreshPRMsg{repo: old.Repo, number: old.Number, pr: old, requestHead: old.HeadRefOID})
+	next, _ := m.Update(refreshPRMsg{update: testPRUpdate(m.prs[0], 2)})
+	m = next.(Model)
+	next, _ = m.Update(refreshPRMsg{update: testPRUpdate(old, 1)})
 	m = next.(Model)
 	if pr, _ := m.current(); pr.HeadRefOID != "head-two" {
 		t.Fatal("late detail response rolled back head")

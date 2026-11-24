@@ -45,10 +45,11 @@ type inboxItem struct {
 	title, author, ci, review, mergeState string
 	draft, autoMerge, conversationLoaded  bool
 	atlantis                              model.AtlantisSummary
+	actions                               [2]rowPill
 }
 
-func inboxRenderItem(pr model.PullRequest) inboxItem {
-	return inboxItem{pr.Number, pr.Title, pr.Author, pr.CIStatus, pr.ReviewDecision, pr.MergeState, pr.Draft, pr.AutoMerge, pr.ConversationCommentsLoaded, model.DeriveAtlantis(pr.Checks, pr.Comments...)}
+func (m Model) inboxRenderItem(pr model.PullRequest) inboxItem {
+	return inboxItem{pr.Number, pr.Title, pr.Author, pr.CIStatus, pr.ReviewDecision, pr.MergeState, pr.Draft, pr.AutoMerge, pr.ConversationCommentsLoaded, model.DeriveAtlantis(pr.Checks, pr.Comments...), m.prActionPills(pr)}
 }
 
 type inboxLayoutKey struct {
@@ -77,7 +78,7 @@ func (m *Model) inboxPane(width int) *paneLayout {
 	if cached := m.inboxLayoutCache; cached != nil && cached.key == key && len(cached.items) == len(m.prs) {
 		matches := true
 		for i, pr := range m.prs {
-			if cached.items[i] != inboxRenderItem(pr) {
+			if cached.items[i] != m.inboxRenderItem(pr) {
 				matches = false
 				break
 			}
@@ -91,7 +92,7 @@ func (m *Model) inboxPane(width int) *paneLayout {
 	layout.spans = spans
 	items := make([]inboxItem, len(m.prs))
 	for i, pr := range m.prs {
-		items[i] = inboxRenderItem(pr)
+		items[i] = m.inboxRenderItem(pr)
 	}
 	m.inboxLayoutCache = &inboxLayoutCache{key, items, layout}
 	return layout

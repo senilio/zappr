@@ -90,6 +90,9 @@ func (m *Model) acceptConfigReload(msg configReloadedMsg) tea.Cmd {
 	saver.observed = msg.observed
 	saver.mu.Unlock()
 	if msg.err != nil {
+		if m.statusPending {
+			return nil
+		}
 		m.error = "failed to reload configuration: " + msg.err.Error()
 		return m.finishStatus(m.error, true)
 	}

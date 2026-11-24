@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 
@@ -54,7 +53,10 @@ func ParseSortMode(s string) SortMode {
 type App struct {
 	GitHub         github.Provider
 	Cache          cache.Store
-	cacheRefreshMu sync.Mutex // orders the cache read/modify/write portions of refreshes
+	cacheRefreshMu sync.Mutex // protects observations and their cache reads/writes
+	revision       uint64
+	inboxRequests  map[string]uint64
+	prUpdates      map[PRKey]PRUpdate
 }
 
 func New(githubProvider github.Provider, store cache.Store) *App {
@@ -62,88 +64,36 @@ func New(githubProvider github.Provider, store cache.Store) *App {
 }
 
 func (a *App) Refresh(ctx context.Context, repo string, includeDrafts bool) ([]model.PullRequest, error) {
-	prs, complete, err := a.GitHub.ListPRs(ctx, repo)
+	updates, err := a.RefreshInbox(ctx, repo, a.BeginInboxRefresh(repo))
 	if err != nil {
 		return nil, err
 	}
-	a.cacheRefreshMu.Lock()
-	defer a.cacheRefreshMu.Unlock()
-	for i := range prs {
-		if cached, err := a.Cache.Get(prs[i].Repo, prs[i].Number); err == nil {
-			if cached.UpdatedAt.After(prs[i].UpdatedAt) {
-				continue
-			}
-			// Preserve evidence while refreshing, but never preserve its loaded
-			// markers across a source-version change or a provenance upgrade.
-			prs[i].Commits = cached.Commits
-			prs[i].Comments = cached.Comments
-			prs[i].Reviews = cached.Reviews
-			prs[i].ReviewDismissals = cached.ReviewDismissals
-			prs[i].ReviewActivityLoaded = cached.ReviewActivityLoaded && cached.UpdatedAt.Equal(prs[i].UpdatedAt) && cached.HeadRefOID == prs[i].HeadRefOID
-			if cached.DetailsLoaded && cached.ReviewCommentsLoaded && cached.ConversationCommentsLoaded && cached.UpdatedAt.Equal(prs[i].UpdatedAt) && cached.HeadRefOID == prs[i].HeadRefOID {
-				prs[i].DetailsLoaded = true
-				prs[i].ReviewCommentsLoaded = true
-				prs[i].ConversationCommentsLoaded = true
-			}
-			if cached.ReviewersLoaded && cached.UpdatedAt.Equal(prs[i].UpdatedAt) {
-				prs[i].Reviewers = cached.Reviewers
-				prs[i].ReviewersLoaded = true
-			}
-			// The list query often reports UNKNOWN while GitHub recomputes
-			// mergeability; keep the last known state instead.
-			if (prs[i].MergeState == "" || prs[i].MergeState == "UNKNOWN") && cached.MergeState != "" {
-				prs[i].MergeState = cached.MergeState
-			}
-		}
-		if err := a.Cache.Put(prs[i]); err != nil {
-			return nil, err
+	prs := make([]model.PullRequest, 0, len(updates))
+	for _, update := range updates {
+		if !update.Closed && (includeDrafts || !update.PR.Draft) {
+			prs = append(prs, update.PR)
 		}
 	}
-	openNumbers := make(map[int]bool, len(prs))
-	for _, pr := range prs {
-		openNumbers[pr.Number] = true
-	}
-	if complete {
-		if err := a.Cache.PruneRepo(repo, openNumbers); err != nil {
-			return nil, err
-		}
-	}
-	inbox := a.InboxRepo(repo, SortUpdated)
-	if includeDrafts {
-		return inbox, nil
-	}
-	visible := inbox[:0]
-	for _, pr := range inbox {
-		if !pr.Draft {
-			visible = append(visible, pr)
-		}
-	}
-	return visible, nil
+	SortPullRequests(prs, SortUpdated)
+	return prs, nil
 }
 
+// RefreshPR returns display data, which may come from a newer observation
+// than this request. Use RefreshPRUpdate to distinguish superseded reads.
 func (a *App) RefreshPR(ctx context.Context, repo string, number int) (model.PullRequest, error) {
-	pr, err := a.GitHub.GetPR(ctx, repo, number)
+	update, err := a.RefreshPRUpdate(ctx, PRKey{Repo: repo, Number: number})
+	if errors.Is(err, ErrRefreshSuperseded) && !update.Closed && update.PR.Number != 0 {
+		return update.PR, nil
+	}
 	if err != nil {
 		return model.PullRequest{}, err
 	}
-	a.cacheRefreshMu.Lock()
-	defer a.cacheRefreshMu.Unlock()
-	if cached, err := a.Cache.Get(repo, number); err == nil && cached.UpdatedAt.After(pr.UpdatedAt) {
-		return cached, nil
-	}
-	if pr.State != "" && !strings.EqualFold(pr.State, "OPEN") {
-		if err := a.Cache.Delete(repo, number); err != nil {
-			return model.PullRequest{}, err
-		}
-		return model.PullRequest{}, ErrPRNotOpen
-	}
-	if err := a.Cache.Put(pr); err != nil {
-		return model.PullRequest{}, err
-	}
-	return pr, nil
+	return update.PR, nil
 }
 
 func (a *App) Inbox(sortMode SortMode) []model.PullRequest {
+	a.cacheRefreshMu.Lock()
+	defer a.cacheRefreshMu.Unlock()
 	prs, err := a.Cache.List()
 	if err != nil {
 		return nil
@@ -157,9 +107,14 @@ func (a *App) Inbox(sortMode SortMode) []model.PullRequest {
 // cache by other repositories (e.g. a repo with zero open PRs would otherwise
 // keep showing a previously-viewed PR from another repo).
 func (a *App) InboxRepo(repo string, sortMode SortMode) []model.PullRequest {
+	a.cacheRefreshMu.Lock()
+	defer a.cacheRefreshMu.Unlock()
 	prs, err := a.Cache.ListRepo(repo)
 	if err != nil {
 		return nil
+	}
+	for _, pr := range prs {
+		a.rememberCachedPRLocked(pr)
 	}
 	SortPullRequests(prs, sortMode)
 	return prs
@@ -211,7 +166,8 @@ func (a *App) ToggleAutoMerge(ctx context.Context, repo string, number int, enab
 }
 
 func (a *App) ClosePR(ctx context.Context, repo string, number int, comment string) error {
-	return a.GitHub.ClosePR(ctx, repo, number, comment)
+	_, err := a.ClosePRUpdate(ctx, PRKey{Repo: repo, Number: number}, comment)
+	return err
 }
 
 func (a *App) UpdateBranch(ctx context.Context, repo string, number int) error {
@@ -227,5 +183,15 @@ func (a *App) MergePR(ctx context.Context, repo string, number int) error {
 }
 
 func (a *App) SetSkip(repo string, number int, skipped bool) error {
-	return a.Cache.SetSkip(repo, number, skipped)
+	a.cacheRefreshMu.Lock()
+	defer a.cacheRefreshMu.Unlock()
+	if err := a.Cache.SetSkip(repo, number, skipped); err != nil {
+		return err
+	}
+	key := PRKey{Repo: repo, Number: number}
+	if update := a.prUpdates[key]; update.PR.Number != 0 {
+		update.PR.Skipped = skipped
+		a.prUpdates[key] = update
+	}
+	return nil
 }

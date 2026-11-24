@@ -1,13 +1,10 @@
 package tui
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 	"time"
 
-	tea "charm.land/bubbletea/v2"
-	"github.com/senilio/zappr/internal/app"
 	"github.com/senilio/zappr/internal/model"
 	"github.com/senilio/zappr/internal/plan"
 	uitheme "github.com/senilio/zappr/internal/tui/theme"
@@ -96,7 +93,28 @@ const (
 	atlantisCommandNone atlantisCommand = iota
 	atlantisCommandPlan
 	atlantisCommandApply
+	atlantisCommandCancel
+	atlantisCommandUnlock
 )
+
+func (c atlantisCommand) label() string {
+	switch c {
+	case atlantisCommandPlan:
+		return "plan"
+	case atlantisCommandApply:
+		return "apply"
+	case atlantisCommandCancel:
+		return "cancel"
+	case atlantisCommandUnlock:
+		return "unlock"
+	default:
+		return "refresh"
+	}
+}
+
+func (c atlantisCommand) guarded() bool {
+	return c == atlantisCommandPlan || c == atlantisCommandApply
+}
 
 const atlantisRecentPlanWindow = 2 * time.Minute
 
@@ -116,40 +134,72 @@ func classifyAtlantisComment(body string) atlantisCommand {
 		return atlantisCommandPlan
 	case "apply":
 		return atlantisCommandApply
+	case "cancel":
+		return atlantisCommandCancel
+	case "unlock":
+		return atlantisCommandUnlock
 	}
 	return atlantisCommandNone
 }
 
-// guardReasons returns why cmd should be blocked for pr; empty means allowed.
+type atlantisFinding string
+
+const (
+	atlantisStillRunning   atlantisFinding = "an Atlantis plan or apply is still running"
+	atlantisJustRequested  atlantisFinding = "a plan was just requested and has not reported yet"
+	atlantisDiscarded      atlantisFinding = "the Atlantis plan was discarded by an unlock"
+	atlantisNoPlan         atlantisFinding = "no Atlantis plan exists for the latest commit"
+	atlantisPlanFailed     atlantisFinding = "the Atlantis plan failed"
+	atlantisPolicyFailed   atlantisFinding = "the Atlantis policy check failed"
+	atlantisEvidenceFailed atlantisFinding = "could not verify Atlantis status"
+)
+
+type guardReason struct {
+	finding atlantisFinding
+	detail  string
+}
+
+func (r guardReason) text() string {
+	if r.detail != "" {
+		return string(r.finding) + ": " + r.detail
+	}
+	return string(r.finding)
+}
+
+// guardReasons returns affirmative reasons to block and, only with complete
+// evidence, a missing-plan reason. Empty reasons alone do not prove it is safe.
 // postedAt is when zappr last posted `atlantis plan` for this PR and head commit.
-func guardReasons(cmd atlantisCommand, pr model.PullRequest, postedAt, now time.Time) []string {
-	if cmd == atlantisCommandNone {
+func guardReasons(cmd atlantisCommand, pr model.PullRequest, postedAt, now time.Time, evidenceComplete bool) []guardReason {
+	if !cmd.guarded() {
 		return nil
 	}
 	a := model.DeriveAtlantis(pr.Checks, pr.Comments...)
 	applySucceeded := a.Apply == model.ApplyDone || a.Apply == model.ApplyNothing
 
-	var reasons []string
+	var reasons []guardReason
+	add := func(finding atlantisFinding) {
+		reasons = append(reasons, guardReason{finding: finding})
+	}
 	if atlantisAnyPending(pr.Checks) {
-		reasons = append(reasons, "an Atlantis plan or apply is still running")
+		add(atlantisStillRunning)
 	}
 	if atlantisPlanInFlight(pr.Checks, postedAt, now) {
-		reasons = append(reasons, "a plan was just requested and has not reported yet")
+		add(atlantisJustRequested)
 	}
 	if cmd == atlantisCommandApply {
 		if a.Plan == model.PlanDiscarded {
-			reasons = append(reasons, "the Atlantis plan was discarded by an unlock")
+			add(atlantisDiscarded)
 		}
 		// A successful aggregate apply only waives a missing plan: Atlantis
 		// leaves it untouched after later plans on the same commit.
-		if a.Plan == model.PlanNone && !applySucceeded {
-			reasons = append(reasons, "no Atlantis plan exists for the latest commit")
+		if evidenceComplete && a.Plan == model.PlanNone && !applySucceeded {
+			add(atlantisNoPlan)
 		}
 		if a.Plan == model.PlanFailed {
-			reasons = append(reasons, "the Atlantis plan failed")
+			add(atlantisPlanFailed)
 		}
 		if a.Policy == model.PolicyFailed {
-			reasons = append(reasons, "the Atlantis policy check failed")
+			add(atlantisPolicyFailed)
 		}
 	}
 	return reasons
@@ -175,101 +225,6 @@ func atlantisPlanInFlight(checks []model.Check, postedAt, now time.Time) bool {
 		}
 	}
 	return true
-}
-
-// guardComment is the single entry point for posting a comment that may be an
-// Atlantis command. Non-Atlantis comments, or any comment when the guard is
-// disabled, post exactly as before; Atlantis commands first refresh the PR.
-func (m Model) guardComment(pr model.PullRequest, body string, action tuiAction, needsConfirm bool) (tea.Model, tea.Cmd) {
-	cmd := classifyAtlantisComment(body)
-	if !m.atlantisEnabled() || cmd == atlantisCommandNone {
-		m.loading = true
-		return m, tea.Batch(m.startStatus("commenting…"), commentCmd(m.app, pr, body))
-	}
-	if m.atlantisCheckInFlight() {
-		return m, m.finishStatus("Atlantis check already in progress", true)
-	}
-	// Close the palette or comment editor now; the result lands where the
-	// unguarded path would have ended up.
-	switch m.mode {
-	case ModeCommand, ModeConfirmCommand:
-		m.mode = m.prevMode
-		m.commandInput = ""
-	case ModeComment:
-		m.mode = ModeDetail
-	}
-	m.atlantisPending = atlantisGuard{pr: pr, body: body, cmd: cmd, confirm: needsConfirm, action: action, returnMode: m.mode}
-	m.loading = true
-	return m, tea.Batch(m.startStatus("checking Atlantis status…"), atlantisCheckCmd(m.app, pr))
-}
-
-func (m Model) handleAtlantisCheck(msg atlantisCheckMsg) (tea.Model, tea.Cmd) {
-	g := m.atlantisPending
-	if !m.atlantisCheckInFlight() || g.pr.Repo != msg.repo || g.pr.Number != msg.number {
-		return m, nil
-	}
-	m.loading = false
-	m.atlantisPending = atlantisGuard{}
-	m.statusActive, m.statusText, m.statusErr = false, "", false
-
-	if errors.Is(msg.err, app.ErrPRNotOpen) {
-		return m, m.handlePRClosed(msg.repo, msg.number)
-	}
-	if msg.err == nil {
-		// Keep the cache current even if the result is discarded below.
-		m.updateCachedPR(msg.pr)
-		m.applyPRSettings()
-	}
-	// The UI stays interactive during the check. If the user moved on (another
-	// modal, mode, or PR), taking over would hijack their next keypress.
-	cur, ok := m.current()
-	if m.mode != g.returnMode || !ok || cur.Repo != g.pr.Repo || cur.Number != g.pr.Number {
-		return m, m.finishStatus("Atlantis check discarded: view changed", false)
-	}
-
-	target := g.pr
-	if msg.err != nil {
-		g.reasons = []string{"could not verify Atlantis status: " + msg.err.Error()}
-	} else {
-		if msg.pr.HeadRefOID != "" {
-			target.HeadRefOID = msg.pr.HeadRefOID
-		}
-		key := recentPlanKey{repo: msg.repo, number: msg.number, head: target.HeadRefOID}
-		g.reasons = guardReasons(g.cmd, msg.pr, m.recentPlans[key], timeNow())
-	}
-	g.pr = target
-
-	if len(g.reasons) > 0 {
-		m.atlantisPending = g
-		m.mode = ModeConfirmAtlantis
-		return m, nil
-	}
-	if g.confirm {
-		m.pendingAction = g.action
-		m.prevMode = g.returnMode
-		m.mode = ModeConfirmCommand
-		return m, nil
-	}
-	return m.postGuardedComment(g, target)
-}
-
-// atlantisCheckInFlight reports whether a guard is waiting for its status
-// check. A guard that already has reasons is (or was) shown as a dialog and
-// may be replaced, so a dialog dismissed by a refresh cannot block new guards.
-func (m Model) atlantisCheckInFlight() bool {
-	return m.atlantisPending.cmd != atlantisCommandNone && len(m.atlantisPending.reasons) == 0
-}
-
-// postGuardedComment posts an Atlantis comment that passed or overrode the guard.
-func (m Model) postGuardedComment(g atlantisGuard, pr model.PullRequest) (tea.Model, tea.Cmd) {
-	if g.cmd == atlantisCommandPlan {
-		m.recordRecentPlan(pr)
-	}
-	if g.action.ID == "" {
-		// Free-text submissions set loading, matching the unguarded path.
-		m.loading = true
-	}
-	return m, tea.Batch(m.startStatus("commenting…"), commentCmd(m.app, pr, g.body))
 }
 
 func (m *Model) recordRecentPlan(pr model.PullRequest) {

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/senilio/zappr/internal/cache"
+	"github.com/senilio/zappr/internal/github"
 	"github.com/senilio/zappr/internal/model"
 )
 
@@ -324,6 +325,10 @@ func (f fakeGitHub) ListPRs(context.Context, string) ([]model.PullRequest, bool,
 
 func (f fakeGitHub) GetPR(context.Context, string, int) (model.PullRequest, error) {
 	return f.pr, nil
+}
+
+func (f fakeGitHub) CheckPRAction(context.Context, string, int, bool) (github.PRActionCheck, error) {
+	return github.PRActionCheck{PR: f.pr}, nil
 }
 
 func (f fakeGitHub) GetDiff(context.Context, string, int) (string, error) {

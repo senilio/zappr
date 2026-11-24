@@ -54,7 +54,7 @@ func reloadFixture(t *testing.T) Model {
 		t.Fatal(err)
 	}
 	m, _ := configuredModel(t, cfg, false)
-	m.loading = false
+	m.inboxRefreshing = false
 	return m
 }
 
@@ -196,15 +196,15 @@ func TestReloadPollingGeneration(t *testing.T) {
 		t.Fatal("changed interval did not replace timer generation")
 	}
 	next, cmd := m.update(tickMsg{generation: oldGeneration})
-	if cmd != nil || next.(Model).loading {
+	if cmd != nil || next.(Model).inboxRefreshing {
 		t.Fatal("old tick fetched or rescheduled")
 	}
 	m.applyReloadedConfig(cfg, actions)
 	if m.pollGeneration != oldGeneration+1 {
 		t.Fatal("unchanged interval replaced timer")
 	}
-	for _, loading := range []bool{true, false} {
-		m.loading = loading
+	for _, refreshing := range []bool{true, false} {
+		m.inboxRefreshing = refreshing
 		_, cmd := m.update(tickMsg{generation: m.pollGeneration})
 		if cmd == nil {
 			t.Fatal("current generation did not schedule polling")
@@ -225,15 +225,17 @@ func TestReloadDisablingAtlantisClosesPlan(t *testing.T) {
 	}
 }
 
-func TestReloadRejectsOldDraftFilteredRefresh(t *testing.T) {
-	m := reloadFixture(t)
-	old := refreshMsg{prs: []model.PullRequest{{Number: 1, Repo: "org/repo"}}}
+func TestReloadIgnoresSupersededInboxRows(t *testing.T) {
+	m, provider, a, b := observationModel(t)
+	b.Draft = true
+	provider.listedPRs = []model.PullRequest{a}
+	old := commandResult[refreshMsg](t, m.inboxRefreshCmd())
 	cfg := m.cfg
 	cfg.HideDrafts = false
 	actions, _ := newActionRegistry(cfg.Actions)
 	m.applyReloadedConfig(cfg, actions)
-	draft := model.PullRequest{Number: 2, Repo: "org/repo", Draft: true}
-	next, _ := m.update(refreshMsg{prs: append(old.prs, draft), generation: m.refreshGeneration})
+	provider.listedPRs = []model.PullRequest{a, b}
+	next, _ := m.update(commandResult[refreshMsg](t, m.inboxRefreshCmd()))
 	m = next.(Model)
 	if len(m.prs) != 2 {
 		t.Fatal("current refresh did not show drafts")

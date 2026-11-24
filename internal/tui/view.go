@@ -62,20 +62,17 @@ func (m Model) inboxView() string {
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "zappr inbox %s", m.repo)
-	if !m.lastFetch.IsZero() {
-		fmt.Fprintf(&b, "  refreshed %s ago", shortDuration(time.Since(m.lastFetch)))
+	if status := m.inboxRefreshLabel(timeNow()); status != "" {
+		fmt.Fprintf(&b, " · %s", status)
 	}
 	b.WriteString("\n\n")
-	if m.loading {
-		b.WriteString("loading...\n")
-	}
 	if m.error != "" {
 		fmt.Fprintf(&b, "error: %s\n", m.error)
 	}
 	if m.message != "" {
 		fmt.Fprintf(&b, "%s\n", m.message)
 	}
-	if len(m.prs) == 0 && !m.loading {
+	if len(m.prs) == 0 && !m.inboxRefreshing && m.inboxRefreshErr == nil {
 		b.WriteString("no open pull requests\n")
 	}
 
@@ -126,7 +123,7 @@ func (m Model) approveView() string {
 		return m.layoutView()
 	}
 
-	pr, ok := m.current()
+	pr, ok := m.actionPR()
 	if !ok {
 		return m.inboxView()
 	}
@@ -137,7 +134,7 @@ func (m Model) approveView() string {
 }
 
 func (m Model) commentView() string {
-	pr, ok := m.current()
+	pr, ok := m.actionPR()
 	if !ok {
 		return m.inboxView()
 	}
@@ -322,7 +319,7 @@ func (m Model) layoutView() string {
 	case m.mode == ModeCommand || m.mode == ModeConfirmCommand:
 		modal = m.renderCommandModal()
 	case m.mode == ModeConfirmAtlantis:
-		modal = m.renderModalBox(m.atlantisGuardPanel())
+		modal = m.atlantisGuardStyle().Render(m.atlantisGuardPanel())
 	}
 	if modal != "" {
 		body = m.overlayModal(body, modal, m.width, bodyHeight, m.selectedInboxPreserveRanges(bodyHeight))
@@ -606,9 +603,7 @@ func fitScreen(content string, width int, height int) string {
 	return strings.Join(lines, "\n")
 }
 
-// headerView renders the top status bar. When a background operation is
-// active (statusActive), the spinner and message are appended here so the
-// indicator is always visible and never overlaps pane borders.
+// headerView shows app-wide feedback; Inbox and PR work have their own labels.
 func (m Model) headerView() string {
 	parts := []string{m.theme.Styles.Title.Render("zappr ⚡"), readerInput(m.repo)}
 	// Status indicator: shown inline in header so it never overlaps pane borders.
@@ -616,10 +611,8 @@ func (m Model) headerView() string {
 		if m.statusErr {
 			parts = append(parts, m.theme.Styles.Error.Render("✗ "+readerInput(m.statusText)))
 		} else {
-			parts = append(parts, strings.TrimRight(m.statusSpinner.View(), " ")+" "+m.theme.Styles.Pending.Render(readerInput(m.statusText)))
+			parts = append(parts, m.theme.Styles.Pending.Render(readerInput(m.statusText)))
 		}
-	} else if m.loading {
-		parts = append(parts, m.theme.Styles.Pending.Render("loading"))
 	} else if m.error != "" {
 		parts = append(parts, m.theme.Styles.Error.Render(readerInput(m.error)))
 	} else if m.message != "" {
@@ -683,7 +676,7 @@ func (m Model) wideLayout(height int) string {
 	leftW, diffW, gap := m.widePaneOuterWidths()
 	inboxH, summaryH := m.leftColumnHeights(height)
 	left := lipgloss.JoinVertical(lipgloss.Left,
-		m.pane(m.titledPane(m.inboxTitle(), m.inboxScrollPct()), m.inboxPanel(leftW, inboxH), leftW, inboxH, FocusInbox),
+		m.pane(m.inboxTitle(), m.inboxPanel(leftW, inboxH), leftW, inboxH, FocusInbox),
 		m.pane(m.titledPane(m.summaryTitle(), m.summaryScrollPct()), m.summaryPanel(leftW, summaryH), leftW, summaryH, FocusSummary),
 	)
 	right := m.pane(m.titledPane(m.diffTitle(), m.diffScrollPct()), m.diffPanel(diffW, height), diffW, height, FocusDiff)
@@ -754,7 +747,7 @@ func (m Model) mediumLayout(height int) string {
 	topH := max(8, height/2)
 	bottomH := max(6, height-topH)
 	top := lipgloss.JoinHorizontal(lipgloss.Top,
-		m.pane(m.titledPane(m.inboxTitle(), m.inboxScrollPct()), m.inboxPanel(m.width/2-1, topH), m.width/2-1, topH, FocusInbox),
+		m.pane(m.inboxTitle(), m.inboxPanel(m.width/2-1, topH), m.width/2-1, topH, FocusInbox),
 		" ",
 		m.pane(m.titledPane(m.summaryTitle(), m.summaryScrollPct()), m.summaryPanel(m.width/2, topH), m.width/2, topH, FocusSummary),
 	)
@@ -769,14 +762,39 @@ func (m Model) compactLayout(height int) string {
 	if m.mode == ModeDetail {
 		return m.pane(m.titledPane(m.summaryTitle(), m.summaryScrollPct()), m.summaryPanel(m.width, height), m.width, height, FocusSummary)
 	}
-	return m.pane(m.titledPane(m.inboxTitle(), m.inboxScrollPct()), m.inboxPanel(m.width, height), m.width, height, FocusInbox)
+	return m.pane(m.inboxTitle(), m.inboxPanel(m.width, height), m.width, height, FocusInbox)
 }
 
 func (m Model) inboxTitle() string {
-	if len(m.prs) == 0 {
-		return "Inbox (0/0)"
+	selected := 0
+	if len(m.prs) != 0 {
+		selected = m.selected + 1
 	}
-	return fmt.Sprintf("Inbox (%d/%d)", m.selected+1, len(m.prs))
+	title := m.titledPane(fmt.Sprintf("Inbox (%d/%d)", selected, len(m.prs)), m.inboxScrollPct())
+	if status := m.inboxRefreshLabel(timeNow()); status != "" {
+		title += " · " + status
+	}
+	return title
+}
+
+func (m Model) inboxRefreshLabel(now time.Time) string {
+	var parts []string
+	if m.inboxRefreshing {
+		parts = append(parts, "refreshing")
+	} else if m.inboxRefreshErr != nil {
+		parts = append(parts, "refresh failed")
+	}
+	if !m.lastInboxRefresh.IsZero() {
+		age := now.Sub(m.lastInboxRefresh)
+		if age < 0 {
+			age = 0
+		}
+		parts = append(parts, "updated "+shortDuration(age)+" ago")
+	}
+	if !m.inboxRefreshing && m.inboxRefreshErr != nil {
+		parts = append(parts, readerInput(m.inboxRefreshErr.Error()))
+	}
+	return strings.Join(parts, " · ")
 }
 
 func (m Model) summaryTitle() string {
@@ -1026,7 +1044,7 @@ func embedTitle(box string, title string, style lipgloss.Style, noColor bool) st
 }
 
 func (m Model) inboxPanel(width int, height int) string {
-	if len(m.prs) == 0 && !m.loading {
+	if len(m.prs) == 0 && !m.inboxRefreshing && m.inboxRefreshErr == nil {
 		return m.theme.Styles.Muted.Render("no open pull requests")
 	}
 	innerW := max(1, width-paneHFrame)
@@ -1329,13 +1347,22 @@ func (m *Model) diffPlaceholder() string {
 		return "select PR"
 	case m.diffMode == DiffModeFile:
 		if m.currentFileContent() == "" {
+			if m.fileLoadErr != "" && m.fileLoadErrKey == m.selectedFileContentKey() {
+				return readerInput(m.fileLoadErr)
+			}
 			return "loading file…"
 		}
 	case m.summaryMode == SummaryModeCommits:
 		if m.renderedCommitDiff == "" {
+			if m.commitDiffErr != "" {
+				return readerInput(m.commitDiffErr)
+			}
 			return "loading commit diff…"
 		}
 	case m.diff == "":
+		if m.diffLoadErr != "" {
+			return readerInput(m.diffLoadErr)
+		}
 		return "loading diff…"
 	}
 	return ""
@@ -1515,7 +1542,7 @@ func (m Model) renderModalBox(content string) string {
 }
 
 func (m Model) approvePanel() string {
-	pr, ok := m.current()
+	pr, ok := m.actionPR()
 	if !ok {
 		return "no PR selected"
 	}
@@ -1526,7 +1553,7 @@ func (m Model) approvePanel() string {
 }
 
 func (m Model) commentPanel() string {
-	pr, ok := m.current()
+	pr, ok := m.actionPR()
 	if !ok {
 		return "no PR selected"
 	}
@@ -1548,7 +1575,7 @@ func (m Model) commandPanel() string {
 	var b strings.Builder
 
 	if m.mode == ModeConfirmCommand {
-		pr, ok := m.current()
+		pr, ok := m.actionPR()
 		if m.pendingAction.ID == "toggle-automerge" {
 			pr, ok = m.pendingPR, true
 		}
@@ -1603,15 +1630,77 @@ func (m Model) commandPanel() string {
 }
 
 func (m Model) atlantisGuardPanel() string {
-	g := m.atlantisPending
-	var b strings.Builder
-	fmt.Fprintf(&b, "%s on #%d?\n\n", g.body, g.pr.Number)
-	for _, reason := range g.reasons {
-		b.WriteString("• " + reason + "\n")
+	panel, _, _ := m.atlantisConfirmation()
+	return panel
+}
+
+func (m Model) atlantisGuardStyle() lipgloss.Style {
+	return m.theme.Styles.Focused.Padding(1, 2).Width(min(74, m.width))
+}
+
+// atlantisConfirmation keeps the consent facts pinned above the comment.
+// Only offer confirmation when the safety warnings fit and the last page
+// of the verbatim comment preview is visible.
+func (m Model) atlantisConfirmation() (panel string, lastPage int, canConfirm bool) {
+	job := m.pendingPRAction()
+	if job == nil {
+		return "no action awaiting confirmation", 0, false
 	}
-	b.WriteString("\n")
-	b.WriteString(m.actionAlias("command-confirm") + " send anyway  " + m.actionAlias("command-cancel-confirmation") + " cancel")
-	return b.String()
+	var b strings.Builder
+	name := "atlantis " + job.command.label()
+	fmt.Fprintf(&b, "%s on #%d?\nChecked head: %s", name, m.modalTarget.key.Number, readerInput(job.checkedHead))
+	for _, reason := range job.reasons {
+		b.WriteString("\n• " + truncateANSIWidth(readerInput(reason.text()), 120))
+	}
+	body := strings.ReplaceAll(commentPlainText(job.body), "\t", "    ")
+	if body == name {
+		body = "" // The title already shows the full comment.
+	}
+	label := "confirm"
+	if len(job.reasons) > 0 {
+		label = "send anyway"
+	}
+	cancel := m.actionAlias("command-cancel-confirmation") + " cancel"
+	decision := m.actionAlias("command-confirm") + " " + label + "  " + cancel
+	facts := b.String()
+	if m.width <= 0 {
+		if body != "" {
+			facts += "\n\n" + body
+		}
+		return facts + "\n\n" + decision, 0, true
+	}
+	style := m.atlantisGuardStyle()
+	width := max(1, m.width-style.GetHorizontalFrameSize())
+	width = min(width, 74-style.GetHorizontalFrameSize())
+	height := m.height - chromeLines - style.GetVerticalFrameSize()
+	wrap := func(s string) string { return ansi.Wrap(strings.ReplaceAll(s, "\t", " "), width, "") }
+	rows := func(s string) int { return strings.Count(s, "\n") + 1 }
+	facts, decision = wrap(facts), wrap(decision)
+	if body != "" {
+		body = ansi.Hardwrap(body, width, true)
+	}
+	full := facts + "\n\n" + decision
+	if body != "" {
+		full = facts + "\n\n" + body + "\n\n" + decision
+	}
+	if rows(full) <= height {
+		return full, 0, true
+	}
+	nav := wrap("pgup/pgdown scroll comment")
+	readMore := wrap("Read to the end to confirm  " + cancel)
+	pageSize := height - rows(facts) - rows(nav) - max(rows(decision), rows(readMore)) - 2
+	if pageSize < 1 || body == "" {
+		return wrap("Resize to review before confirming\n" + cancel), 0, false
+	}
+	lines := strings.Split(body, "\n")
+	last := (len(lines) - 1) / pageSize
+	page := min(m.prConfirmationPage, last)
+	footer := readMore
+	if page == last {
+		footer = decision
+	}
+	preview := strings.Join(lines[page*pageSize:min((page+1)*pageSize, len(lines))], "\n")
+	return facts + "\n\n" + preview + "\n\n" + nav + "\n" + footer, last, page == last
 }
 
 func (m Model) settingsPanel() string {

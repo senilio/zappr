@@ -76,7 +76,7 @@ func TestPRSelectionLoadsCommitDiff(t *testing.T) {
 				selected.DetailsLoaded = true
 				selected.ReviewCommentsLoaded = true
 				selected.Commits = commits
-				next, cmd = m.Update(refreshPRMsg{pr: selected})
+				next, cmd = m.Update(refreshPRMsg{update: testPRUpdate(selected, 1)})
 				m = next.(Model)
 				if cmd != nil {
 					runCmd(cmd)
@@ -85,7 +85,7 @@ func TestPRSelectionLoadsCommitDiff(t *testing.T) {
 			if !reflect.DeepEqual(provider.commitDiffSHAs, []string{"newest"}) {
 				t.Fatalf("requested commit diffs = %v, want [newest]", provider.commitDiffSHAs)
 			}
-			next, _ = m.Update(commitDiffMsg{sha: "newest", rendered: "loaded commit diff"})
+			next, _ = m.Update(commitDiffMsg{request: m.commitDiffRequest, sha: "newest", rendered: "loaded commit diff"})
 			m = next.(Model)
 			if m.renderedCommitDiff != "loaded commit diff" || strings.Contains(stripANSI(m.diffPanel(80, 20)), "loading commit diff") {
 				t.Fatal("selected commit diff still loading after response")

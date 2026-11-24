@@ -74,6 +74,7 @@ var actionDescriptors = []tuiAction{
 	{"back-to-inbox", "back to inbox", actionContextNormal, nil, nil, false, confirmationNone, "back-to-inbox", ""},
 	{"refresh-pr", "refresh pull request", actionContextNormal, nil, nil, true, confirmationNone, "refresh-pr", ""},
 	{"refresh-inbox", "refresh full inbox", actionContextNormal, nil, nil, false, confirmationNone, "refresh-inbox", ""},
+	{"confirm-action", "review pending action on pull request", actionContextNormal, nil, nil, true, confirmationNone, "confirm-action", ""},
 	{"toggle-diff", "toggle diff", actionContextNormal, nil, nil, true, confirmationNone, "toggle-diff", ""},
 	{"toggle-description", "toggle PR description", actionContextNormal, nil, nil, true, confirmationNone, "toggle-description", ""},
 	{"toggle-wrap", "toggle focused pane wrapping", actionContextNormal, nil, nil, false, confirmationNone, "toggle-wrap", ""},
@@ -198,7 +199,7 @@ func genericActionLabel(action tuiAction) string {
 
 // selectedPRAction describes the next toggle without changing its bindings.
 func (m Model) selectedPRAction(action tuiAction) tuiAction {
-	pr, ok := m.current()
+	pr, ok := m.actionPR()
 	if !ok {
 		return action
 	}

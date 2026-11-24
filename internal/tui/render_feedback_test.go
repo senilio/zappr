@@ -143,8 +143,8 @@ func TestPlanUnavailableMessageClearsOnPRChange(t *testing.T) {
 	if strings.Contains(m.message, "plan report") {
 		t.Fatalf("stale message survived PR change: %q", m.message)
 	}
-	m.handlePRClosed(m.prs[m.selected].Repo, m.prs[m.selected].Number)
-	if m.message != "PR closed" {
-		t.Fatalf("close feedback lost: %q", m.message)
+	m = deliver(m, testPRRemoval(m.prs[m.selected], 1))
+	if len(m.prs) != 1 || strings.Contains(m.message, "plan report") {
+		t.Fatalf("close retained stale reader state: rows=%d, message=%q", len(m.prs), m.message)
 	}
 }

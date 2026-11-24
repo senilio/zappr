@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/colorprofile"
@@ -83,7 +82,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			// Settle failed requests without automatically retrying on every event.
 			m.sideDiffFailed = msg.key
-			return m, m.finishStatus("diff formatting error: "+msg.err.Error(), true)
+			return m, nil
 		}
 		anchor := msg.anchor
 		if m.diffVP.YOffset() != msg.offset {
@@ -96,128 +95,93 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.restoreDiffAnchor(anchor)
 		return m, nil
 	case refreshMsg:
-		if msg.generation != m.refreshGeneration {
-			return m, nil
+		current := msg.id == m.inboxRequestID
+		latest := current && !errors.Is(msg.err, app.ErrRefreshSuperseded)
+		var selection tea.Cmd
+		changed := false
+		for _, observation := range msg.updates {
+			if observation.Closed || (latest && msg.err == nil) {
+				changed = m.applyPRUpdate(observation) || changed
+			}
 		}
-		m.loading = false
-		if msg.err != nil {
-			m.error = msg.err.Error()
-			m.allPRs = m.app.InboxRepo(m.repo, m.sortMode)
-			m.applyPRSettings()
-			return m, m.finishStatus("error: "+msg.err.Error(), true)
+		if changed {
+			selection = m.reconcilePRUpdates()
 		}
-		m.error = ""
-		m.message = "refreshed"
-		// Always treat a successful refresh as the authoritative PR list. Use a
-		// non-nil empty slice when there are zero PRs so applyPRSettings does
-		// not fall back to the previous (now stale) list and keep showing a PR
-		// that was merged/closed externally.
-		if msg.prs == nil {
-			m.allPRs = []model.PullRequest{}
-		} else {
-			m.clearDiffIfCurrentHeadChanged(msg.prs)
-			m.allPRs = msg.prs
+		if current {
+			m.inboxRefreshing = false
 		}
-		m.applyPRSettings()
-		m.lastFetch = timeNow()
-		if m.selected >= len(m.prs) {
-			m.selected = len(m.prs) - 1
+		if latest {
+			m.inboxRefreshErr = msg.err
+			if msg.err == nil {
+				m.lastInboxRefresh = timeNow()
+			}
 		}
-		if m.selected < 0 {
-			m.selected = 0
-		}
-		// If the queue is now empty (e.g. the last PR was merged/closed
-		// externally), drop back to the Inbox view and focus so the UI does
-		// not stay stuck in a detail/diff mode for a PR that no longer exists.
-		if len(m.prs) == 0 {
-			m.mode = ModeInbox
-			m.focus = FocusInbox
-			m.resizeViewports()
-		}
-		var cmds []tea.Cmd
-		if m.statusActive {
-			cmds = append(cmds, m.finishStatus("refreshed", false))
-		}
-		if cmd := m.selectionCmd(); cmd != nil {
-			cmds = append(cmds, cmd)
-		}
-		// Sync summary viewport content so TotalLineCount is accurate for
-		// the scroll percentage indicator.
-		m.syncSummaryVP()
-		return m, tea.Batch(cmds...)
+		return m, selection
 
 	case refreshPRMsg:
-		if pr, ok := m.current(); ok && pr.Repo == msg.repo && pr.Number == msg.number && msg.requestHead != "" && msg.requestHead != pr.HeadRefOID {
-			return m, nil // A newer inbox head superseded this request.
+		if (msg.update.Closed || msg.err == nil) && m.applyPRUpdate(msg.update) {
+			return m, m.reconcilePRUpdates()
 		}
-		m.loading = false
 		if msg.err != nil {
-			if errors.Is(msg.err, app.ErrPRNotOpen) {
-				return m, m.handlePRClosed(msg.repo, msg.number)
-			}
-			m.error = msg.err.Error()
-			return m, m.finishStatus("error: "+msg.err.Error(), true)
-		}
-		m.error = ""
-		m.message = "refreshed PR"
-		m.updateCachedPR(msg.pr)
-		m.applyPRSettings()
-		m.lastFetch = timeNow()
-		var cmds []tea.Cmd
-		if m.statusActive {
-			cmds = append(cmds, m.finishStatus("refreshed PR", false))
-		}
-		if cmd := m.selectionCmd(); cmd != nil {
-			cmds = append(cmds, cmd)
-		}
-		m.syncSummaryVP()
-		return m, tea.Batch(cmds...)
-
-	case atlantisCheckMsg:
-		return m.handleAtlantisCheck(msg)
-
-	case commitDiffMsg:
-		if msg.err != nil {
-			return m, m.finishStatus("commit diff error: "+msg.err.Error(), true)
-		}
-		// Only apply if this SHA is still the active commit.
-		if msg.sha == m.commitDiffKey {
-			m.renderedCommitDiff = msg.rendered
-			m.rawCommitDiff = msg.raw
-			m.commitFileStarts = msg.fileStarts
-			m.diffVP.GotoTop()
-			m.syncDiffVP()
+			m.failPlanOpen(msg.requestKey, msg.requestHead, 0, msg.err)
 		}
 		return m, nil
 
-	case fileContentMsg:
-		if msg.key != m.selectedFileContentKey() {
+	case prActionResult:
+		cmd := m.handlePRActionResult(msg)
+		return m, cmd
+
+	case commitDiffMsg:
+		if msg.request != m.commitDiffRequest || msg.sha != m.commitDiffKey {
 			return m, nil
 		}
+		m.commitDiffRequest = 0
 		if msg.err != nil {
-			return m, m.finishStatus("file error: "+msg.err.Error(), true)
+			m.commitDiffErr = "commit diff error: " + msg.err.Error()
+			return m, nil
 		}
-		m.fileContentKey = msg.key
-		m.fileContent = msg.content
+		m.commitDiffErr = ""
+		m.renderedCommitDiff = msg.rendered
+		m.rawCommitDiff = msg.raw
+		m.commitFileStarts = msg.fileStarts
 		m.diffVP.GotoTop()
 		m.syncDiffVP()
 		return m, nil
 
-	case diffMsg:
-		m.loading = false
-		// Ignore stale diff results that no longer match the selected PR.
-		if pr, ok := m.current(); ok {
-			if msg.repo != pr.Repo || msg.number != pr.Number || msg.key != prRefreshKey(pr) {
-				return m, nil
-			}
-		} else {
-			return m, nil
+	case fileContentMsg:
+		if msg.request != m.fileRequest {
+			return m, m.completeStatus(msg.owner, "", false)
+		}
+		m.fileRequest = 0
+		if msg.key != m.selectedFileContentKey() || !m.diffEnabled || m.diffMode != DiffModeFile {
+			return m, m.completeStatus(msg.owner, "", false)
 		}
 		if msg.err != nil {
-			m.error = msg.err.Error()
-			return m, m.finishStatus("diff error: "+msg.err.Error(), true)
+			m.fileLoadErr, m.fileLoadErrKey = "file error: "+msg.err.Error(), msg.key
+			return m, m.completeStatus(msg.owner, m.fileLoadErr, true)
 		}
-		m.error = ""
+		m.fileLoadErr = ""
+		m.fileContentKey = msg.key
+		m.fileContent = msg.content
+		m.diffVP.GotoTop()
+		m.syncDiffVP()
+		return m, m.completeStatus(msg.owner, "", false)
+
+	case diffMsg:
+		// Ignore stale diff results that no longer match the selected PR.
+		if msg.request != m.diffRequest {
+			return m, m.completeStatus(msg.owner, "", false)
+		}
+		m.diffRequest = 0
+		pr, ok := m.current()
+		if !ok || msg.repo != pr.Repo || msg.number != pr.Number || msg.key != prRefreshKey(pr) {
+			return m, m.completeStatus(msg.owner, "", false)
+		}
+		if msg.err != nil {
+			m.diffLoadErr = "diff error: " + msg.err.Error()
+			return m, m.completeStatus(msg.owner, m.diffLoadErr, true)
+		}
+		m.diffLoadErr = ""
 		m.rawDiff = msg.raw
 		m.diff = trimDiff(msg.rendered)
 		m.diffFiles = msg.files
@@ -226,11 +190,14 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.diffXOffset = 0
 		m.diffVP.GotoTop()
 		m.syncDiffVP()
-		return m, nil
+		return m, m.completeStatus(msg.owner, "", false)
 
 	case tea.WindowSizeMsg:
 		diffAnchor, summaryAnchor := m.diffAnchor(), m.summaryAnchor()
 		inboxAnchor := m.inboxAnchor()
+		if m.width != msg.Width || m.height != msg.Height {
+			m.prConfirmationPage = 0 // Reflow can change which lines were shown.
+		}
 		m.width = msg.Width
 		m.height = msg.Height
 		m.resizeViewports()
@@ -240,28 +207,45 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case clipboardMsg:
+		if m.statusPending {
+			return m, nil
+		}
 		if msg.err != nil {
 			m.error = "copy failed: " + msg.err.Error()
 			return m, m.finishStatus(m.error, true)
 		}
 		m.error = ""
 		return m, m.finishStatus("copied URL", false)
-	case actionMsg:
-		m.loading = false
-		if msg.err != nil {
-			m.error = msg.err.Error()
-			return m, m.finishStatus("error: "+msg.err.Error(), true)
+	case closePRMsg:
+		changed := m.applyPRUpdate(msg.update)
+		var selection, refresh tea.Cmd
+		if changed {
+			selection = m.reconcilePRUpdates()
 		}
-		m.error = ""
-		m.message = msg.message
-		m.mode = ModeInbox
-		refresh := m.refreshCmd(!m.hideDrafts)
-		if msg.refreshPR != nil {
+		if msg.update.Closed {
+			refresh = m.startInboxRefresh()
+		}
+		if msg.err != nil {
+			return m, tea.Batch(selection, refresh, m.completeStatus(msg.owner, "error: "+msg.err.Error(), true))
+		}
+		return m, tea.Batch(selection, refresh, m.completeStatus(msg.owner, fmt.Sprintf("closed %s#%d", msg.key.Repo, msg.key.Number), false))
+	case actionMsg:
+		if msg.err != nil {
+			if m.ownsStatus(msg.owner) {
+				m.error = msg.err.Error()
+			}
+			return m, m.completeStatus(msg.owner, "error: "+msg.err.Error(), true)
+		}
+		if m.ownsStatus(msg.owner) {
+			m.error, m.message = "", msg.message
+		}
+		refresh := m.startInboxRefresh()
+		if refresh != nil && msg.refreshPR != nil {
 			// Refresh details last so an older list snapshot cannot overwrite
 			// the reviewers returned after the review action.
 			refresh = tea.Sequence(refresh, refreshPRCmd(m.app, *msg.refreshPR))
 		}
-		return m, tea.Batch(m.finishStatus(msg.message, false), refresh)
+		return m, tea.Batch(m.completeStatus(msg.owner, msg.message, false), refresh)
 	case configReloadedMsg:
 		cmd := m.acceptConfigReload(msg)
 		return m, cmd
@@ -279,6 +263,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.err != nil {
 			m.quitPending = false
+			if m.statusPending {
+				return m, nil
+			}
 			m.error = "failed to save settings: " + msg.err.Error()
 			return m, m.finishStatus(m.error, true)
 		}
@@ -288,7 +275,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case pagerMsg:
-		m.loading = false
+		if m.statusPending {
+			return m, nil
+		}
 		if msg.err != nil {
 			m.error = msg.err.Error()
 			return m, nil
@@ -297,19 +286,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.message = msg.message
 		return m, nil
 
-	case spinner.TickMsg:
-		if !m.statusActive {
-			return m, nil
-		}
-		var cmd tea.Cmd
-		m.statusSpinner, cmd = m.statusSpinner.Update(msg)
-		return m, cmd
-
 	case statusDismissMsg:
 		if msg.token == m.statusToken {
-			m.statusActive = false
-			m.statusText = ""
-			m.statusErr = false
+			m.clearStatus()
 		}
 		return m, nil
 
@@ -317,18 +296,18 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.generation != m.pollGeneration {
 			return m, nil
 		}
-		if m.loading {
+		if m.inboxRefreshing {
 			return m, tickCmd(m.pollEvery, m.pollGeneration)
 		}
-		m.loading = true
-		m.message = "polling inbox"
-		if pr, ok := m.current(); ok {
-			return m, tea.Sequence(m.refreshCmd(!m.hideDrafts), refreshPRCmd(m.app, pr), tickCmd(m.pollEvery, m.pollGeneration))
+		refresh := m.startInboxRefresh()
+		if pr, ok := m.current(); ok && refresh != nil {
+			return m, tea.Sequence(refresh, refreshPRCmd(m.app, pr), tickCmd(m.pollEvery, m.pollGeneration))
 		}
-		return m, tea.Sequence(m.refreshCmd(!m.hideDrafts), tickCmd(m.pollEvery, m.pollGeneration))
+		return m, tea.Sequence(refresh, tickCmd(m.pollEvery, m.pollGeneration))
 
 	case uiTickMsg:
-		// Re-render every second so the "refreshed Xs ago" counter stays live.
+		m.expirePRActionNotices(timeNow())
+		// Re-render every second so the Inbox refresh age stays live.
 		return m, uiTickCmd()
 
 	case tea.KeyPressMsg:
@@ -480,6 +459,9 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if key == "space" {
 		key = " "
 	}
+	if m.consumeInvalidatedPRInput(key) {
+		return m, nil
+	}
 
 	switch m.mode {
 	case ModeComment:
@@ -513,24 +495,42 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) triggerAction(action tuiAction) (tea.Model, tea.Cmd) {
 	action = m.selectedPRAction(action)
+	pr, hasPR := m.actionPR()
 	if action.RequiresPR {
-		if _, ok := m.current(); !ok {
+		if !hasPR {
+			if m.mode == ModeCommand && m.modalTarget.key.Number != 0 {
+				m.invalidatePRModal()
+				return m, m.finishStatus("action cancelled: original PR is no longer available", true)
+			}
 			return m, m.finishStatus("no PR selected", true)
 		}
 	}
-	if action.Operation == "comment" && action.Comment != "" && m.atlantisEnabled() && classifyAtlantisComment(action.Comment) != atlantisCommandNone {
-		pr, _ := m.current()
-		return m.guardComment(pr, action.Comment, action, action.Confirmation != confirmationNone)
+	if action.ID == "confirm-action" {
+		cmd := m.openPRActionConfirmation()
+		return m, cmd
+	}
+	if action.Operation == "comment" && action.Comment != "" {
+		if command := classifyAtlantisComment(action.Comment); command != atlantisCommandNone {
+			if m.mode == ModeCommand {
+				m.cancelPRModal()
+			}
+			cmd := m.enqueueAtlantisComment(pr, command, action.Comment, action.Confirmation != confirmationNone)
+			return m, cmd
+		}
 	}
 	if action.Confirmation != confirmationNone {
+		m.cancelPlanOpen()
+		if m.mode != ModeCommand {
+			m.prevMode = m.mode
+		}
+		m.modalTarget = m.intentForPR(pr)
+		m.pendingAction = action
 		if action.Operation == "approve" {
-			m.pendingAction = action
 			m.mode = ModeConfirmApprove
 			return m, nil
 		}
-		m.pendingAction = action
 		if action.ID == "toggle-automerge" {
-			m.pendingPR, _ = m.current()
+			m.pendingPR = pr
 		}
 		m.mode = ModeConfirmCommand
 		return m, nil
@@ -569,26 +569,21 @@ func (m Model) executeAction(action tuiAction) (tea.Model, tea.Cmd) {
 		m.focus = FocusSummary
 		return m, nil
 	}
-	fromCommand := m.mode == ModeCommand || m.mode == ModeConfirmCommand
-	pr, _ := m.current()
+	fromModal := m.mode == ModeCommand || m.mode == ModeConfirmCommand || m.mode == ModeConfirmApprove
+	pr, ok := m.actionPR()
+	if fromModal && action.RequiresPR && !ok {
+		m.invalidatePRModal()
+		return m, m.finishStatus("action cancelled: original PR is no longer available", true)
+	}
 	if m.mode == ModeConfirmCommand && action.ID == "toggle-automerge" {
 		pr = m.pendingPR
-		found := false
-		for _, candidate := range m.prs {
-			if candidate.Repo == pr.Repo && candidate.Number == pr.Number {
-				found = true
-				break
-			}
-		}
-		if !found {
-			m.mode = m.prevMode
-			m.commandInput = ""
-			return m, m.finishStatus("auto-merge cancelled: PR is no longer in the inbox", true)
-		}
 	}
-	if fromCommand {
-		m.mode = m.prevMode
-		m.commandInput = ""
+	closedRevision := m.intentForPR(pr).closedRevision
+	if fromModal {
+		closedRevision = m.modalTarget.closedRevision
+	}
+	if fromModal {
+		m.cancelPRModal()
 	}
 	if action.ID == "colorscheme" {
 		palettes := uitheme.AllPalettes(m.theme.IsDark)
@@ -608,19 +603,19 @@ func (m Model) executeAction(action tuiAction) (tea.Model, tea.Cmd) {
 	}
 	switch action.Operation {
 	case "approve":
-		m.loading = true
-		return m, tea.Batch(m.startStatus("approving…"), approveCmd(m.app, pr))
+		owner := m.startStatus("approving…")
+		return m, approveCmd(m.app, pr, owner, closedRevision)
 	case "comment":
 		if action.Comment == "" {
+			m.cancelPlanOpen()
 			m.comment = ""
+			m.prevMode = m.mode
+			m.modalTarget = m.intentForPR(pr)
 			m.mode = ModeComment
 			return m, nil
 		}
-		if m.atlantisEnabled() && classifyAtlantisComment(action.Comment) == atlantisCommandPlan {
-			// Reached only after the guard allowed it and the normal confirmation was accepted.
-			m.recordRecentPlan(pr)
-		}
-		return m, tea.Batch(m.startStatus("commenting…"), commentCmd(m.app, pr, action.Comment))
+		owner := m.startStatus("commenting…")
+		return m, commentCmd(m.app, pr, action.Comment, owner, closedRevision)
 	}
 	switch action.ID {
 	case "toggle-draft":
@@ -628,21 +623,27 @@ func (m Model) executeAction(action tuiAction) (tea.Model, tea.Cmd) {
 		if !pr.Draft {
 			status = "marking draft…"
 		}
-		return m, tea.Batch(m.startStatus(status), toggleDraftCmd(m.app, pr))
+		owner := m.startStatus(status)
+		return m, toggleDraftCmd(m.app, pr, owner, closedRevision)
 	case "toggle-automerge":
 		status := "enabling auto-merge…"
 		if pr.AutoMerge {
 			status = "disabling auto-merge…"
 		}
-		return m, tea.Batch(m.startStatus(status), toggleAutoMergeCmd(m.app, pr))
+		owner := m.startStatus(status)
+		return m, toggleAutoMergeCmd(m.app, pr, owner, closedRevision)
 	case "close-pr":
-		return m, tea.Batch(m.startStatus("closing…"), closePRCmd(m.app, pr, ""))
+		owner := m.startStatus("closing…")
+		return m, closePRCmd(m.app, pr, "", owner, closedRevision)
 	case "update-branch":
-		return m, tea.Batch(m.startStatus("updating branch…"), updateBranchCmd(m.app, pr))
+		owner := m.startStatus("updating branch…")
+		return m, updateBranchCmd(m.app, pr, owner, closedRevision)
 	case "request-changes":
-		return m, tea.Batch(m.startStatus("requesting changes…"), requestChangesCmd(m.app, pr, ""))
+		owner := m.startStatus("requesting changes…")
+		return m, requestChangesCmd(m.app, pr, "", owner, closedRevision)
 	case "merge-pr":
-		return m, tea.Batch(m.startStatus("merging…"), mergePRCmd(m.app, pr))
+		owner := m.startStatus("merging…")
+		return m, mergePRCmd(m.app, pr, owner, closedRevision)
 	}
 	if m.setSummaryMode(action.ID) {
 		m.summaryVP.GotoTop()
@@ -650,6 +651,8 @@ func (m Model) executeAction(action tuiAction) (tea.Model, tea.Cmd) {
 		m.reconcileComments()
 		m.summaryXOffset = 0
 		m.commitDiffKey = ""
+		m.commitDiffRequest = 0
+		m.commitDiffErr = ""
 		m.renderedCommitDiff = ""
 		m.rawCommitDiff = ""
 		m.commitFileStarts = nil
@@ -911,18 +914,15 @@ func (m Model) executeAction(action tuiAction) (tea.Model, tea.Cmd) {
 		m.focus = FocusInbox
 		m.resizeViewports()
 	case "refresh-pr":
-		if pr, ok := m.current(); ok {
-			m.loading = true
-			m.message = "refreshing PR"
-			return m, tea.Batch(m.startStatus("refreshing PR…"), refreshPRCmd(m.app, pr))
+		if ok {
+			cmd := m.enqueuePRAction(pr, queuedPRAction{})
+			return m, cmd
 		}
-		m.loading = true
-		m.message = "refreshing"
-		return m, tea.Batch(m.startStatus("refreshing…"), m.refreshCmd(!m.hideDrafts))
+		refresh := m.startInboxRefresh()
+		return m, refresh
 	case "refresh-inbox":
-		m.loading = true
-		m.message = "refreshing"
-		return m, tea.Batch(m.startStatus("refreshing…"), m.refreshCmd(!m.hideDrafts))
+		refresh := m.startInboxRefresh()
+		return m, refresh
 	case "toggle-description":
 		m.toggleDescription()
 		return m, nil
@@ -950,9 +950,9 @@ func (m Model) executeAction(action tuiAction) (tea.Model, tea.Cmd) {
 			}
 			m.mode = ModeDiff
 			m.focus = FocusDiff
-			mv := Model{width: m.width, height: m.height, theme: m.theme, focus: m.focus, prs: m.prs, selected: m.selected}
-			diffInnerW := mv.paneInnerWidth(mv.diffPaneOuterWidth(), FocusDiff)
-			return m, tea.Batch(m.startStatus("fetching diff…"), diffCmd(m.app, pr, diffRenderWidth(diffInnerW)))
+			owner := m.startStatus("fetching diff…")
+			cmd := m.startDiffLoad(pr, owner)
+			return m, cmd
 		}
 		// Wide/medium: toggle diff pane content.
 		m.diffEnabled = !m.diffEnabled
@@ -1016,11 +1016,16 @@ func (m Model) executeAction(action tuiAction) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		path := pr.Files[m.fileIndex].Path
-		return m, tea.Batch(m.startStatus("fetching file…"), fileContentCmd(m.app.GitHub, pr.Repo, path, pr.HeadRefOID, key))
+		m.fileLoadErr = ""
+		owner := m.startStatus("fetching file…")
+		m.loadToken++
+		m.fileRequest = m.loadToken
+		return m, fileContentCmd(m.app.GitHub, pr.Repo, path, pr.HeadRefOID, key, owner, m.fileRequest)
 	case "command-palette":
 		m.commandInput = ""
 		m.commandCursor = 0
 		m.prevMode = m.mode
+		m.modalTarget = m.intentForPR(pr)
 		m.mode = ModeCommand
 	}
 	return m, nil
@@ -1032,6 +1037,7 @@ func (m Model) handleApproveKey(key string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if action.ID == "approve-cancel" {
+		m.cancelPRModal()
 		m.mode = ModeDetail
 		return m, nil
 	}
@@ -1041,47 +1047,8 @@ func (m Model) handleApproveKey(key string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *Model) updateCachedPR(pr model.PullRequest) {
-	for i := range m.allPRs {
-		if m.allPRs[i].Repo == pr.Repo && m.allPRs[i].Number == pr.Number {
-			if m.allPRs[i].UpdatedAt.After(pr.UpdatedAt) {
-				return
-			}
-			if m.allPRs[i].HeadRefOID != pr.HeadRefOID {
-				m.clearLoadedDiffState()
-			}
-			m.allPRs[i] = pr
-			return
-		}
-	}
-	m.allPRs = append(m.allPRs, pr)
-}
-
-func (m *Model) clearDiffIfCurrentHeadChanged(prs []model.PullRequest) {
-	current, ok := m.current()
-	if !ok {
-		return
-	}
-	for _, pr := range prs {
-		if pr.Repo == current.Repo && pr.Number == current.Number {
-			if pr.HeadRefOID != current.HeadRefOID {
-				m.clearLoadedDiffState()
-			}
-			return
-		}
-	}
-}
-
-func (m *Model) removeCachedPR(repo string, number int) {
-	for i := range m.allPRs {
-		if m.allPRs[i].Repo == repo && m.allPRs[i].Number == number {
-			m.allPRs = append(m.allPRs[:i], m.allPRs[i+1:]...)
-			return
-		}
-	}
-}
-
 func (m *Model) clearLoadedDiffState() {
+	m.diffRequest, m.fileRequest, m.commitDiffRequest = 0, 0, 0
 	m.diff = ""
 	m.rawDiff = ""
 	m.diffFiles = nil
@@ -1090,11 +1057,14 @@ func (m *Model) clearLoadedDiffState() {
 	m.diffMode = DiffModeHunks
 	m.fileContent = ""
 	m.fileContentKey = ""
+	m.fileLoadErr, m.fileLoadErrKey = "", ""
 	m.fileIndex = 0
 	m.commitIndex = 0
 	m.commentIndex = 0
 	m.diffLoadKey = ""
+	m.diffLoadErr = ""
 	m.commitDiffKey = ""
+	m.commitDiffErr = ""
 	m.renderedCommitDiff = ""
 	m.rawCommitDiff = ""
 	m.commitFileStarts, m.sideFileStarts = nil, nil
@@ -1118,10 +1088,14 @@ func prRefreshKey(pr model.PullRequest) string {
 // selectionCmd loads whatever the currently selected PR still needs.
 func (m *Model) selectionCmd() tea.Cmd {
 	m.reconcilePlan()
+	return tea.Batch(m.autoDiffCmd(), m.autoDetailsCmd(), m.selectedCommitDiffCmd())
+}
+
+func (m *Model) selectedCommitDiffCmd() tea.Cmd {
 	if m.summaryMode == SummaryModeCommits {
-		return tea.Batch(m.autoDiffCmd(), m.autoDetailsCmd(), m.autoCommitDiffCmd())
+		return m.autoCommitDiffCmd()
 	}
-	return tea.Batch(m.autoDiffCmd(), m.autoDetailsCmd())
+	return nil
 }
 
 // autoDetailsCmd fetches commits, comments, and reviewers for the selected PR
@@ -1131,6 +1105,9 @@ func (m *Model) autoDetailsCmd() tea.Cmd {
 	pr, ok := m.current()
 	if !ok || (pr.DetailsLoaded && pr.ReviewCommentsLoaded && pr.ReviewersLoaded && pr.ConversationCommentsLoaded && pr.ReviewActivityLoaded) {
 		return nil
+	}
+	if q := m.prActions[keyForPR(pr)]; q != nil && len(q.jobs) > 0 && q.jobs[0].phase != prActionConfirming {
+		return nil // the queue already owns a read or write for the selected PR
 	}
 	key := fmt.Sprintf("%s@%s", prRefreshKey(pr), pr.UpdatedAt.Format(time.RFC3339Nano))
 	if m.detailsLoadKey == key {
@@ -1151,14 +1128,18 @@ func (m *Model) autoDiffCmd() tea.Cmd {
 	if !ok {
 		return nil
 	}
-	key := prRefreshKey(pr)
-	if m.diffLoadKey == key {
+	if m.diffLoadKey == prRefreshKey(pr) {
 		return nil
 	}
-	m.diffLoadKey = key
-	mv := Model{width: m.width, height: m.height, theme: m.theme, focus: m.focus, prs: m.prs, selected: m.selected}
-	diffInnerW := mv.paneInnerWidth(mv.diffPaneOuterWidth(), FocusDiff)
-	return diffCmd(m.app, pr, diffRenderWidth(diffInnerW))
+	return m.startDiffLoad(pr, 0)
+}
+
+func (m *Model) startDiffLoad(pr model.PullRequest, owner int) tea.Cmd {
+	m.diffLoadKey, m.diffLoadErr = prRefreshKey(pr), ""
+	m.loadToken++
+	m.diffRequest = m.loadToken
+	diffInnerW := m.paneInnerWidth(m.diffPaneOuterWidth(), FocusDiff)
+	return diffCmd(m.app, pr, diffRenderWidth(diffInnerW), owner, m.diffRequest)
 }
 
 // autoCommitDiffCmd fetches the diff for the currently selected commit when
@@ -1179,13 +1160,15 @@ func (m *Model) autoCommitDiffCmd() tea.Cmd {
 		return nil
 	}
 	m.commitDiffKey = sha
+	m.commitDiffErr = ""
 	m.renderedCommitDiff = ""
 	m.rawCommitDiff = ""
 	m.commitFileStarts = nil
 	m.diffVP.GotoTop()
-	mv := Model{width: m.width, height: m.height, theme: m.theme, focus: m.focus, prs: m.prs, selected: m.selected}
-	diffInnerW := mv.paneInnerWidth(mv.diffPaneOuterWidth(), FocusDiff)
-	return commitDiffCmd(m.app.GitHub, pr.Repo, sha, diffRenderWidth(diffInnerW))
+	m.loadToken++
+	m.commitDiffRequest = m.loadToken
+	diffInnerW := m.paneInnerWidth(m.diffPaneOuterWidth(), FocusDiff)
+	return commitDiffCmd(m.app.GitHub, pr.Repo, sha, diffRenderWidth(diffInnerW), m.commitDiffRequest)
 }
 
 func (m *Model) resizeViewports() {
@@ -1593,9 +1576,10 @@ func (m *Model) cycleSortMode() tea.Cmd {
 }
 
 func (m *Model) applyPRSettings() {
-	current := 0
+	defer m.reconcilePRModal()
+	current := app.PRKey{}
 	if pr, ok := m.current(); ok {
-		current = pr.Number
+		current = keyForPR(pr)
 	}
 	source := m.allPRs
 	if source == nil {
@@ -1607,9 +1591,9 @@ func (m *Model) applyPRSettings() {
 		m.resetPRViewState()
 		return
 	}
-	if current != 0 {
+	if current.Number != 0 {
 		for i, pr := range m.prs {
-			if pr.Number == current {
+			if keyForPR(pr) == current {
 				m.selected = i
 				return
 			}
@@ -1621,7 +1605,7 @@ func (m *Model) applyPRSettings() {
 	if m.selected < 0 {
 		m.selected = 0
 	}
-	if pr, ok := m.current(); ok && pr.Number != current {
+	if pr, ok := m.current(); ok && keyForPR(pr) != current {
 		m.resetPRViewState()
 	}
 }
@@ -1674,7 +1658,8 @@ func (m Model) handleSettingsKey(key string) (tea.Model, tea.Cmd) {
 			m.message = draftFilterMessage(m.hideDrafts)
 			save := m.saveSettings()
 			if !m.hideDrafts {
-				return m, tea.Batch(save, m.refreshCmd(true))
+				refresh := m.startInboxRefresh()
+				return m, tea.Batch(save, refresh)
 			}
 			return m, save
 		} else {
@@ -1730,14 +1715,27 @@ func (m Model) handleCommentKey(key string) (tea.Model, tea.Cmd) {
 	if action, ok := m.actions.actionForKey(actionContextComment, key); ok {
 		switch action.ID {
 		case "comment-cancel":
+			m.cancelPRModal()
 			m.mode = ModeDetail
 			return m, nil
 		case "comment-submit":
-			pr, ok := m.current()
-			if !ok || m.comment == "" {
+			pr, ok := m.actionPR()
+			if !ok {
+				m.invalidatePRModal()
+				return m, m.finishStatus("comment cancelled: original PR is no longer available", true)
+			}
+			if m.comment == "" {
 				return m, nil
 			}
-			return m.guardComment(pr, m.comment, tuiAction{}, false)
+			body, closedRevision := m.comment, m.modalTarget.closedRevision
+			m.cancelPRModal()
+			m.mode = ModeDetail
+			if command := classifyAtlantisComment(body); command != atlantisCommandNone {
+				cmd := m.enqueueAtlantisComment(pr, command, body, false)
+				return m, cmd
+			}
+			owner := m.startStatus("commenting…")
+			return m, commentCmd(m.app, pr, body, owner, closedRevision)
 		case "comment-backspace":
 			if len(m.comment) > 0 {
 				m.comment = m.comment[:len(m.comment)-1]
@@ -1754,8 +1752,7 @@ func (m Model) handleCommentKey(key string) (tea.Model, tea.Cmd) {
 func (m Model) handleCommandKey(key string) (tea.Model, tea.Cmd) {
 	action, control := m.actions.actionForKey(actionContextCommand, key)
 	if control && action.ID == "command-cancel" {
-		m.mode = m.prevMode
-		m.commandInput = ""
+		m.cancelPRModal()
 		m.commandCursor = 0
 		return m, nil
 	}
@@ -1823,51 +1820,13 @@ func (m Model) handleConfirmCommandKey(key string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if action.ID == "command-cancel-confirmation" {
-		m.mode = m.prevMode
-		m.commandInput = ""
+		m.cancelPRModal()
 		return m, nil
 	}
 	if action.ID == "command-confirm" {
 		return m.executeAction(m.pendingAction)
 	}
 	return m, nil
-}
-
-func (m Model) handleConfirmAtlantisKey(key string) (tea.Model, tea.Cmd) {
-	action, ok := m.actions.actionForKey(actionContextCommandConfirmation, key)
-	if !ok {
-		return m, nil
-	}
-	g := m.atlantisPending
-	switch action.ID {
-	case "command-cancel-confirmation":
-		m.mode = g.returnMode
-		m.atlantisPending = atlantisGuard{}
-		m.commandInput = ""
-		return m, nil
-	case "command-confirm":
-		m.mode = g.returnMode
-		m.atlantisPending = atlantisGuard{}
-		m.commandInput = ""
-		return m.postGuardedComment(g, g.pr)
-	}
-	return m, nil
-}
-
-// handlePRClosed drops a PR that GitHub reports as no longer open.
-func (m *Model) handlePRClosed(repo string, number int) tea.Cmd {
-	m.error = ""
-	m.removeCachedPR(repo, number)
-	m.applyPRSettings()
-	m.message = "PR closed"
-	m.lastFetch = timeNow()
-	if len(m.prs) == 0 {
-		m.mode = ModeInbox
-		m.focus = FocusInbox
-		m.resizeViewports()
-	}
-	m.syncSummaryVP()
-	return m.finishStatus("PR closed", false)
 }
 
 func (m Model) handleHelpKey(key string) (tea.Model, tea.Cmd) {

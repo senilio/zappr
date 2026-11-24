@@ -145,6 +145,11 @@ Keyboard shortcuts are available via `?`.
 
 ### Inbox status
 
+The Inbox header shows `refreshing` for a full refresh (`R` or automatic
+polling) and the age of the last successful full refresh. A failed refresh
+shows an error without resetting that age. Refreshing one PR with `r` only
+updates that PR's row.
+
 Each inbox item has two rows: its title, then `#number by author` with status
 pills aligned to the right. On the selected PR, the title is bold and the
 number and author use plain text:
@@ -261,7 +266,7 @@ actions:
 ```
 
 Configurable built-in IDs: `open-pr`, `copy-pr-url`, `refresh-pr`,
-`refresh-inbox`, `reload`, `toggle-diff`, `toggle-description`, `toggle-wrap`, `open-diff-pager`, `next-file`, `prev-file`,
+`refresh-inbox`, `confirm-action`, `reload`, `toggle-diff`, `toggle-description`, `toggle-wrap`, `open-diff-pager`, `next-file`, `prev-file`,
 `toggle-side-by-side`, `toggle-file-content`, `toggle-draft`, `toggle-automerge`, `close-pr`,
 `update-branch`, `request-changes`, and `merge-pr`. Generic action
 IDs include the default `approve`, `approve-now`, and `comment` entries.
@@ -376,9 +381,15 @@ omit commit verification, project counts, and timestamps. PRs with neither
 Atlantis checks nor a loaded report do not show these pills. Optional pills
 drop when the metadata row is too narrow.
 
-Comments whose first two words are `atlantis plan` or `atlantis apply` (case
-insensitive) are guarded, whether they come from an action or from free text.
-zappr refreshes the PR first, then decides:
+Selected-PR refreshes (`r`) and Atlantis `plan`, `apply`, `cancel`, and `unlock`
+comments run in order on the original PR. For example, press `r` then `P` and
+move on to another PR without waiting. Each PR has its own queue. The Inbox row
+shows progress such as `refreshing`, `plan queued`, or `checking plan`.
+`plan sent` means GitHub accepted the comment, not that Atlantis ran or passed.
+
+The commands are recognized case-insensitively, in both presets and typed
+comments. zappr verifies that the target is open before sending. With Atlantis
+enabled, it also checks the status before sending a `plan` or `apply`:
 
 - `atlantis plan` is held while any Atlantis status is running, or while a plan
   posted by zappr on the same PR and head commit within the last 2 minutes has
@@ -388,11 +399,15 @@ zappr refreshes the PR first, then decides:
   for the latest commit. A missing plan is not held if apply already
   succeeded; the other reasons still are.
 
-If the refresh fails, the dialog says zappr could not verify Atlantis status.
-A held comment opens a dialog that lists the reasons and offers to send anyway
-or cancel. When the guard passes, the action's normal confirmation (if any)
-still applies; a blocked dialog replaces that confirmation, so you are asked
-once.
+If the row says `confirm plan` (or another command), select that PR and run
+`:confirm-action`. The dialog shows the checked head and any reasons to hold
+the comment, without interrupting work on other PRs. A guard warning uses
+`send anyway` in place of the normal confirmation.
+
+After confirmation zappr checks again. A changed head or a new guard warning
+requires fresh confirmation. You can override unavailable Atlantis evidence,
+but not an unknown PR state or head. These checks apply before dispatch;
+GitHub does not let `gh pr comment` require that the head stay unchanged.
 
 Set `atlantis.enabled: false` to disable the Plan tab, Atlantis pills, and
 the guards.
@@ -420,8 +435,9 @@ actions:
     comment: atlantis unlock
 ```
 
-In this example, `P` or `:ap` posts the plan command immediately because
-`confirm: false` is explicit. Omit that field to require confirmation. Apply,
+In this example, `P` or `:ap` queues the plan without ordinary confirmation
+because `confirm: false` is explicit. Guard warnings still require a decision.
+Omit that field to require confirmation. Apply,
 cancel, and unlock confirm by default; posting those comments may trigger
 infrastructure changes or affect Atlantis state.
 

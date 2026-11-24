@@ -56,11 +56,6 @@ func (m *Model) applyReloadedConfig(cfg config.Config, actions actionRegistry) t
 	keepInboxOffset := previousWrap.Inbox == cfg.Wrap.Inbox && m.cfg.Sort == cfg.Sort && m.hideDrafts == cfg.HideDrafts
 	previous, hadPrevious := m.current()
 	showDrafts := m.hideDrafts && !cfg.HideDrafts
-	if m.hideDrafts != cfg.HideDrafts {
-		// Ignore responses fetched under the previous visibility policy.
-		m.refreshGeneration++
-		m.loading = false
-	}
 	cachePath := m.cfg.Cache.Path
 	if m.app != nil && m.app.Cache != nil {
 		cachePath = m.app.Cache.Path()
@@ -104,14 +99,18 @@ func (m *Model) applyReloadedConfig(cfg config.Config, actions actionRegistry) t
 	} else {
 		selection = m.selectionCmd()
 	}
-	m.error = ""
-	m.message = "configuration reloaded"
-	if cfg.Cache.Path != cachePath {
-		m.message += "; cache.path requires restart"
-	}
 	var refresh tea.Cmd
 	if showDrafts {
-		refresh = m.refreshCmd(true)
+		refresh = m.startInboxRefresh()
 	}
-	return tea.Batch(selection, refresh, poll, m.finishStatus(m.message, false))
+	var notice tea.Cmd
+	if !m.statusPending {
+		m.error = ""
+		m.message = "configuration reloaded"
+		if cfg.Cache.Path != cachePath {
+			m.message += "; cache.path requires restart"
+		}
+		notice = m.finishStatus(m.message, false)
+	}
+	return tea.Batch(selection, refresh, poll, notice)
 }

@@ -175,6 +175,8 @@ actions:
   comment:
     operation: comment
     keys: [c]
+  confirm-action:
+    commands: [confirm-action]
   copy-pr-url:
     keys: [C]
   merge-pr:

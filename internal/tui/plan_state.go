@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/senilio/zappr/internal/app"
 	"github.com/senilio/zappr/internal/model"
 	"github.com/senilio/zappr/internal/plan"
 )
@@ -12,7 +13,10 @@ import (
 type planOpenRequest struct {
 	prKey, head string
 	token       uint64
+	refresh     uint64 // a queued manual refresh, when one already owns the read
 }
+
+const planLoadingMessage = "loading plan comments…"
 
 // Parsed documents are immutable and shared by Model values.
 type planReaderState struct {
@@ -29,6 +33,7 @@ func (m *Model) reconcilePlan() {
 	m.reconcileComments()
 	pr, ok := m.current()
 	if !ok || !m.atlantisEnabled() {
+		m.cancelPlanOpen()
 		m.planState = planReaderState{}
 		if m.summaryMode == SummaryModePlan {
 			m.summaryMode = SummaryModeFiles
@@ -38,7 +43,7 @@ func (m *Model) reconcilePlan() {
 	key := readerPRKey(pr)
 	changedPR := m.planState.prKey != key
 	if changedPR {
-		m.readerIntentToken++
+		m.cancelPlanOpen()
 		m.planState = planReaderState{prKey: key}
 	}
 	fingerprint := plan.Fingerprint(pr.Comments, pr.ConversationCommentsLoaded)
@@ -60,12 +65,12 @@ func (m *Model) reconcilePlan() {
 	}
 	if request := m.planState.pendingOpen; request != nil {
 		if request.prKey != key || request.head != pr.HeadRefOID || request.token != m.readerIntentToken {
-			m.planState.pendingOpen = nil
+			m.cancelPlanOpen()
 		} else if m.planAvailable() {
-			m.planState.pendingOpen = nil
+			m.cancelPlanOpen()
 			m.enterPlan()
 		} else if pr.ConversationCommentsLoaded {
-			m.planState.pendingOpen = nil
+			m.cancelPlanOpen()
 			m.message = "no supported plan report found"
 		}
 	}
@@ -127,6 +132,21 @@ func (m Model) planNodeIndex() int {
 func (m *Model) cancelPlanOpen() {
 	m.readerIntentToken++
 	m.planState.pendingOpen = nil
+	if m.message == planLoadingMessage {
+		m.message = ""
+	}
+}
+
+func (m *Model) failPlanOpen(key app.PRKey, head string, refresh uint64, err error) {
+	request := m.planState.pendingOpen
+	pr, ok := m.current()
+	if request == nil || !ok || keyForPR(pr) != key || pr.HeadRefOID != head ||
+		request.prKey != readerPRKey(pr) || request.head != head || request.refresh != refresh {
+		return
+	}
+	m.cancelPlanOpen()
+	m.detailsLoadKey = ""
+	m.message = "plan comments failed: " + readerInput(err.Error())
 }
 
 func (m *Model) enterPlan() {
@@ -156,8 +176,12 @@ func (m *Model) openPlan() tea.Cmd {
 		m.message = "no supported plan report found"
 		return nil
 	}
-	m.planState.pendingOpen = &planOpenRequest{readerPRKey(pr), pr.HeadRefOID, m.readerIntentToken}
-	m.message = "loading plan comments…"
+	request := &planOpenRequest{prKey: readerPRKey(pr), head: pr.HeadRefOID, token: m.readerIntentToken}
+	if q := m.prActions[keyForPR(pr)]; q != nil && len(q.jobs) > 0 && q.jobs[0].phase == prActionRefreshing {
+		request.refresh = q.jobs[0].token
+	}
+	m.planState.pendingOpen = request
+	m.message = planLoadingMessage
 	return m.autoDetailsCmd()
 }
 

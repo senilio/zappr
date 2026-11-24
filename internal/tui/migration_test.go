@@ -86,10 +86,10 @@ func TestBackgroundChangeInvalidatesLayout(t *testing.T) {
 func TestInitRequestsBackground(t *testing.T) {
 	m := scrollModel(t, 3)
 	batch, ok := m.Init()().(tea.BatchMsg)
-	if !ok || len(batch) != 5 {
+	if !ok || len(batch) != 4 {
 		t.Fatalf("initial commands must include terminal background query: %T (%d)", batch, len(batch))
 	}
-	if !reflect.DeepEqual(batch[3](), tea.RequestBackgroundColor()) {
+	if !reflect.DeepEqual(batch[2](), tea.RequestBackgroundColor()) {
 		t.Fatal("missing terminal background query")
 	}
 }

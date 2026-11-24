@@ -6,9 +6,18 @@ import (
 	"github.com/senilio/zappr/internal/model"
 )
 
+// PRActionCheck keeps the directly observed target separate from optional
+// Atlantis evidence. A non-nil method error means the target is unverified.
+type PRActionCheck struct {
+	PR          model.PullRequest
+	ChecksKnown bool
+	EvidenceErr error
+}
+
 type Provider interface {
 	ListPRs(ctx context.Context, repo string) ([]model.PullRequest, bool, error)
 	GetPR(ctx context.Context, repo string, number int) (model.PullRequest, error)
+	CheckPRAction(ctx context.Context, repo string, number int, guarded bool) (PRActionCheck, error)
 	GetDiff(ctx context.Context, repo string, number int) (string, error)
 	GetCommitDiff(ctx context.Context, repo string, sha string) (string, error)
 	GetFileContent(ctx context.Context, repo string, path string, ref string) (string, error)

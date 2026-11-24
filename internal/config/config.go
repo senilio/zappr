@@ -166,6 +166,7 @@ func DefaultActions() map[string]ActionConfig {
 		"copy-pr-url":         {Keys: []string{"C"}},
 		"refresh-pr":          {Keys: []string{"r"}},
 		"refresh-inbox":       {Keys: []string{"R"}},
+		"confirm-action":      {Commands: []string{"confirm-action"}},
 		"reload":              {Commands: []string{"reload"}},
 		"toggle-diff":         {Keys: []string{"v"}},
 		"toggle-description":  {Keys: []string{"d"}},

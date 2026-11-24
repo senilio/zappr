@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"os/exec"
@@ -18,7 +19,11 @@ type GHProvider struct {
 	Bin string
 }
 
-const prListLimit = 60
+const (
+	prListLimit  = 60
+	prBaseFields = "number,title,author,url,body,labels,additions,deletions,changedFiles,isDraft,autoMergeRequest,state,headRefOid,statusCheckRollup,reviewDecision"
+	prFields     = prBaseFields + ",mergeStateStatus,files,updatedAt"
+)
 
 func NewGHProvider() *GHProvider {
 	return &GHProvider{Bin: "gh"}
@@ -27,7 +32,7 @@ func NewGHProvider() *GHProvider {
 func (p *GHProvider) ListPRs(ctx context.Context, repo string) ([]model.PullRequest, bool, error) {
 	// Commits and comments are omitted: their nested connections dominate the
 	// GraphQL cost of a list query. GetPR fetches them for the selected PR.
-	args := []string{"pr", "list", "--repo", repo, "--state", "open", "--search", "sort:updated-desc", "--limit", strconv.Itoa(prListLimit), "--json", "number,title,author,url,body,labels,additions,deletions,changedFiles,isDraft,autoMergeRequest,state,headRefOid,statusCheckRollup,reviewDecision,mergeStateStatus,files,updatedAt"}
+	args := []string{"pr", "list", "--repo", repo, "--state", "open", "--search", "sort:updated-desc", "--limit", strconv.Itoa(prListLimit), "--json", prFields}
 	out, err := p.run(ctx, args...)
 	if err != nil {
 		return nil, false, err
@@ -37,7 +42,9 @@ func (p *GHProvider) ListPRs(ctx context.Context, repo string) ([]model.PullRequ
 	if err := json.Unmarshal(out, &raw); err != nil {
 		return nil, false, fmt.Errorf("parse gh pr list: %w", err)
 	}
-
+	if raw == nil {
+		return nil, false, fmt.Errorf("parse gh pr list: missing PR list")
+	}
 	prs := make([]model.PullRequest, 0, len(raw))
 	for _, item := range raw {
 		prs = append(prs, item.toModel(repo))
@@ -45,16 +52,80 @@ func (p *GHProvider) ListPRs(ctx context.Context, repo string) ([]model.PullRequ
 	return prs, len(raw) < prListLimit, nil
 }
 
-func (p *GHProvider) GetPR(ctx context.Context, repo string, number int) (model.PullRequest, error) {
-	out, err := p.run(ctx, "pr", "view", strconv.Itoa(number), "--repo", repo, "--json", "number,title,author,url,body,labels,additions,deletions,changedFiles,isDraft,autoMergeRequest,state,headRefOid,statusCheckRollup,reviewDecision,files,commits,reviews,latestReviews,reviewRequests,mergeStateStatus,updatedAt")
+func (p *GHProvider) viewPR(ctx context.Context, repo string, number int, fields string) (ghPR, error) {
+	out, err := p.run(ctx, "pr", "view", strconv.Itoa(number), "--repo", repo, "--json", fields)
 	if err != nil {
-		return model.PullRequest{}, err
+		return ghPR{}, err
 	}
 	var raw ghPR
 	if err := json.Unmarshal(out, &raw); err != nil {
-		return model.PullRequest{}, fmt.Errorf("parse gh pr view: %w", err)
+		return ghPR{}, fmt.Errorf("parse gh pr view: %w", err)
+	}
+	return raw, nil
+}
+
+func (p *GHProvider) CheckPRAction(ctx context.Context, repo string, number int, guarded bool) (PRActionCheck, error) {
+	var comments []model.PRComment
+	var evidenceErr error
+	if guarded {
+		comments, evidenceErr = p.conversationComments(ctx, repo, number)
+	}
+	// Read the head and open state last, even if the conversation was
+	// unavailable. The conversation failure is not proof about the target.
+	raw, err := p.viewPR(ctx, repo, number, prFields)
+	if err != nil {
+		return PRActionCheck{}, err
+	}
+	// gh resolves the number in --repo. Cross-check the returned identity
+	// against the requested target, including the URL when present.
+	if raw.Number != number || (raw.URL != "" && !matchesPRURL(raw.URL, repo, number)) {
+		return PRActionCheck{}, fmt.Errorf("unexpected pull request: wanted %s#%d", repo, number)
+	}
+	switch raw.State {
+	case "CLOSED", "MERGED":
+		return PRActionCheck{PR: raw.toModel(repo)}, nil
+	case "OPEN":
+		if strings.TrimSpace(raw.HeadRefOID) == "" {
+			return PRActionCheck{}, fmt.Errorf("missing PR head ref")
+		}
+	default:
+		return PRActionCheck{}, fmt.Errorf("unknown pull request state %q", raw.State)
+	}
+	checks, known := decodeChecks(raw.StatusCheckRollup)
+	pr := raw.toModelWithChecks(repo, checks)
+	if guarded {
+		pr.Comments, pr.ConversationCommentsLoaded = comments, evidenceErr == nil
+		if !known {
+			evidenceErr = errors.Join(evidenceErr, errors.New("missing or invalid check rollup"))
+		}
+	}
+	return PRActionCheck{PR: pr, ChecksKnown: known, EvidenceErr: evidenceErr}, nil
+}
+
+func matchesPRURL(raw, repo string, number int) bool {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	if strings.Count(repo, "/") == 2 {
+		host, rest, _ := strings.Cut(repo, "/")
+		if !strings.EqualFold(host, u.Host) {
+			return false
+		}
+		repo = rest
+	}
+	return strings.EqualFold(u.Path, "/"+repo+"/pull/"+strconv.Itoa(number))
+}
+
+func (p *GHProvider) GetPR(ctx context.Context, repo string, number int) (model.PullRequest, error) {
+	raw, err := p.viewPR(ctx, repo, number, prBaseFields+",files,commits,reviews,latestReviews,reviewRequests,mergeStateStatus,updatedAt")
+	if err != nil {
+		return model.PullRequest{}, err
 	}
 	pr := raw.toModel(repo)
+	if pr.State == "CLOSED" || pr.State == "MERGED" {
+		return pr, nil
+	}
 	pr.Comments, err = p.conversationComments(ctx, repo, number)
 	if err != nil {
 		return model.PullRequest{}, err
@@ -69,7 +140,7 @@ func (p *GHProvider) GetPR(ctx context.Context, repo string, number int) (model.
 			CreatedAt: parseTime(review.SubmittedAt), Kind: "review",
 		})
 	}
-	out, err = p.run(ctx, "api", "repos/"+repo+"/pulls/"+strconv.Itoa(number)+"/comments?per_page=100", "--paginate", "--slurp")
+	out, err := p.run(ctx, "api", "repos/"+repo+"/pulls/"+strconv.Itoa(number)+"/comments?per_page=100", "--paginate", "--slurp")
 	if err != nil {
 		return model.PullRequest{}, err
 	}
@@ -122,7 +193,7 @@ func (p *GHProvider) conversationComments(ctx context.Context, repo string, numb
 	if err != nil {
 		return nil, fmt.Errorf("fetch conversation comments: %w", err)
 	}
-	var pages [][]ghConversationComment
+	var pages []json.RawMessage
 	if err := json.Unmarshal(out, &pages); err != nil {
 		return nil, fmt.Errorf("parse gh conversation comments: %w", err)
 	}
@@ -130,20 +201,38 @@ func (p *GHProvider) conversationComments(ctx context.Context, repo string, numb
 		return nil, fmt.Errorf("parse gh conversation comments: missing pages")
 	}
 	var comments []model.PRComment
+	var badPage, badComment bool
 	for _, page := range pages {
-		if page == nil {
-			return nil, fmt.Errorf("parse gh conversation comments: missing page")
+		var entries []json.RawMessage
+		if err := json.Unmarshal(page, &entries); err != nil || entries == nil {
+			badPage = true
+			continue
 		}
-		for _, c := range page {
+		for _, entry := range entries {
+			var c ghConversationComment
+			if err := json.Unmarshal(entry, &c); err != nil {
+				badComment = true
+				continue
+			}
 			created, updated := parseTime(c.CreatedAt), parseTime(c.UpdatedAt)
 			u, err := url.Parse(c.URL)
 			if c.ID <= 0 || created.IsZero() || updated.IsZero() || err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
-				return nil, fmt.Errorf("parse gh conversation comments: missing or invalid native provenance")
+				badComment = true
+				continue
 			}
 			comments = append(comments, model.PRComment{ID: nativeCommentID(c.ID), URL: c.URL, Author: c.User.Login, Body: c.Body, CreatedAt: created, UpdatedAt: updated})
 		}
 	}
-	return comments, nil
+	// Partial evidence can still establish a guard reason, but it cannot
+	// establish that a reason is absent.
+	var evidenceErr error
+	if badPage {
+		evidenceErr = errors.New("parse gh conversation comments: missing or invalid page")
+	}
+	if badComment {
+		evidenceErr = errors.Join(evidenceErr, errors.New("parse gh conversation comments: missing or invalid native provenance"))
+	}
+	return comments, evidenceErr
 }
 
 func (p *GHProvider) GetDiff(ctx context.Context, repo string, number int) (string, error) {
@@ -258,7 +347,13 @@ func (p *GHProvider) run(ctx context.Context, args ...string) ([]byte, error) {
 		if msg == "" {
 			msg = err.Error()
 		}
-		return nil, fmt.Errorf("gh %s: %s", strings.Join(args, " "), msg)
+		// Report the operation and the failure, not write arguments such as
+		// the full comment body or a long --json field list.
+		operation := args[0]
+		if operation == "pr" && len(args) > 1 {
+			operation += " " + args[1]
+		}
+		return nil, fmt.Errorf("gh %s: %s", operation, msg)
 	}
 	return out, nil
 }
@@ -408,6 +503,10 @@ type ghReviewComment struct {
 }
 
 func (p ghPR) toModel(repo string) model.PullRequest {
+	return p.toModelWithChecks(repo, parseChecks(p.StatusCheckRollup))
+}
+
+func (p ghPR) toModelWithChecks(repo string, checks []model.Check) model.PullRequest {
 	labels := make([]string, 0, len(p.Labels))
 	for _, label := range p.Labels {
 		labels = append(labels, label.Name)
@@ -438,7 +537,7 @@ func (p ghPR) toModel(repo string) model.PullRequest {
 		Deletions:      p.Deletions,
 		ChangedFiles:   changedFiles,
 		CIStatus:       statusFromRollup(p.StatusCheckRollup),
-		Checks:         parseChecks(p.StatusCheckRollup),
+		Checks:         checks,
 		ReviewDecision: p.ReviewDecision,
 		MergeState:     strings.ToUpper(p.MergeStateStatus),
 		Draft:          p.Draft,
@@ -518,27 +617,37 @@ func statusFromRollup(raw json.RawMessage) string {
 }
 
 func parseChecks(raw json.RawMessage) []model.Check {
+	checks, _ := decodeChecks(raw)
+	return checks
+}
+
+// Keep readable entries even when another entry makes the rollup incomplete.
+// The guard can still show affirmative evidence, such as a pending check.
+func decodeChecks(raw json.RawMessage) ([]model.Check, bool) {
 	checks := []model.Check{}
-	if len(raw) == 0 || string(raw) == "null" {
-		return checks
+	var items []json.RawMessage
+	if err := json.Unmarshal(raw, &items); err != nil || items == nil {
+		return checks, false
 	}
-	var items []struct {
-		Typename     string `json:"__typename"`
-		Name         string `json:"name"`
-		WorkflowName string `json:"workflowName"`
-		Context      string `json:"context"`
-		State        string `json:"state"`
-		Conclusion   string `json:"conclusion"`
-		Status       string `json:"status"`
-		DetailsURL   string `json:"detailsUrl"`
-		TargetURL    string `json:"targetUrl"`
-		StartedAt    string `json:"startedAt"`
-		CompletedAt  string `json:"completedAt"`
-	}
-	if err := json.Unmarshal(raw, &items); err != nil {
-		return checks
-	}
-	for _, item := range items {
+	known := true
+	for _, data := range items {
+		var item struct {
+			Typename     string `json:"__typename"`
+			Name         string `json:"name"`
+			WorkflowName string `json:"workflowName"`
+			Context      string `json:"context"`
+			State        string `json:"state"`
+			Conclusion   string `json:"conclusion"`
+			Status       string `json:"status"`
+			DetailsURL   string `json:"detailsUrl"`
+			TargetURL    string `json:"targetUrl"`
+			StartedAt    string `json:"startedAt"`
+			CompletedAt  string `json:"completedAt"`
+		}
+		if err := json.Unmarshal(data, &item); err != nil || (item.Typename != "CheckRun" && item.Typename != "StatusContext") {
+			known = false
+			continue
+		}
 		check := model.Check{
 			WorkflowName: item.WorkflowName,
 			StartedAt:    parseTime(item.StartedAt),
@@ -560,9 +669,10 @@ func parseChecks(raw json.RawMessage) []model.Check {
 			}
 			check.State = normalizeCheckState(state)
 		}
+		known = known && strings.TrimSpace(check.Name) != "" && check.State != ""
 		checks = append(checks, check)
 	}
-	return checks
+	return checks, known
 }
 
 func normalizeCheckState(state string) string {
