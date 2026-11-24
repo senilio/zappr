@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## v0.5.0
+
+### Added
+
+- `:confirm-action` reviews a pending guarded action on the selected pull request.
+- The Inbox header shows `refreshing` during a full refresh and the age of the last successful full refresh.
+
+### Changed
+
+- Selected-PR refreshes (`r`) and Atlantis `plan`, `apply`, `cancel`, and `unlock` comments queue per pull request and run in order on the original PR. Inbox rows show progress such as `refreshing`, `plan queued`, or `checking plan`.
+- Guard warnings no longer interrupt work on other pull requests; the row shows `confirm plan` (or another command) until confirmed.
+- zappr verifies that the target pull request is open before sending, and checks the head and guard again after confirmation.
+
 ## v0.4.0
 
 ### Added
